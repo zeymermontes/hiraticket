@@ -9,6 +9,7 @@ import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
 import type { ConvDetail } from "@/lib/chat";
+import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
 import { createOrder, assignOrder, addOrderNote } from "@/app/(app)/orders/actions";
@@ -26,7 +27,7 @@ function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
 }
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected,
+  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts,
 }: {
   rows: OrderRow[];
   objectName: string;
@@ -39,6 +40,8 @@ export function OrdersTable({
   defaultContact?: string;
   convDetail: ConvDetail | null;
   connected: boolean;
+  products: Product[];
+  contacts: { id: string; name: string }[];
 }) {
   const { t, lang } = useApp();
   const router = useRouter();
@@ -231,6 +234,8 @@ export function OrdersTable({
           areas={areas}
           stages={stages}
           defaultContact={defaultContact}
+          products={products}
+          contacts={contacts}
           onClose={() => setShowNew(false)}
         />
       )}
@@ -270,13 +275,15 @@ export function OrdersTable({
 }
 
 function NewOrderModal({
-  businessId, areas, stages, onClose, defaultContact,
+  businessId, areas, stages, onClose, defaultContact, products, contacts,
 }: {
   businessId: string;
   areas: Area[];
   stages: Stage[];
   onClose: () => void;
   defaultContact?: string;
+  products: Product[];
+  contacts: { id: string; name: string }[];
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -313,7 +320,17 @@ function NewOrderModal({
         </div>
         <div className="modal-body col gap-2">
           <label className="lbl">{lang === "es" ? "Cliente" : "Customer"}</label>
-          <input className="inp-inline" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={lang === "es" ? "Nombre del cliente" : "Customer name"} />
+          <input className="inp-inline" list="contact-list" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={lang === "es" ? "Nombre del cliente" : "Customer name"} />
+          <datalist id="contact-list">{contacts.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+          {products.length > 0 && (
+            <>
+              <label className="lbl">{lang === "es" ? "Agregar del catálogo" : "Add from catalog"}</label>
+              <select className="select" value="" onChange={(e) => { const p = products.find((x) => x.id === e.target.value); if (p) { setItem(p.name); setPrice(String(p.price)); } }}>
+                <option value="">{lang === "es" ? "— elige un producto —" : "— pick a product —"}</option>
+                {products.map((p) => <option key={p.id} value={p.id}>{p.name} · ${formatMoney(p.price)}</option>)}
+              </select>
+            </>
+          )}
           <label className="lbl">{lang === "es" ? "Artículo" : "Item"}</label>
           <input className="inp-inline" value={item} onChange={(e) => setItem(e.target.value)} placeholder={lang === "es" ? "Descripción" : "Description"} />
           <div className="row gap-2">

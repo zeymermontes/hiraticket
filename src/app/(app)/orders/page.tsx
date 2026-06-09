@@ -2,7 +2,9 @@ import { getMyBusiness, getOrders } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents, getConversationDetail } from "@/lib/chat";
 import { getSessions, isConnected } from "@/lib/whatsapp";
+import { getProducts } from "@/lib/extras";
 import { getOrderDetail } from "@/lib/orders";
+import { createClient } from "@/lib/supabase/server";
 import { OrdersTable } from "@/components/OrdersTable";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +18,14 @@ export default async function OrdersPage({
   if (!business) return null;
 
   const sp = await searchParams;
-  const [orders, areas, stages, agents] = await Promise.all([
+  const supabase = await createClient();
+  const [orders, areas, stages, agents, products, { data: contacts }] = await Promise.all([
     getOrders(business.id),
     getAreas(business.id),
     getStages(business.id),
     getAgents(business.id),
+    getProducts(business.id),
+    supabase.from("contacts").select("id, name").eq("business_id", business.id).order("name"),
   ]);
   const openOrder = sp.order ? await getOrderDetail(sp.order) : null;
   const convDetail = openOrder?.conversation_id ? await getConversationDetail(openOrder.conversation_id) : null;
@@ -39,6 +44,8 @@ export default async function OrdersPage({
       defaultContact={sp.contact}
       convDetail={convDetail}
       connected={connected}
+      products={products}
+      contacts={(contacts ?? []) as { id: string; name: string }[]}
     />
   );
 }
