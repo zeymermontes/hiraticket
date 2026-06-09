@@ -116,9 +116,7 @@ export function OrderDrawer({
           <div className="row gap-3" style={{ flexWrap: "wrap" }}>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Agente" : "Agent"}</label>{assignee ? <div className="cust"><Avatar name={assignee.name} initials={deriveInitials(assignee.name)} color={assignee.color} size={24} /><span className="t-sm">{assignee.name}</span></div> : <span className="muted t-sm">—</span>}</div>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Prioridad" : "Priority"}</label>
-              <select className="select select-sm" value={detail.priority} onChange={(e) => run(() => setOrderPriority(detail.id, e.target.value))}>
-                {(["low", "normal", "high", "urgent"] as const).map((p) => <option key={p} value={p}>{PRIO[p][lang]}</option>)}
-              </select>
+              <PriorityPicker value={detail.priority} lang={lang} onChange={(p) => run(() => setOrderPriority(detail.id, p))} />
             </div>
           </div>
 
@@ -199,6 +197,34 @@ export function OrderDrawer({
           onPick={(t) => run(() => addOrderTag(detail.id, t))}
           onRemove={detail.contact ? (t) => run(() => removeContactTag(detail.contact!.id, t)) : undefined}
           onClose={() => setTagRect(null)} />
+      )}
+    </>
+  );
+}
+
+/** Priority selector that shows the value (and each option) as a correctly-colored chip. */
+function PriorityPicker({ value, lang, onChange }: { value: string; lang: "es" | "en"; onChange: (p: string) => void }) {
+  const btn = useRef<HTMLButtonElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const toggle = () => setRect(rect ? null : btn.current?.getBoundingClientRect() ?? null);
+  return (
+    <>
+      <button ref={btn} className="btn btn-sm btn-outline" style={{ gap: 6 }} onClick={toggle}>
+        <Pill color={priorityColor(value as never)}><Icon name="flag" size={11} />{PRIO[value]?.[lang] ?? value}</Pill>
+        <Icon name="chevd" size={14} />
+      </button>
+      {rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, left: rect.left, width: 170, zIndex: 201 }}>
+            {(["low", "normal", "high", "urgent"] as const).map((p) => (
+              <button key={p} className={"menu-item" + (p === value ? " on" : "")} onClick={() => { setRect(null); if (p !== value) onChange(p); }}>
+                <Pill color={priorityColor(p)}><Icon name="flag" size={11} />{PRIO[p][lang]}</Pill>
+                {p === value && <><span className="grow" /><Icon name="check" size={14} /></>}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </>
   );
