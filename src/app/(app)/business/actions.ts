@@ -41,6 +41,13 @@ export async function updateStage(stageId: string, patch: { name?: string; color
   await supabase.from("stages").update(patch).eq("id", stageId);
   revalidateAll();
 }
+/** Persist a new stage order (positions = array index). */
+export async function reorderStages(businessId: string, orderedIds: string[]) {
+  const supabase = await createClient();
+  await Promise.all(orderedIds.map((id, i) => supabase.from("stages").update({ position: i }).eq("id", id).eq("business_id", businessId)));
+  revalidateAll();
+}
+
 export async function deleteStage(stageId: string) {
   const supabase = await createClient();
   // Keep at least 2 stages.

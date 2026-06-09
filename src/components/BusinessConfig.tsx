@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -9,24 +9,29 @@ import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { VERTICALS } from "@/lib/verticals";
 import {
-  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, updateBusinessProfile, setCustomFields,
+  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields,
 } from "@/app/(app)/business/actions";
 
 const COLORS: PillColor[] = ["slate", "blue", "violet", "teal", "green", "amber", "red", "brand"];
 
 function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => void }) {
-  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const toggle = () => setRect(rect ? null : btn.current?.getBoundingClientRect() ?? null);
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button className="iconbtn sm" onClick={() => setOpen((o) => !o)} title="Color">
+    <span style={{ display: "inline-flex" }}>
+      <button ref={btn} className="iconbtn sm" onClick={toggle} title="Color">
         <span style={{ width: 14, height: 14, borderRadius: 5, background: `var(--${value})`, display: "inline-block" }} />
       </button>
-      {open && (
-        <div className="menu" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, zIndex: 50 }}>
-          {COLORS.map((c) => (
-            <button key={c} onClick={() => { onPick(c); setOpen(false); }} style={{ width: 22, height: 22, borderRadius: 6, background: `var(--${c})`, border: c === value ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer" }} />
-          ))}
-        </div>
+      {rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, zIndex: 201 }}>
+            {COLORS.map((c) => (
+              <button key={c} onClick={() => { onPick(c); setRect(null); }} style={{ width: 22, height: 22, borderRadius: 6, background: `var(--${c})`, border: c === value ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer" }} />
+            ))}
+          </div>
+        </>
       )}
     </span>
   );
@@ -53,6 +58,15 @@ export function BusinessConfig({
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
+
+  const [dragStage, setDragStage] = useState<string | null>(null);
+  const dropStage = (targetId: string) => {
+    if (!dragStage || dragStage === targetId) { setDragStage(null); return; }
+    const ids = stages.map((s) => s.id).filter((id) => id !== dragStage);
+    ids.splice(ids.indexOf(targetId), 0, dragStage);
+    setDragStage(null);
+    run(() => reorderStages(businessId, ids));
+  };
 
   return (
     <div className="page">
@@ -110,7 +124,9 @@ export function BusinessConfig({
           <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4></div>
           <div className="ws-block-body col gap-2">
             {stages.map((s) => (
-              <div key={s.id} className="row gap-2">
+              <div key={s.id} className={"row gap-2" + (dragStage === s.id ? " is-dragging" : "")} style={{ opacity: dragStage === s.id ? 0.5 : 1 }}
+                onDragOver={(e) => e.preventDefault()} onDrop={() => dropStage(s.id)}>
+                <span className="ws-grip" draggable onDragStart={() => setDragStage(s.id)} onDragEnd={() => setDragStage(null)} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={15} /></span>
                 <ColorPicker value={s.color} onPick={(c) => run(() => updateStage(s.id, { color: c }))} />
                 <input className="inp-inline grow" defaultValue={s.name}
                   onBlur={(e) => { if (e.target.value !== s.name) run(() => updateStage(s.id, { name: e.target.value })); }} />
