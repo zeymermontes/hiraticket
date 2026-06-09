@@ -46,7 +46,7 @@ export function TagPicker({
             <div className="row gap-1" style={{ flexWrap: "wrap", marginTop: 8 }}>
               {current.map((t) => (
                 <span key={t} style={{ display: "inline-flex", alignItems: "center" }}>
-                  <Pill color={tagColor(t)}>{t}<button className="iconbtn" style={{ width: 15, height: 15, marginLeft: 3 }} onClick={() => onRemove(t)} aria-label="remove"><Icon name="x" size={11} /></button></Pill>
+                  <Pill color={tagColor(t)}>{t}<button onClick={() => onRemove(t)} aria-label="remove" title={lang === "es" ? "Quitar" : "Remove"} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, marginLeft: 4, padding: 0, border: "none", background: "transparent", color: "currentColor", opacity: 0.75, cursor: "pointer" }} onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.75")}><Icon name="x" size={12} /></button></Pill>
                 </span>
               ))}
             </div>
