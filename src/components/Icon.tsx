@@ -65,6 +65,7 @@ export const ICONS: Record<string, IconFn> = {
   dots: () => <><circle cx="6" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="18" cy="12" r="1.4" fill="currentColor" /></>,
   pin: () => <>{P("M12 21s6-5.3 6-10a6 6 0 1 0-12 0c0 4.7 6 10 6 10Z")}<circle cx="12" cy="11" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" /></>,
   forward: () => <>{P("M14 8V5l6 5-6 5v-3c-5 0-8 2-9 5 0-5 3-10 9-12Z")}</>,
+  sparkles: () => <>{P("M12 4l1.4 3.6L17 9l-3.6 1.4L12 14l-1.4-3.6L7 9l3.6-1.4Z")}</>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

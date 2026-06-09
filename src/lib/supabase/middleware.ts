@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/logout", "/favicon.ico"];
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico"];
 
 // Where authenticated users land — the native app home.
 const APP_HOME = "/chat";
