@@ -37,6 +37,7 @@ export default async function ChatPage({
       agents={agents}
       areas={areas}
       meId={user!.id}
+      businessId={business.id}
       connected={isConnected(sessions)}
     />
   );

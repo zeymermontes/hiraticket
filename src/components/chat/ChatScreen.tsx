@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -20,7 +21,7 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
 };
 
 export function ChatScreen({
-  list, detail, selectedId, agents, areas, meId, connected,
+  list, detail, selectedId, agents, areas, meId, businessId, connected,
 }: {
   list: ConvListItem[];
   detail: ConvDetail | null;
@@ -28,10 +29,25 @@ export function ChatScreen({
   agents: Agent[];
   areas: Area[];
   meId: string;
+  businessId: string;
   connected: boolean;
 }) {
   const { lang } = useApp();
+  const router = useRouter();
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
+
+  // Live updates: refresh server data when messages/conversations change.
+  useEffect(() => {
+    const supabase = createClient();
+    let t: ReturnType<typeof setTimeout>;
+    const bump = () => { clearTimeout(t); t = setTimeout(() => router.refresh(), 250); };
+    const ch = supabase
+      .channel(`chat-${businessId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, bump)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, bump)
+      .subscribe();
+    return () => { clearTimeout(t); supabase.removeChannel(ch); };
+  }, [businessId, router]);
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState<string | null>(null);
 
