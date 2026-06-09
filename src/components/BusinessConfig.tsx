@@ -8,6 +8,7 @@ import type { PillColor } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { VERTICALS } from "@/lib/verticals";
+import { ReorderList } from "@/components/ReorderList";
 import {
   createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields,
 } from "@/app/(app)/business/actions";
@@ -59,14 +60,6 @@ export function BusinessConfig({
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
 
-  const [dragStage, setDragStage] = useState<string | null>(null);
-  const dropStage = (targetId: string) => {
-    if (!dragStage || dragStage === targetId) { setDragStage(null); return; }
-    const ids = stages.map((s) => s.id).filter((id) => id !== dragStage);
-    ids.splice(ids.indexOf(targetId), 0, dragStage);
-    setDragStage(null);
-    run(() => reorderStages(businessId, ids));
-  };
 
   return (
     <div className="page">
@@ -123,16 +116,17 @@ export function BusinessConfig({
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4></div>
           <div className="ws-block-body col gap-2">
-            {stages.map((s) => (
-              <div key={s.id} className={"row gap-2" + (dragStage === s.id ? " is-dragging" : "")} style={{ opacity: dragStage === s.id ? 0.5 : 1 }}
-                onDragOver={(e) => e.preventDefault()} onDrop={() => dropStage(s.id)}>
-                <span className="ws-grip" draggable onDragStart={() => setDragStage(s.id)} onDragEnd={() => setDragStage(null)} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={15} /></span>
-                <ColorPicker value={s.color} onPick={(c) => run(() => updateStage(s.id, { color: c }))} />
-                <input className="inp-inline grow" defaultValue={s.name}
-                  onBlur={(e) => { if (e.target.value !== s.name) run(() => updateStage(s.id, { name: e.target.value })); }} />
-                <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteStage(s.id))}><Icon name="x" size={15} /></button>
-              </div>
-            ))}
+            <ReorderList items={stages} getKey={(s) => s.id} className="col gap-2"
+              onReorder={(ids) => run(() => reorderStages(businessId, ids))}
+              renderItem={(s, handle) => (
+                <div className="row gap-2">
+                  <span className="ws-grip" {...handle} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={15} /></span>
+                  <ColorPicker value={s.color} onPick={(c) => run(() => updateStage(s.id, { color: c }))} />
+                  <input className="inp-inline grow" defaultValue={s.name}
+                    onBlur={(e) => { if (e.target.value !== s.name) run(() => updateStage(s.id, { name: e.target.value })); }} />
+                  <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteStage(s.id))}><Icon name="x" size={15} /></button>
+                </div>
+              )} />
             <div className="row gap-2">
               <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva etapa…" : "New stage…"} value={newStage} onChange={(e) => setNewStage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addStage(); }} />
               <button className="btn btn-sm btn-primary" disabled={!newStage.trim()} onClick={addStage}><Icon name="plus" size={14} />{lang === "es" ? "Agregar etapa" : "Add stage"}</button>

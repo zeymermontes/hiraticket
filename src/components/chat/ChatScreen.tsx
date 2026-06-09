@@ -16,6 +16,7 @@ import type { OrderDetail } from "@/lib/orders";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { TagPicker } from "@/components/TagPicker";
+import { ReorderList } from "@/components/ReorderList";
 import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
@@ -821,22 +822,15 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
 
   // Reorderable center-column blocks (orders / notes / activity), persisted.
   const [blockOrder, setBlockOrder] = useState<string[]>(["orders", "notes", "activity"]);
-  const [dragId, setDragId] = useState<string | null>(null);
   useEffect(() => {
     try {
       const s = localStorage.getItem("ht_wsOrder");
       if (s) { const arr = JSON.parse(s); if (Array.isArray(arr) && arr.length === 3 && ["orders", "notes", "activity"].every((k) => arr.includes(k))) setBlockOrder(arr); }
     } catch {}
   }, []);
-  function dropBlock(target: string) {
-    if (!dragId || dragId === target) { setDragId(null); return; }
-    setBlockOrder((prev) => {
-      const arr = prev.filter((x) => x !== dragId);
-      arr.splice(arr.indexOf(target), 0, dragId);
-      try { localStorage.setItem("ht_wsOrder", JSON.stringify(arr)); } catch {}
-      return arr;
-    });
-    setDragId(null);
+  function commitBlockOrder(ids: string[]) {
+    setBlockOrder(ids);
+    try { localStorage.setItem("ht_wsOrder", JSON.stringify(ids)); } catch {}
   }
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
@@ -859,14 +853,14 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
     start(async () => { await deleteConv(detail.id); router.push("/chat"); router.refresh(); });
   }
 
-  const grip = (id: string) => (
-    <span className="ws-grip" draggable onDragStart={(e) => { setDragId(id); e.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDragId(null)} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={14} /></span>
+  const grip = (handle: { onPointerDown: (e: React.PointerEvent) => void }) => (
+    <span className="ws-grip" {...handle} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={14} /></span>
   );
 
-  const blockContent: Record<string, React.ReactNode> = {
-    orders: (
+  const blockContent: Record<string, (handle: { onPointerDown: (e: React.PointerEvent) => void }) => React.ReactNode> = {
+    orders: (handle) => (
       <>
-        <div className="ws-block-head">{grip("orders")}<Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pedidos" : "Orders"} <span className="muted">· {detail.orders.length}</span></h4>
+        <div className="ws-block-head">{grip(handle)}<Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pedidos" : "Orders"} <span className="muted">· {detail.orders.length}</span></h4>
           <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
         </div>
         <div className="ws-block-body col gap-2">
@@ -881,9 +875,9 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
         </div>
       </>
     ),
-    notes: (
+    notes: (handle) => (
       <>
-        <div className="ws-block-head">{grip("notes")}<Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
+        <div className="ws-block-head">{grip(handle)}<Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
         <div className="ws-block-body">
           <div style={{ marginBottom: 8 }}>
             <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
@@ -905,9 +899,9 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
         </div>
       </>
     ),
-    activity: (
+    activity: (handle) => (
       <>
-        <div className="ws-block-head">{grip("activity")}
+        <div className="ws-block-head">{grip(handle)}
           <button style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left", padding: 0 }} onClick={() => setActOpen((v) => !v)}>
             <Icon name="clock" size={16} /><h4 className="grow">{lang === "es" ? "Actividad" : "Activity"}</h4>
             <span style={{ transform: actOpen ? "rotate(180deg)" : "none", transition: "transform .2s", display: "flex", color: "var(--text-muted)" }}><Icon name="chevd" size={16} /></span>
@@ -960,12 +954,8 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
           <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={onOpen360}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>
         </div>
 
-        {blockOrder.map((id) => (
-          <div key={id} className={"ws-block ws-reorder" + (dragId === id ? " ws-dragging" : "")}
-            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={() => dropBlock(id)}>
-            {blockContent[id]}
-          </div>
-        ))}
+        <ReorderList items={blockOrder} getKey={(id) => id} onReorder={commitBlockOrder} className="col gap-3"
+          itemClassName="ws-block ws-reorder" renderItem={(id, handle) => blockContent[id](handle)} />
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {showXfer && (

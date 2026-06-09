@@ -32,7 +32,7 @@ export function EmojiPicker({ rect, onPick }: { rect: DOMRect; onPick: (e: strin
   }, [q]);
 
   return (
-    <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - rect.top + 6, left: rect.left, width: 320, maxHeight: 360, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden", zIndex: 201 }}>
+    <div className="menu" style={{ position: "fixed", bottom: Math.max(8, window.innerHeight - rect.top + 6), left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)), width: 320, maxHeight: 360, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden", zIndex: 201 }}>
       <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
         <div className="field field-sm field-filled"><input autoFocus placeholder="Buscar emoji…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
       </div>
