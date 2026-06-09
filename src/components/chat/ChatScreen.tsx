@@ -181,8 +181,11 @@ export function ChatScreen({
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [areaF, setAreaF] = useState<string | null>(null);
+  const [unreadOnly, setUnreadOnly] = useState(false);
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const areaNames = useMemo(() => [...new Set(list.map((c) => c.area?.name).filter(Boolean))] as string[], [list]);
 
   const filtered = useMemo(() => {
     return list.filter((c) => {
@@ -191,13 +194,15 @@ export function ChatScreen({
       if (tab === "mine" && c.assignee_id !== meId) return false;
       if (tab === "unassigned" && c.assignee_id != null) return false;
       if (statusF && c.status !== statusF) return false;
+      if (areaF && c.area?.name !== areaF) return false;
+      if (unreadOnly && !(c.unread > 0)) return false;
       if (q) {
         const hay = (c.contact?.name ?? "") + " " + c.preview;
         if (!hay.toLowerCase().includes(q.toLowerCase())) return false;
       }
       return true;
     });
-  }, [list, tab, statusF, q, meId, showArchived]);
+  }, [list, tab, statusF, q, meId, showArchived, areaF, unreadOnly]);
 
   const archivedN = list.filter(isArchived).length;
 
@@ -234,6 +239,15 @@ export function ChatScreen({
                 <Icon name="dot" size={12} /> {STATUS_LABEL[s][lang]}
               </button>
             ))}
+            <button className={"btn btn-sm " + (unreadOnly ? "btn-primary" : "btn-outline")} onClick={() => setUnreadOnly((v) => !v)}>
+              <Icon name="dot" size={12} /> {lang === "es" ? "No leídos" : "Unread"}
+            </button>
+            {areaNames.length > 0 && (
+              <select className="select select-sm" value={areaF ?? ""} onChange={(e) => setAreaF(e.target.value || null)}>
+                <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
+                {areaNames.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            )}
             <button className={"btn btn-sm " + (showArchived ? "btn-primary" : "btn-outline")} onClick={() => setShowArchived((v) => !v)}>
               <Icon name="clock" size={12} /> {lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}{archivedN > 0 && <span className="badge badge-soft">{archivedN}</span>}
             </button>
@@ -244,6 +258,7 @@ export function ChatScreen({
             <div className="empty" style={{ padding: "56px 24px" }}>
               <div className="empty-art"><Icon name="chat" /></div>
               <h3>{lang === "es" ? "Sin conversaciones" : "No conversations"}</h3>
+              <p className="muted t-sm">{lang === "es" ? "Las conversaciones aparecerán aquí cuando lleguen mensajes." : "Conversations will appear here as messages arrive."}</p>
             </div>
           ) : (
             filtered.map((c) => {
@@ -335,6 +350,25 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [cannedOpen, setCannedOpen] = useState(false);
+  const [canned, setCanned] = useState<{ id: string; title: string; body: string }[]>([]);
+
+  async function loadCanned() {
+    if (canned.length) return;
+    const supabase = createClient();
+    const { data } = await supabase.from("canned_messages").select("id, title, body").eq("business_id", businessId).order("title");
+    setCanned((data ?? []) as { id: string; title: string; body: string }[]);
+  }
+  function fillVars(body: string) {
+    const o = detail.orders[0];
+    return body
+      .replace(/\{\{\s*name\s*\}\}/gi, detail.contact?.name ?? "")
+      .replace(/\{\{\s*phone\s*\}\}/gi, detail.contact?.phone ?? "")
+      .replace(/\{\{\s*order_number\s*\}\}/gi, o?.code ?? "")
+      .replace(/\{\{\s*total\s*\}\}/gi, o ? `$${o.total.toLocaleString("es-MX")}` : "");
+  }
+  const EMOJIS = ["😀", "😅", "🙏", "👍", "🙌", "🎉", "❤️", "🔥", "✅", "👀", "😍", "😂", "🤝", "💪", "📦", "💳", "📍", "⏰", "✨", "🙆"];
 
   useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
   useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
@@ -404,11 +438,15 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       </div>
 
       <div className="thread thread-wa-tint scroll" ref={endRef}>
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           const out = m.direction === "out";
           const author = out && m.author_id ? agentMap.get(m.author_id) : null;
+          const prev = i > 0 ? messages[i - 1] : null;
+          const showDay = !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
           return (
-            <div className={"msg " + (out ? "out" : "in")} key={m.id}>
+            <React.Fragment key={m.id}>
+            {showDay && <div className="day-sep"><span>{dayLabel(m.created_at, lang)}</span></div>}
+            <div className={"msg " + (out ? "out" : "in")}>
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
@@ -430,6 +468,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
       </div>
@@ -453,6 +492,34 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <input ref={fileRef} type="file" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
             <button className="iconbtn" onClick={() => fileRef.current?.click()} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <button className="iconbtn" onClick={() => { setEmojiOpen((o) => !o); setCannedOpen(false); }} title="Emoji" style={{ fontSize: 16 }}>😀</button>
+              {emojiOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setEmojiOpen(false)} />
+                  <div className="menu" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 232, padding: 8, display: "grid", gridTemplateColumns: "repeat(8,1fr)", gap: 2, zIndex: 50 }}>
+                    {EMOJIS.map((e) => <button key={e} className="iconbtn" style={{ fontSize: 18 }} onClick={() => { setText((v) => v + e); setEmojiOpen(false); }}>{e}</button>)}
+                  </div>
+                </>
+              )}
+            </span>
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <button className="iconbtn" onClick={() => { setCannedOpen((o) => !o); setEmojiOpen(false); loadCanned(); }} title={lang === "es" ? "Plantillas" : "Templates"}><Icon name="canned" /></button>
+              {cannedOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setCannedOpen(false)} />
+                  <div className="menu scroll" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 300, maxHeight: 320, zIndex: 50 }}>
+                    {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div> :
+                      canned.map((c) => (
+                        <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }} onClick={() => { setText((v) => (v ? v + " " : "") + fillVars(c.body)); setCannedOpen(false); }}>
+                          <div style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</div>
+                          <div className="muted t-xs truncate">{c.body}</div>
+                        </button>
+                      ))}
+                  </div>
+                </>
+              )}
+            </span>
             <span className="grow" />
             <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
@@ -543,6 +610,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
   const [note, setNote] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
+  const [actOpen, setActOpen] = useState(true);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
@@ -588,8 +656,12 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
             </div>
           </div>
           <div className="row gap-2" style={{ flexWrap: "wrap" }}>
-            {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="dot" size={10} />{tg}</Pill>)}
+            {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={10} />{tg}</Pill>)}
             {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
+          </div>
+          <div className="row gap-4" style={{ marginTop: 10 }}>
+            <div><div className="t-xs muted">{lang === "es" ? "Total gastado" : "Lifetime"}</div><div className="mono" style={{ fontWeight: 700 }}>${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</div></div>
+            {detail.contact?.created_at && <div><div className="t-xs muted">{lang === "es" ? "Primer contacto" : "First seen"}</div><div style={{ fontWeight: 600, fontSize: 13 }}>{new Date(detail.contact.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" })}</div></div>}
           </div>
         </div>
 
@@ -601,8 +673,9 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
           <div className="ws-block-body col gap-2">
             {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{lang === "es" ? "Sin pedidos." : "No orders."}</div> :
               detail.orders.map((o) => (
-                <Link key={o.id} href="/orders" className="ocard">
+                <Link key={o.id} href={`/orders?order=${o.id}`} className="ocard">
                   <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
+                  {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
                   <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></div>
                 </Link>
               ))}
@@ -628,7 +701,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
 
         {/* notes */}
         <div className="ws-block">
-          <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
+          <div className="ws-block-head"><Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
           <div className="ws-block-body">
             <div style={{ marginBottom: 8 }}>
               <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
@@ -652,13 +725,18 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
 
         {/* activity */}
         <div className="ws-block">
-          <div className="ws-block-head"><Icon name="clock" size={16} /><h4>{lang === "es" ? "Actividad" : "Activity"}</h4></div>
-          <div className="ws-block-body"><div className="timeline">
-            {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
-              detail.events.map((e) => (
-                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
-              ))}
-          </div></div>
+          <button className="ws-block-head" style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left" }} onClick={() => setActOpen((v) => !v)}>
+            <Icon name="clock" size={16} /><h4 className="grow">{lang === "es" ? "Actividad" : "Activity"}</h4>
+            <span style={{ transform: actOpen ? "rotate(180deg)" : "none", transition: "transform .2s", display: "flex", color: "var(--text-muted)" }}><Icon name="chevd" size={16} /></span>
+          </button>
+          {actOpen && (
+            <div className="ws-block-body"><div className="timeline">
+              {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
+                detail.events.map((e) => (
+                  <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
+                ))}
+            </div></div>
+          )}
         </div>
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
@@ -797,4 +875,13 @@ function relTime(iso: string | null, lang: "es" | "en"): string {
   if (diff < 60) return `${Math.floor(diff)}m`;
   if (diff < 1440) return `${Math.floor(diff / 60)}h`;
   return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
+}
+
+function dayLabel(iso: string, lang: "es" | "en"): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return lang === "es" ? "Hoy" : "Today";
+  if (d.toDateString() === yest.toDateString()) return lang === "es" ? "Ayer" : "Yesterday";
+  return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { weekday: "long", day: "2-digit", month: "long" });
 }

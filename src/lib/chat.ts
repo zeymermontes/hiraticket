@@ -59,6 +59,7 @@ export interface ChatOrderCard {
   priority: string;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
+  items: { name: string }[];
 }
 
 export interface ConvDetail {
@@ -69,7 +70,7 @@ export interface ConvDetail {
   hidden: boolean;
   snoozed_until: string | null;
   area: { name: string; color: string } | null;
-  contact: { id: string; name: string; phone: string | null; tags: string[]; avatar_url: string | null } | null;
+  contact: { id: string; name: string; phone: string | null; tags: string[]; avatar_url: string | null; created_at: string | null } | null;
   messages: ChatMessage[];
   notes: ConvNote[];
   events: ConvEvent[];
@@ -142,7 +143,7 @@ export async function getConversationDetail(
 
   const { data: conv } = await supabase
     .from("conversations")
-    .select("id, status, assignee_id, contact_id, unread, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url)")
+    .select("id, status, assignee_id, contact_id, unread, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)")
     .eq("id", convId)
     .maybeSingle();
   if (!conv) return null;
@@ -168,7 +169,7 @@ export async function getConversationDetail(
       conv.contact_id
         ? supabase
             .from("orders")
-            .select("id, code, total, priority, stage:stages(name,color), area:areas(name,color)")
+            .select("id, code, total, priority, stage:stages(name,color), area:areas(name,color), items:order_items(name)")
             .eq("contact_id", conv.contact_id)
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [] as unknown[] }),
