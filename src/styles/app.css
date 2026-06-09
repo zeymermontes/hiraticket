@@ -36,6 +36,19 @@
 .inp-inline:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-50); }
 .iconbtn.sm { width: 30px; height: 30px; }
 
+/* Per-message actions menu — beside the bubble, revealed on hover (never over text). */
+.msg { align-items: center; gap: 4px; }
+.msg .msg-menu { opacity: 0; transition: opacity .12s; flex: none; }
+.msg:hover .msg-menu, .msg .msg-menu.open { opacity: 1; }
+.msg.in .bubble { order: 1; } .msg.in .msg-menu { order: 2; }
+.msg.out .bubble { order: 2; } .msg.out .msg-menu { order: 1; }
+.msg-menu-btn {
+  width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--sh-sm);
+}
+.msg-menu-btn:hover { background: var(--surface-2); color: var(--text); }
+
 /* Draggable divider on the right edge of the chat center column. */
 .col-resizer {
   position: absolute; top: 0; right: -3px; bottom: 0; width: 7px;

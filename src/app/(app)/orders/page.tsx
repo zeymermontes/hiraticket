@@ -1,6 +1,7 @@
 import { getMyBusiness, getOrders } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
-import { getAgents } from "@/lib/chat";
+import { getAgents, getConversationDetail } from "@/lib/chat";
+import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getOrderDetail } from "@/lib/orders";
 import { OrdersTable } from "@/components/OrdersTable";
 
@@ -22,6 +23,8 @@ export default async function OrdersPage({
     getAgents(business.id),
   ]);
   const openOrder = sp.order ? await getOrderDetail(sp.order) : null;
+  const convDetail = openOrder?.conversation_id ? await getConversationDetail(openOrder.conversation_id) : null;
+  const connected = isConnected(await getSessions(business.id));
 
   return (
     <OrdersTable
@@ -34,6 +37,8 @@ export default async function OrdersPage({
       openOrder={openOrder}
       autoOpen={sp.new === "1"}
       defaultContact={sp.contact}
+      convDetail={convDetail}
+      connected={connected}
     />
   );
 }

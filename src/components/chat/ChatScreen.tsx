@@ -47,12 +47,12 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: b
   const { lang } = useApp();
   const [open, setOpen] = useState(false);
   return (
-    <span className="msg-menu" style={{ position: "absolute", top: 2, right: 4 }}>
-      <button className="iconbtn" style={{ width: 22, height: 22, opacity: 0.55 }} onClick={() => setOpen((o) => !o)}><Icon name="dots" size={15} /></button>
+    <span className={"msg-menu" + (open ? " open" : "")} style={{ position: "relative", display: "inline-flex" }}>
+      <button className="msg-menu-btn" onClick={() => setOpen((o) => !o)} aria-label="Menu"><Icon name="dots" size={16} /></button>
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ position: "absolute", top: "100%", right: 0, width: 160, zIndex: 50 }}>
+          <div className="menu" style={{ position: "absolute", top: "100%", [out ? "left" : "right"]: 0, width: 160, zIndex: 50 }}>
             <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {out && m.type === "text" && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {out && <button className="menu-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
@@ -268,7 +268,7 @@ export function ChatScreen({
 }
 
 /* ---------- Thread (right column) ---------- */
-function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible: boolean; onToggleCtx: () => void; businessId: string }) {
+export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -348,7 +348,7 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
   }
 
   return (
-    <div className="chatcol">
+    <div className="chatcol" style={floating ? { height: "100%" } : undefined}>
       <div className="thread-head">
         <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38} />
         <div className="grow" style={{ minWidth: 0 }}>
@@ -358,9 +358,11 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
           </div>
           <div className="t-xs muted">{assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
         </div>
-        <button className={"iconbtn" + (ctxVisible ? " active" : "")} title={ctxVisible ? (lang === "es" ? "Ocultar panel" : "Hide panel") : (lang === "es" ? "Mostrar panel" : "Show panel")} onClick={onToggleCtx}>
-          <Icon name="columns" />
-        </button>
+        {onToggleCtx && (
+          <button className={"iconbtn" + (ctxVisible ? " active" : "")} title={ctxVisible ? (lang === "es" ? "Ocultar panel" : "Hide panel") : (lang === "es" ? "Mostrar panel" : "Show panel")} onClick={onToggleCtx}>
+            <Icon name="columns" />
+          </button>
+        )}
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); router.refresh(); })}>
             <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
@@ -381,7 +383,7 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
           const author = out && m.author_id ? agentMap.get(m.author_id) : null;
           return (
             <div className={"msg " + (out ? "out" : "in")} key={m.id}>
-              <div className="bubble" style={{ position: "relative" }}>
+              <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
                 {m.deleted ? (
@@ -393,11 +395,11 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
                   </>
                 )}
                 <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
-                {!m.deleted && !m.id.startsWith("tmp") && (
-                  <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
-                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
-                )}
               </div>
+              {!m.deleted && !m.id.startsWith("tmp") && (
+                <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
+                  onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
+              )}
             </div>
           );
         })}

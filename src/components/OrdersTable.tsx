@@ -8,13 +8,14 @@ import { type OrderRow, type PillColor, priorityColor, formatMoney } from "@/lib
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
+import type { ConvDetail } from "@/lib/chat";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { createOrder } from "@/app/(app)/orders/actions";
 
 type SortKey = "code" | "total" | "updated_at";
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact,
+  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected,
 }: {
   rows: OrderRow[];
   objectName: string;
@@ -25,6 +26,8 @@ export function OrdersTable({
   openOrder: OrderDetail | null;
   autoOpen?: boolean;
   defaultContact?: string;
+  convDetail: ConvDetail | null;
+  connected: boolean;
 }) {
   const { t, lang } = useApp();
   const router = useRouter();
@@ -161,6 +164,9 @@ export function OrdersTable({
           stages={stages}
           areas={areas}
           agents={agents}
+          businessId={businessId}
+          convDetail={convDetail}
+          connected={connected}
           onClose={() => router.push("/orders", { scroll: false })}
         />
       )}

@@ -8,7 +8,8 @@ import { type PillColor, priorityColor, formatMoney } from "@/lib/types";
 import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
-import { MobileChatPanel } from "@/components/MobileChatPanel";
+import { Thread } from "@/components/chat/ChatScreen";
+import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, markPaid, assignOrder } from "@/app/(app)/orders/actions";
 
@@ -18,9 +19,10 @@ const PRIO: Record<string, { es: string; en: string }> = {
 };
 
 export function OrderDrawer({
-  detail, stages, areas, agents, onClose,
+  detail, stages, areas, agents, onClose, businessId, convDetail, connected,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
+  businessId: string; convDetail: ConvDetail | null; connected: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -150,8 +152,13 @@ export function OrderDrawer({
             : <button className="btn btn-dark grow" onClick={onClose}><Icon name="check" size={15} />{lang === "es" ? "Cerrar" : "Close"}</button>}
         </div>
       </aside>
-      {detail.conversation_id && chatOpen && (
-        <MobileChatPanel conversationId={detail.conversation_id} contactName={detail.contact?.name ?? ""} phone={detail.contact?.phone} onClose={() => setChatOpen(false)} />
+      {chatOpen && convDetail && (
+        <>
+          <div className="scrim" style={{ zIndex: 95 }} onClick={() => setChatOpen(false)} />
+          <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 410, maxWidth: "94vw", zIndex: 96, boxShadow: "var(--sh-lg)", display: "flex" }}>
+            <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
+          </div>
+        </>
       )}
     </>
   );
