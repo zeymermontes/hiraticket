@@ -13,6 +13,7 @@ const VERTICALS = [
   { id: "veterinaria", es: "Veterinaria", en: "Vet" },
   { id: "retail", es: "Retail", en: "Retail" },
   { id: "taller", es: "Taller", en: "Workshop" },
+  { id: "other", es: "Otro / Genérico", en: "Other / Generic" },
 ];
 
 function Shell({ children }: { children: React.ReactNode }) {

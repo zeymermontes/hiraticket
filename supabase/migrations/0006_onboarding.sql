@@ -41,6 +41,9 @@ begin
     when 'taller' then
       stage_names := array['Recibido','Diagnóstico','Reparación','Listo','Entregado'];
       area_names  := array['Recepción','Taller'];
+    when 'other' then -- generic, business-agnostic pipeline
+      stage_names := array['Nuevo','En progreso','En espera','Completado'];
+      area_names  := array['General','Ventas','Operaciones'];
     else -- imprenta (default)
       stage_names := array['Nuevo','Diseño','Producción','Listo','Entregado'];
       area_names  := array['Ventas','Diseño','Producción','Envíos'];
