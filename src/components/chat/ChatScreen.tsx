@@ -20,7 +20,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage,
 } from "@/app/(app)/chat/actions";
 
 function LocationBlock({ m }: { m: ChatMessage }) {
@@ -88,7 +88,7 @@ function QuotedBlock({ m }: { m: ChatMessage }) {
   return <div className="truncate" style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240 }}>{label}</div>;
 }
 
-function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void }) {
+function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void }) {
   const { lang } = useApp();
   const { ref, open, rect, toggle, close } = usePopover();
   return (
@@ -98,6 +98,7 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: b
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, [out ? "right" : "left"]: out ? window.innerWidth - rect.right : rect.left, width: 160, zIndex: 201 }}>
+            <button className="menu-item" onClick={() => { const r = rect; close(); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {out && m.type === "text" && <button className="menu-item" onClick={() => { close(); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {out && <button className="menu-item danger" onClick={() => { close(); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
@@ -429,6 +430,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [slash, setSlash] = useState<{ q: string; at: number } | null>(null);
   const [slashSel, setSlashSel] = useState(0);
   const [slashRect, setSlashRect] = useState<DOMRect | null>(null);
+  const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
 
   async function loadCanned() {
     if (canned.length) return;
@@ -515,7 +517,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       return;
     }
     const rt = replyTo?.id;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null }]);
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [] }]);
     setText(""); setReplyTo(null);
     start(async () => { await sendMessage(detail.id, body, rt); router.refresh(); });
   }
@@ -616,8 +618,17 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       </>
                     )}
                 <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                {!m.deleted && m.reactions?.length > 0 && (
+                  <div className="msg-reacts">
+                    {m.reactions.map((r, ri) => (
+                      <button key={ri} className={"msg-react" + (r.by === "agent" ? " mine" : "")} title={r.by === "agent" ? (lang === "es" ? "Tu reacción" : "Your reaction") : (lang === "es" ? "Reacción del cliente" : "Customer reaction")}
+                        onClick={() => start(async () => { await reactToMessage(m.id, r.emoji); router.refresh(); })}>{r.emoji}</button>
+                    ))}
+                  </div>
+                )}
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
+                    onReact={(rect) => setReactTarget({ id: m.id, rect })}
                     onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
                 )}
               </div>
@@ -722,6 +733,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             </div>
           </div>
         </div>
+      )}
+
+      {reactTarget && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setReactTarget(null)} />
+          <EmojiPicker rect={reactTarget.rect} onPick={(e) => { const id = reactTarget.id; setReactTarget(null); start(async () => { await reactToMessage(id, e); router.refresh(); }); }} />
+        </>
       )}
     </div>
   );

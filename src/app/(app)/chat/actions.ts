@@ -53,6 +53,19 @@ export async function editMessage(messageId: string, body: string): Promise<void
   revalidatePath("/chat");
 }
 
+/** Add/replace/remove the agent's emoji reaction on a message (worker sends it to WhatsApp). */
+export async function reactToMessage(messageId: string, emoji: string): Promise<void> {
+  const { supabase } = await ctx();
+  const { data: m } = await supabase.from("messages").select("reactions").eq("id", messageId).maybeSingle();
+  const cur = (Array.isArray(m?.reactions) ? m!.reactions : []) as { emoji: string; by: string }[];
+  const mine = cur.find((r) => r.by === "agent");
+  const others = cur.filter((r) => r.by !== "agent");
+  const toggleOff = mine?.emoji === emoji;
+  const next = toggleOff ? others : [...others, { emoji, by: "agent" }];
+  await supabase.from("messages").update({ reactions: next, pending_op: "react", react_emoji: toggleOff ? "" : emoji }).eq("id", messageId);
+  revalidatePath("/chat");
+}
+
 /** Delete an outbound message for everyone (worker revokes it). */
 export async function deleteMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();

@@ -72,6 +72,12 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Message emoji reactions */
+.msg-reacts { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+.msg-react { display: inline-flex; align-items: center; font-size: 13px; line-height: 1; padding: 2px 6px; border-radius: 11px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--sh-sm); cursor: pointer; }
+.msg-react:hover { border-color: var(--border-strong); }
+.msg-react.mine { border-color: var(--brand); background: var(--brand-50); }
+
 /* Compact filter chip strip (chat list) — one scrollable row */
 .chip-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
 .chip-row::-webkit-scrollbar { display: none; }
