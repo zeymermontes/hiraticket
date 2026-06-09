@@ -59,6 +59,8 @@ export const ICONS: Record<string, IconFn> = {
   columns: () => <><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M10 5v14M15 5v14")}</>,
   refresh: () => <>{P("M4 12a8 8 0 0 1 13.5-5.8L20 8M20 4v4h-4M20 12a8 8 0 0 1-13.5 5.8L4 16M4 20v-4h4")}</>,
   checks: () => <>{P("m2.5 12.5 4 4L14 8")}{P("m11 16.5.5.5L22 7")}</>,
+  file: () => <>{P("M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z")}{P("M14 3v5h5")}</>,
+  paperclip: () => <>{P("M20 11.5 12.5 19a4 4 0 0 1-5.7-5.7l7.6-7.6a2.7 2.7 0 0 1 3.8 3.8L10.6 17a1.3 1.3 0 0 1-1.9-1.9l6.7-6.7")}</>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

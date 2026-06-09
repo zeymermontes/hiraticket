@@ -10,9 +10,26 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import {
-  sendMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
+  sendMessage, sendMediaMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead,
 } from "@/app/(app)/chat/actions";
+
+function MediaBlock({ m }: { m: ChatMessage }) {
+  const url = m.media_url ?? undefined;
+  if (!url) return null;
+  if (m.type === "image" || m.type === "sticker") {
+    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="" style={{ maxWidth: m.type === "sticker" ? 130 : 240, maxHeight: 280, borderRadius: 10, display: "block" }} /></a>;
+  }
+  if (m.type === "video") return <video src={url} controls style={{ maxWidth: 260, borderRadius: 10, display: "block" }} />;
+  if (m.type === "audio") return <audio src={url} controls style={{ maxWidth: 240 }} />;
+  // document / other
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}>
+      <span className="doc-ic" style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
+      <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
+    </a>
+  );
+}
 
 function Tick({ state }: { state: string | null }) {
   if (state === "read") return <span style={{ color: "var(--wa)", display: "inline-flex" }}><Icon name="checks" size={15} /></span>;
@@ -210,7 +227,7 @@ export function ChatScreen({
       {detail ? (
         <>
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} />}
-          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} />
+          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
@@ -226,13 +243,35 @@ export function ChatScreen({
 }
 
 /* ---------- Thread (right column) ---------- */
-function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible: boolean; onToggleCtx: () => void }) {
+function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible: boolean; onToggleCtx: () => void; businessId: string }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
   const [extra, setExtra] = useState<ChatMessage[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  async function uploadAndSend(files: FileList | File[]) {
+    const supabase = createClient();
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+        const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
+        if (error) { console.error(error); continue; }
+        const { data } = supabase.storage.from("media").getPublicUrl(path);
+        const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
+        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: data.publicUrl, mime: file.type || "application/octet-stream", name: file.name, caption: text.trim() || undefined });
+      }
+      setText("");
+      router.refresh();
+    } finally {
+      setUploading(false);
+    }
+  }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   useEffect(() => { setExtra([]); }, [detail.id, detail.messages.length]);
@@ -244,7 +283,7 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: {
   function doSend() {
     const body = text.trim();
     if (!body) return;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString() }]);
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null }]);
     setText("");
     start(async () => { await sendMessage(detail.id, body); router.refresh(); });
   }
@@ -298,7 +337,8 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: {
             <div className={"msg " + (out ? "out" : "in")} key={m.id}>
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
-                <div>{m.body}</div>
+                {m.type !== "text" && m.media_url && <MediaBlock m={m} />}
+                {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
                 <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
               </div>
             </div>
@@ -311,11 +351,15 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: {
           <div className="composer-input">
             <textarea className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje…" : "Type a message…"} value={text}
               onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); uploadAndSend(files); } }}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } }} />
           </div>
           <div className="composer-actions">
+            <input ref={fileRef} type="file" multiple style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files?.length) uploadAndSend(e.target.files); e.target.value = ""; }} />
+            <button className="iconbtn" onClick={() => fileRef.current?.click()} disabled={uploading} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
             <span className="grow" />
-            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
+            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending || uploading}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
         </div>
       </div>

@@ -14,10 +14,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +58,8 @@ type Manager struct {
 	clients   map[string]*whatsmeow.Client // sessionID -> client
 	byBiz     map[string]*whatsmeow.Client // businessID -> client
 	sessBiz   map[string]string            // sessionID -> businessID
+	supaURL   string                       // Supabase URL (for media storage REST)
+	supaKey   string                       // service-role key
 }
 
 func main() {
@@ -82,6 +89,11 @@ func main() {
 		clients: map[string]*whatsmeow.Client{},
 		byBiz:   map[string]*whatsmeow.Client{},
 		sessBiz: map[string]string{},
+		supaURL: strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
+		supaKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
+	}
+	if m.supaURL == "" || m.supaKey == "" {
+		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
 	}
 
 	logger.Infof("worker booting")
@@ -157,28 +169,97 @@ func (m *Manager) reap(ctx context.Context, alive map[string]bool) {
 func (m *Manager) pollOutbound(ctx context.Context) {
 	for {
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body
+			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name
 			   FROM messages
 			  WHERE direction='out' AND state='queued'
 			  ORDER BY created_at LIMIT 50`)
 		if err == nil {
-			type out struct{ id, biz, conv, body string }
-			var pending []out
+			var pending []outMsg
 			for rows.Next() {
-				var o out
-				var body sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body) == nil {
+				var o outMsg
+				var body, murl, mmime, mname sql.NullString
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname) == nil {
 					o.body = body.String
+					o.murl = murl.String
+					o.mmime = mmime.String
+					o.mname = mname.String
 					pending = append(pending, o)
 				}
 			}
 			rows.Close()
 			for _, o := range pending {
-				m.sendOutbound(ctx, o.id, o.biz, o.conv, o.body)
+				m.sendOutbound(ctx, o)
 			}
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// ---------- media storage ----------
+
+func extFromMime(mime string) string {
+	switch {
+	case strings.Contains(mime, "jpeg"):
+		return "jpg"
+	case strings.Contains(mime, "png"):
+		return "png"
+	case strings.Contains(mime, "webp"):
+		return "webp"
+	case strings.Contains(mime, "gif"):
+		return "gif"
+	case strings.Contains(mime, "mp4"):
+		return "mp4"
+	case strings.Contains(mime, "ogg"):
+		return "ogg"
+	case strings.Contains(mime, "mpeg"):
+		return "mp3"
+	case strings.Contains(mime, "pdf"):
+		return "pdf"
+	default:
+		if i := strings.Index(mime, "/"); i >= 0 && i < len(mime)-1 {
+			return strings.Split(mime[i+1:], ";")[0]
+		}
+		return "bin"
+	}
+}
+
+// uploadMedia stores bytes in the public 'media' bucket and returns the public URL.
+func (m *Manager) uploadMedia(ctx context.Context, path string, data []byte, mime string) (string, error) {
+	if m.supaURL == "" || m.supaKey == "" {
+		return "", fmt.Errorf("storage not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", m.supaURL+"/storage/v1/object/media/"+path, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.supaKey)
+	req.Header.Set("apikey", m.supaKey)
+	req.Header.Set("Content-Type", mime)
+	req.Header.Set("x-upsert", "true")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("storage %d: %s", resp.StatusCode, string(b))
+	}
+	return m.supaURL + "/storage/v1/object/public/media/" + path, nil
+}
+
+func httpGet(ctx context.Context, url string) ([]byte, string, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("get %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	return data, resp.Header.Get("Content-Type"), err
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -334,7 +415,7 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 	case *events.Disconnected:
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1 AND status='connected'`, s.ID)
 	case *events.Message:
-		m.handleIncoming(ctx, s, v)
+		m.handleIncoming(ctx, s, client, v)
 	case *events.Receipt:
 		m.handleReceipt(ctx, v)
 	}
@@ -380,17 +461,34 @@ func partnerPhone(info types.MessageInfo) string {
 	return "+" + info.Chat.User
 }
 
-func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Message) {
+func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsmeow.Client, v *events.Message) {
 	// Only 1:1 chats (skip groups, status@broadcast, newsletters).
 	if v.Info.IsGroup || v.Info.Chat.Server == "broadcast" || v.Info.Chat.Server == "newsletter" {
 		return
 	}
-	text := v.Message.GetConversation()
+
+	// Text + media detection.
+	msg := v.Message
+	text := msg.GetConversation()
 	if text == "" {
-		text = v.Message.GetExtendedTextMessage().GetText()
+		text = msg.GetExtendedTextMessage().GetText()
 	}
-	if text == "" {
-		return
+	mtype, mmime, mname := "text", "", ""
+	switch {
+	case msg.GetImageMessage() != nil:
+		mtype, mmime, text = "image", msg.GetImageMessage().GetMimetype(), firstNonEmpty(msg.GetImageMessage().GetCaption(), text)
+	case msg.GetStickerMessage() != nil:
+		mtype, mmime = "sticker", msg.GetStickerMessage().GetMimetype()
+	case msg.GetAudioMessage() != nil:
+		mtype, mmime = "audio", msg.GetAudioMessage().GetMimetype()
+	case msg.GetVideoMessage() != nil:
+		mtype, mmime, text = "video", msg.GetVideoMessage().GetMimetype(), firstNonEmpty(msg.GetVideoMessage().GetCaption(), text)
+	case msg.GetDocumentMessage() != nil:
+		mtype, mmime, mname = "document", msg.GetDocumentMessage().GetMimetype(), msg.GetDocumentMessage().GetFileName()
+		text = firstNonEmpty(msg.GetDocumentMessage().GetCaption(), text)
+	}
+	if mtype == "text" && text == "" {
+		return // unsupported / empty
 	}
 
 	// Dedupe by WhatsApp message id (so the echo of an app-sent message, and
@@ -447,20 +545,51 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Messa
 		return
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id)
-		VALUES ($1,$2,$3,'text',$4,$5,$6)`, s.BusinessID, convID, dir, text, state, waID)
+	// Download + store media (if any).
+	mediaURL := ""
+	if mtype != "text" {
+		if data, derr := client.DownloadAny(ctx, msg); derr == nil && len(data) > 0 {
+			path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, waID, extFromMime(mmime))
+			if u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream")); uerr == nil {
+				mediaURL = u
+			} else {
+				m.log.Errorf("media upload: %v", uerr)
+			}
+		} else if derr != nil {
+			m.log.Errorf("media download: %v", derr)
+		}
+	}
+	body := text
+	if body == "" && mname != "" {
+		body = mname
+	}
+
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname))
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
 	} else {
 		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
 	}
-	m.log.Infof("saved %s msg from/to %s", dir, partner)
+	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
 }
 
-func (m *Manager) sendOutbound(ctx context.Context, id, biz, conv, body string) {
+func nullIf(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+type outMsg struct {
+	id, biz, conv, body, mtype, murl, mmime, mname string
+}
+
+func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 	m.mu.Lock()
-	client := m.byBiz[biz]
+	client := m.byBiz[o.biz]
 	m.mu.Unlock()
 	if client == nil {
 		return // not connected yet — leave queued for the next poll
@@ -468,7 +597,7 @@ func (m *Manager) sendOutbound(ctx context.Context, id, biz, conv, body string) 
 
 	// Claim atomically so a restart can't double-send.
 	res, err := m.db.ExecContext(ctx,
-		`UPDATE messages SET state='sending' WHERE id=$1 AND state='queued'`, id)
+		`UPDATE messages SET state='sending' WHERE id=$1 AND state='queued'`, o.id)
 	if err != nil {
 		return
 	}
@@ -478,21 +607,90 @@ func (m *Manager) sendOutbound(ctx context.Context, id, biz, conv, body string) 
 
 	var phone sql.NullString
 	if err := m.db.QueryRowContext(ctx,
-		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, conv).
+		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, o.conv).
 		Scan(&phone); err != nil || !phone.Valid || digits(phone.String) == "" {
-		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, id)
+		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+		return
+	}
+	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
+
+	waMsg, err := m.buildOutboundMessage(ctx, client, o)
+	if err != nil {
+		m.log.Errorf("build %s: %v", o.id, err)
+		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
 		return
 	}
 
-	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
-	resp, err := client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(body)})
+	resp, err := client.SendMessage(ctx, jid, waMsg)
 	if err != nil {
-		m.log.Errorf("send %s: %v", id, err)
-		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, id)
+		m.log.Errorf("send %s: %v", o.id, err)
+		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
 		return
 	}
-	// Record the WA id so the fromMe echo of this message is deduped.
-	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2 WHERE id=$1`, id, resp.ID)
+	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2 WHERE id=$1`, o.id, resp.ID)
+}
+
+func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Client, o outMsg) (*waE2E.Message, error) {
+	if o.mtype == "text" || o.murl == "" {
+		return &waE2E.Message{Conversation: proto.String(o.body)}, nil
+	}
+	data, ctype, err := httpGet(ctx, o.murl)
+	if err != nil {
+		return nil, err
+	}
+	mime := firstNonEmpty(o.mmime, ctype, "application/octet-stream")
+	caption := strOrNil(o.body)
+
+	switch o.mtype {
+	case "image":
+		up, err := client.Upload(ctx, data, whatsmeow.MediaImage)
+		if err != nil {
+			return nil, err
+		}
+		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+			Caption: caption, Mimetype: proto.String(mime),
+			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}, nil
+	case "audio":
+		up, err := client.Upload(ctx, data, whatsmeow.MediaAudio)
+		if err != nil {
+			return nil, err
+		}
+		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+			Mimetype: proto.String(mime),
+			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}, nil
+	case "video":
+		up, err := client.Upload(ctx, data, whatsmeow.MediaVideo)
+		if err != nil {
+			return nil, err
+		}
+		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+			Caption: caption, Mimetype: proto.String(mime),
+			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}, nil
+	default: // document and anything else
+		up, err := client.Upload(ctx, data, whatsmeow.MediaDocument)
+		if err != nil {
+			return nil, err
+		}
+		name := firstNonEmpty(o.mname, "archivo")
+		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+			FileName: proto.String(name), Title: proto.String(name), Caption: caption, Mimetype: proto.String(mime),
+			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}, nil
+	}
+}
+
+func strOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // ---------- helpers ----------

@@ -43,6 +43,23 @@ export async function sendMessage(convId: string, text: string): Promise<void> {
   revalidatePath("/chat");
 }
 
+/** Queue an outbound media message (file already uploaded to storage). */
+export async function sendMediaMessage(
+  convId: string,
+  input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string },
+): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  if (!businessId) return;
+  await supabase.from("messages").insert({
+    business_id: businessId, conversation_id: convId, direction: "out",
+    type: input.type, body: input.caption || null, author_id: userId, state: "queued",
+    media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name || null,
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+  revalidatePath("/chat");
+}
+
 export async function setConvStatus(
   convId: string,
   status: "open" | "pending" | "resolved",

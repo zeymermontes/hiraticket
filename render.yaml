@@ -40,3 +40,8 @@ services:
       # e.g. postgresql://postgres:PASSWORD@db.<ref>.supabase.co:5432/postgres?sslmode=require
       - key: DATABASE_URL
         sync: false
+      # Used to store inbound media in the 'media' storage bucket.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
