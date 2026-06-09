@@ -41,6 +41,12 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     contact = ins.data;
   }
 
+  // Link the contact's open conversation, if any, so the order ties to the chat.
+  const { data: conv } = await supabase
+    .from("conversations").select("id")
+    .eq("business_id", businessId).eq("contact_id", contact!.id)
+    .order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+
   const { count } = await supabase
     .from("orders").select("id", { count: "exact", head: true }).eq("business_id", businessId);
   const code = "HIR-" + (1044 + (count ?? 0));
@@ -50,6 +56,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     business_id: businessId,
     code,
     contact_id: contact!.id,
+    conversation_id: conv?.id ?? null,
     stage_id: input.stageId,
     area_id: input.areaId,
     assignee_id: user?.id ?? null,

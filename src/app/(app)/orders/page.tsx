@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function OrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ new?: string; order?: string }>;
+  searchParams: Promise<{ new?: string; order?: string; contact?: string }>;
 }) {
   const business = await getMyBusiness();
   if (!business) return null;
@@ -33,6 +33,7 @@ export default async function OrdersPage({
       agents={agents}
       openOrder={openOrder}
       autoOpen={sp.new === "1"}
+      defaultContact={sp.contact}
     />
   );
 }

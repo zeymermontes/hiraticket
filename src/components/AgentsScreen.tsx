@@ -5,7 +5,7 @@ import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Agent } from "@/lib/chat";
-import { setAgentRole, inviteAgent } from "@/app/(app)/agents/actions";
+import { setAgentRole, setAgentName, inviteAgent } from "@/app/(app)/agents/actions";
 
 const ROLE_COLOR = { admin: "brand", agent: "blue", viewer: "slate" } as const;
 
@@ -48,7 +48,12 @@ export function AgentsScreen({
             {agents.map((a) => (
               <div key={a.id} className="row gap-3" style={{ alignItems: "center", padding: "8px 4px", borderBottom: "1px solid var(--border)" }}>
                 <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={36} presence="online" />
-                <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }} className="truncate">{a.name}</div></div>
+                {isAdmin ? (
+                  <input className="inp-inline grow" defaultValue={a.name}
+                    onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) start(async () => { await setAgentName(businessId, a.id, v); router.refresh(); }); }} />
+                ) : (
+                  <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }} className="truncate">{a.name}</div></div>
+                )}
                 {isAdmin ? (
                   <select className="select select-sm" defaultValue={a.role}
                     onChange={(e) => start(async () => { await setAgentRole(businessId, a.id, e.target.value as Agent["role"]); router.refresh(); })}>

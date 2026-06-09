@@ -22,6 +22,16 @@ export async function setAgentRole(
   revalidatePath("/agents");
 }
 
+/** Rename an agent (admins only) — updates their profile display name. */
+export async function setAgentName(businessId: string, userId: string, name: string): Promise<void> {
+  if (!(await assertAdmin(businessId))) return;
+  const clean = name.trim();
+  if (!clean) return;
+  const admin = createAdminClient();
+  await admin.from("profiles").update({ full_name: clean }).eq("id", userId);
+  revalidatePath("/agents");
+}
+
 export async function inviteAgent(
   businessId: string, email: string, role: "admin" | "agent" | "viewer",
 ): Promise<{ ok: boolean; error?: string }> {

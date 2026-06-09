@@ -14,7 +14,7 @@ import { createOrder } from "@/app/(app)/orders/actions";
 type SortKey = "code" | "total" | "updated_at";
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen,
+  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact,
 }: {
   rows: OrderRow[];
   objectName: string;
@@ -24,6 +24,7 @@ export function OrdersTable({
   agents: Agent[];
   openOrder: OrderDetail | null;
   autoOpen?: boolean;
+  defaultContact?: string;
 }) {
   const { t, lang } = useApp();
   const router = useRouter();
@@ -149,6 +150,7 @@ export function OrdersTable({
           businessId={businessId}
           areas={areas}
           stages={stages}
+          defaultContact={defaultContact}
           onClose={() => setShowNew(false)}
         />
       )}
@@ -167,17 +169,18 @@ export function OrdersTable({
 }
 
 function NewOrderModal({
-  businessId, areas, stages, onClose,
+  businessId, areas, stages, onClose, defaultContact,
 }: {
   businessId: string;
   areas: Area[];
   stages: Stage[];
   onClose: () => void;
+  defaultContact?: string;
 }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [contactName, setContactName] = useState("");
+  const [contactName, setContactName] = useState(defaultContact ?? "");
   const [item, setItem] = useState("");
   const [qty, setQty] = useState("1");
   const [price, setPrice] = useState("");
