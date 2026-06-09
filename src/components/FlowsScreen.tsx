@@ -10,7 +10,14 @@ import { toggleAutomation, deleteAutomation, createAutomation } from "@/app/(app
 
 const TRIGGERS: Record<string, { es: string; en: string }> = {
   order_stage: { es: "Un pedido cambia de etapa", en: "An order changes stage" },
+  conversation_status: { es: "Una conversación cambia de estado", en: "A conversation changes status" },
   conversation_new: { es: "Inicia un chat nuevo", en: "A new chat starts" },
+};
+
+const CONV_STATUS: Record<string, { es: string; en: string }> = {
+  open: { es: "Abierto", en: "Open" },
+  pending: { es: "Pendiente", en: "Pending" },
+  resolved: { es: "Resuelto", en: "Resolved" },
 };
 
 const ACTIONS: Record<string, { es: string; en: string; icon: string }> = {
@@ -27,7 +34,11 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
 
   const payload = w.action_payload as { template?: string; area?: string };
   const act = ACTIONS[w.action_type] ?? { es: w.action_type, en: w.action_type, icon: "bolt" };
-  const stageName = w.trigger_value ? stages.find((s) => s.id === w.trigger_value)?.name : null;
+  const triggerVal = w.trigger_value
+    ? (w.trigger_type === "conversation_status"
+        ? CONV_STATUS[w.trigger_value]?.[lang]
+        : stages.find((s) => s.id === w.trigger_value)?.name)
+    : null;
   const areaName = payload.area ? areas.find((a) => a.id === payload.area)?.name : null;
 
   return (
@@ -41,7 +52,7 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
         </div>
         <div className="flow-line">
           <span className="flow-node when"><Icon name="bolt" size={14} />{lang === "es" ? "Cuando" : "When"} {(TRIGGERS[w.trigger_type]?.[lang] ?? w.trigger_type).toLowerCase()}</span>
-          {stageName && <span className="pill pill-slate">{stageName}</span>}
+          {triggerVal && <span className="pill pill-slate">{triggerVal}</span>}
           <span className="flow-arrow"><Icon name="arrowr" size={16} /></span>
           <span className="flow-node then"><Icon name={act.icon} size={14} />{act[lang]}</span>
           {w.action_type === "send_template" && payload.template && <span className="pill pill-brand">{payload.template}</span>}
@@ -69,6 +80,7 @@ export function FlowsScreen({
   const [name, setName] = useState("");
   const [trigger, setTrigger] = useState("order_stage");
   const [stageId, setStageId] = useState("");
+  const [statusVal, setStatusVal] = useState("open");
   const [action, setAction] = useState("send_template");
   const [template, setTemplate] = useState(cannedTitles[0] ?? "");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
@@ -84,7 +96,7 @@ export function FlowsScreen({
       await createAutomation(businessId, {
         name,
         trigger_type: trigger,
-        trigger_value: trigger === "order_stage" && stageId ? stageId : null,
+        trigger_value: trigger === "order_stage" ? (stageId || null) : trigger === "conversation_status" ? statusVal : null,
         action_type: action,
         template: action === "send_template" ? template : undefined,
         area: action === "transfer_area" ? areaId : undefined,
@@ -124,6 +136,11 @@ export function FlowsScreen({
               <select className="select" value={stageId} onChange={(e) => setStageId(e.target.value)}>
                 <option value="">{lang === "es" ? "Cualquier etapa" : "Any stage"}</option>
                 {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+            {trigger === "conversation_status" && (
+              <select className="select" value={statusVal} onChange={(e) => setStatusVal(e.target.value)}>
+                {Object.keys(CONV_STATUS).map((k) => <option key={k} value={k}>{CONV_STATUS[k][lang]}</option>)}
               </select>
             )}
 

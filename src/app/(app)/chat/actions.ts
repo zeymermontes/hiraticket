@@ -63,7 +63,40 @@ export async function setConvStatus(
     kind: status === "resolved" ? "check" : "status",
     text: `Estado → ${status}`,
   });
+  await runConvStatusAutomations(convId, businessId, status, userId);
   revalidatePath("/chat");
+  revalidatePath("/flows");
+}
+
+/** Fire enabled automations triggered by a conversation reaching a status. */
+async function runConvStatusAutomations(convId: string, businessId: string, status: string, userId: string | null) {
+  const supabase = await createClient();
+  const { data: autos } = await supabase
+    .from("automations").select("id, action_type, action_payload, trigger_value, runs")
+    .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "conversation_status");
+
+  for (const a of autos ?? []) {
+    if (a.trigger_value && a.trigger_value !== status) continue;
+    const payload = (a.action_payload as { template?: string; area?: string }) ?? {};
+
+    if (a.action_type === "send_template" && payload.template) {
+      const { data: conv } = await supabase.from("conversations").select("contact:contacts(name)").eq("id", convId).maybeSingle();
+      const { data: tpl } = await supabase.from("canned_messages").select("body").eq("business_id", businessId).eq("title", payload.template).maybeSingle();
+      if (tpl) {
+        const first = (((conv?.contact as { name?: string } | null)?.name) ?? "").split(" ")[0];
+        const body = String(tpl.body).replace(/\{\{name\}\}/g, first).replace(/\{\{order_number\}\}/g, "").replace(/\{\{total\}\}/g, "");
+        await supabase.from("messages").insert({ business_id: businessId, conversation_id: convId, direction: "out", type: "text", body, author_id: userId, state: "queued" });
+        await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+      }
+    } else if (a.action_type === "transfer_area" && payload.area) {
+      const { data: ar } = await supabase.from("areas").select("route_to").eq("id", payload.area).maybeSingle();
+      await supabase.from("conversations").update({ area_id: payload.area, assignee_id: (ar?.route_to as string) ?? null }).eq("id", convId);
+      await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: transferido de área" });
+    } else if (a.action_type === "notify_agent") {
+      await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente" });
+    }
+    await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
+  }
 }
 
 export async function acceptConv(convId: string): Promise<void> {
