@@ -7,6 +7,7 @@ export interface Business {
   vertical: string;
   object_singular: string;
   onboarded: boolean;
+  custom_fields: string[] | null;
 }
 
 export interface OrderRow {

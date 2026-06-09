@@ -868,3 +868,8 @@ alter table public.messages add column if not exists deleted boolean not null de
 alter table public.messages add column if not exists forwarded boolean not null default false;
 alter table public.messages add column if not exists edited boolean not null default false;
 alter table public.messages add column if not exists meta jsonb;
+
+-- ===== 0016_custom_fields.sql =====
+
+-- Per-vertical custom fields shown on orders (e.g. Plate, Pet, Paper type).
+alter table public.businesses add column if not exists custom_fields jsonb not null default '[]';

@@ -9,7 +9,7 @@ import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { VERTICALS } from "@/lib/verticals";
 import {
-  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, updateBusinessProfile,
+  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, updateBusinessProfile, setCustomFields,
 } from "@/app/(app)/business/actions";
 
 const COLORS: PillColor[] = ["slate", "blue", "violet", "teal", "green", "amber", "red", "brand"];
@@ -33,7 +33,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields,
 }: {
   businessId: string;
   businessName: string;
@@ -42,12 +42,14 @@ export function BusinessConfig({
   agents: Agent[];
   vertical: string | null;
   objectSingular: string;
+  customFields: string[];
 }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const [newStage, setNewStage] = useState("");
   const [newArea, setNewArea] = useState("");
+  const [newField, setNewField] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
@@ -78,6 +80,27 @@ export function BusinessConfig({
               <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "¿Cómo le llamas al objeto?" : "What do you call the object?"}</label>
               <input className="inp-inline grow" defaultValue={objectSingular} placeholder={lang === "es" ? "Pedido" : "Order"}
                 onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== objectSingular) run(() => updateBusinessProfile(businessId, { object_singular: v })); }} />
+            </div>
+          </div>
+        </section>
+
+        {/* Custom fields */}
+        <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+          <div className="ws-block-head"><Icon name="sliders" size={16} /><h4>{lang === "es" ? "Campos personalizados" : "Custom fields"}</h4></div>
+          <div className="ws-block-body col gap-2">
+            <p className="muted t-sm">{lang === "es" ? "Datos extra que capturas por pedido (ej. Placa, Mascota, Tipo de papel)." : "Extra data captured per order (e.g. Plate, Pet, Paper type)."}</p>
+            <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+              {customFields.length === 0 && <span className="muted t-sm">—</span>}
+              {customFields.map((f, i) => (
+                <span key={i} className="row gap-1" style={{ alignItems: "center", padding: "4px 6px 4px 10px", borderRadius: 999, background: "var(--surface-2)", border: "1px solid var(--border)", fontSize: 13 }}>
+                  {f}<button className="iconbtn sm" style={{ width: 18, height: 18 }} onClick={() => run(() => setCustomFields(businessId, customFields.filter((_, j) => j !== i)))}><Icon name="x" size={12} /></button>
+                </span>
+              ))}
+            </div>
+            <div className="row gap-2">
+              <input className="inp-inline grow" placeholder={lang === "es" ? "Nuevo campo…" : "New field…"} value={newField} onChange={(e) => setNewField(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && newField.trim()) { run(() => setCustomFields(businessId, [...customFields, newField.trim()])); setNewField(""); } }} />
+              <button className="btn btn-sm btn-primary" disabled={!newField.trim()} onClick={() => { run(() => setCustomFields(businessId, [...customFields, newField.trim()])); setNewField(""); }}><Icon name="plus" size={14} />{lang === "es" ? "Agregar campo" : "Add field"}</button>
             </div>
           </div>
         </section>

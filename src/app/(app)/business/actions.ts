@@ -59,3 +59,10 @@ export async function updateBusinessProfile(businessId: string, patch: { vertica
   await supabase.from("businesses").update(patch).eq("id", businessId);
   revalidateAll();
 }
+
+/** Replace the per-vertical custom field list. */
+export async function setCustomFields(businessId: string, fields: string[]) {
+  const supabase = await createClient();
+  await supabase.from("businesses").update({ custom_fields: fields }).eq("id", businessId);
+  revalidateAll();
+}
