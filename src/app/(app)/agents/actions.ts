@@ -22,18 +22,24 @@ export async function setAgentRole(
   revalidatePath("/agents");
 }
 
-/** Rename an agent (admins only) — updates the profile AND the auth metadata so the
- *  name + avatar refresh everywhere (agents list, chat author, top-bar profile). */
-export async function setAgentName(businessId: string, userId: string, name: string): Promise<void> {
-  if (!(await assertAdmin(businessId))) return;
+/** Rename an agent (admins only) — upserts the profile (creates it if the row is missing)
+ *  AND updates auth metadata so the name + avatar refresh everywhere. Returns an error so
+ *  the caller can surface why it failed instead of silently no-op'ing. */
+export async function setAgentName(businessId: string, userId: string, name: string): Promise<{ ok: boolean; error?: string }> {
+  if (!(await assertAdmin(businessId))) return { ok: false, error: "forbidden" };
   const clean = name.trim();
-  if (!clean) return;
+  if (!clean) return { ok: false, error: "empty" };
   const admin = createAdminClient();
-  await admin.from("profiles").update({ full_name: clean }).eq("id", userId);
-  await admin.auth.admin.updateUserById(userId, { user_metadata: { full_name: clean } });
+  // upsert (not update): invited agents may not have a profiles row yet, and a bare update
+  // would silently affect 0 rows.
+  const { error } = await admin.from("profiles").upsert({ id: userId, full_name: clean }, { onConflict: "id" });
+  if (error) return { ok: false, error: error.message };
+  // Best-effort: keep auth metadata (used by the top-bar profile) in sync.
+  try { await admin.auth.admin.updateUserById(userId, { user_metadata: { full_name: clean } }); } catch { /* not a real auth user — ignore */ }
   revalidatePath("/agents");
   revalidatePath("/chat");
   revalidatePath("/", "layout");
+  return { ok: true };
 }
 
 /** Assign an agent to an area (admins only). */

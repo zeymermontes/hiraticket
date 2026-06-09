@@ -121,7 +121,15 @@ function EditAgentModal({ businessId, agent, areas, onClose }: { businessId: str
 
   function save() {
     start(async () => {
-      if (name.trim() && name.trim() !== agent.name) await setAgentName(businessId, agent.id, name.trim());
+      if (name.trim() && name.trim() !== agent.name) {
+        const r = await setAgentName(businessId, agent.id, name.trim());
+        if (!r.ok) {
+          alert(r.error === "forbidden"
+            ? (lang === "es" ? "No tienes permisos de admin para renombrar agentes." : "You need admin rights to rename agents.")
+            : (lang === "es" ? "No se pudo cambiar el nombre: " : "Couldn't change the name: ") + (r.error ?? "error"));
+          return;
+        }
+      }
       if (role !== agent.role) await setAgentRole(businessId, agent.id, role);
       const newArea = role === "viewer" ? null : (areaId || null);
       if (newArea !== (agent.area?.id ?? null)) await setAgentArea(businessId, agent.id, newArea);
