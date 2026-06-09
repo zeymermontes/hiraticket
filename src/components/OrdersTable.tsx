@@ -1,17 +1,32 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type OrderRow, type PillColor, priorityColor, formatMoney } from "@/lib/types";
+import type { Area, Stage } from "@/lib/business";
+import { createOrder } from "@/app/(app)/orders/actions";
 
 type SortKey = "code" | "total" | "updated_at";
 
-export function OrdersTable({ rows, objectName }: { rows: OrderRow[]; objectName: string }) {
+export function OrdersTable({
+  rows, objectName, businessId, areas, stages, autoOpen,
+}: {
+  rows: OrderRow[];
+  objectName: string;
+  businessId: string;
+  areas: Area[];
+  stages: Stage[];
+  autoOpen?: boolean;
+}) {
   const { t, lang } = useApp();
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [showNew, setShowNew] = useState(false);
+
+  useEffect(() => { if (autoOpen) setShowNew(true); }, [autoOpen]);
 
   const view = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -68,8 +83,8 @@ export function OrdersTable({ rows, objectName }: { rows: OrderRow[]; objectName
           />
         </div>
         <span className="grow" />
-        <button className="btn btn-sm btn-ghost" type="button">
-          <Icon name="filter" size={14} /> {lang === "es" ? "Filtros" : "Filters"}
+        <button className="btn btn-sm btn-primary" type="button" onClick={() => setShowNew(true)}>
+          <Icon name="plus" size={14} /> {t("new_order")}
         </button>
       </div>
 
@@ -112,6 +127,81 @@ export function OrdersTable({ rows, objectName }: { rows: OrderRow[]; objectName
             )}
           </tbody>
         </table>
+      </div>
+
+      {showNew && (
+        <NewOrderModal
+          businessId={businessId}
+          areas={areas}
+          stages={stages}
+          onClose={() => setShowNew(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewOrderModal({
+  businessId, areas, stages, onClose,
+}: {
+  businessId: string;
+  areas: Area[];
+  stages: Stage[];
+  onClose: () => void;
+}) {
+  const { lang } = useApp();
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [contactName, setContactName] = useState("");
+  const [item, setItem] = useState("");
+  const [qty, setQty] = useState("1");
+  const [price, setPrice] = useState("");
+  const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
+  const [stageId, setStageId] = useState(stages[0]?.id ?? "");
+
+  function submit() {
+    if (!contactName.trim() || !item.trim()) return;
+    start(async () => {
+      await createOrder(businessId, {
+        contactName, item, qty: Number(qty) || 1, price: Number(price) || 0,
+        areaId: areaId || null, stageId: stageId || null,
+      });
+      onClose();
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="modal-wrap">
+      <div className="scrim" onClick={onClose} />
+      <div className="modal" role="dialog">
+        <div className="modal-head">
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="orders" /></span>
+          <h3 className="grow">{lang === "es" ? "Nuevo pedido" : "New order"}</h3>
+          <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
+        </div>
+        <div className="modal-body col gap-2">
+          <label className="lbl">{lang === "es" ? "Cliente" : "Customer"}</label>
+          <input className="inp-inline" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={lang === "es" ? "Nombre del cliente" : "Customer name"} />
+          <label className="lbl">{lang === "es" ? "Artículo" : "Item"}</label>
+          <input className="inp-inline" value={item} onChange={(e) => setItem(e.target.value)} placeholder={lang === "es" ? "Descripción" : "Description"} />
+          <div className="row gap-2">
+            <div className="grow"><label className="lbl">{lang === "es" ? "Cantidad" : "Qty"}</label><input className="inp-inline" style={{ width: "100%" }} value={qty} onChange={(e) => setQty(e.target.value)} /></div>
+            <div className="grow"><label className="lbl">{lang === "es" ? "Precio unit." : "Unit price"}</label><input className="inp-inline" style={{ width: "100%" }} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="$" /></div>
+          </div>
+          <div className="row gap-2">
+            <div className="grow"><label className="lbl">{lang === "es" ? "Etapa" : "Stage"}</label>
+              <select className="select" style={{ width: "100%" }} value={stageId} onChange={(e) => setStageId(e.target.value)}>{stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+            </div>
+            <div className="grow"><label className="lbl">{lang === "es" ? "Área" : "Area"}</label>
+              <select className="select" style={{ width: "100%" }} value={areaId} onChange={(e) => setAreaId(e.target.value)}>{areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+          <button className="btn btn-primary" disabled={pending || !contactName.trim() || !item.trim()} onClick={submit}><Icon name="plus" size={15} />{lang === "es" ? "Crear pedido" : "Create order"}</button>
+        </div>
       </div>
     </div>
   );

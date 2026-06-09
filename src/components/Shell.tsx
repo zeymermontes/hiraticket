@@ -104,9 +104,9 @@ function TopBar({ user }: { user: ShellUser }) {
         </button>
       </form>
 
-      <button className="btn btn-primary" type="button">
+      <Link className="btn btn-primary" href="/orders?new=1">
         <Icon name="plus" /> <span className="hide-narrow">{t("new_order")}</span>
-      </button>
+      </Link>
     </header>
   );
 }
