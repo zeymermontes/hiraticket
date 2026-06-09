@@ -1,17 +1,25 @@
 "use client";
-import React, { useState } from "react";
-import Link from "next/link";
+import React, { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { type PillColor, priorityColor, PRIORITY_LABEL } from "@/lib/types";
 import type { ConvDetail, Agent } from "@/lib/chat";
-import type { Stage } from "@/lib/business";
+import type { Area, Stage } from "@/lib/business";
+import type { OrderDetail } from "@/lib/orders";
+import { OrderDrawer } from "@/components/OrderDrawer";
+import { loadOrderDetail } from "@/app/(app)/orders/actions";
 
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
-export function CustomerOverlay({ detail, agents, stages, onClose }: { detail: ConvDetail; agents: Agent[]; stages: Stage[]; onClose: () => void }) {
+export function CustomerOverlay({ detail, agents, areas, stages, businessId, connected, onClose }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onClose: () => void }) {
+  const router = useRouter();
   const [tab, setTab] = useState<"orders" | "history" | "notes">("orders");
+  const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [, startLoad] = useTransition();
+  const openDrawer = (id: string) => { setLoadingId(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingId(null); }); };
   const agentMap = new Map(agents.map((a) => [a.id, a]));
   const c = detail.contact;
   const orders = detail.orders;
@@ -65,7 +73,7 @@ export function CustomerOverlay({ detail, agents, stages, onClose }: { detail: C
                       {o.items.map((li, i) => <div className="o360-item" key={i}><span className="nm truncate">{li.name}</span><span className="t-xs muted mono">×{li.qty}</span><span className="mono" style={{ fontWeight: 700 }}>{money(li.subtotal)}</span></div>)}
                     </div>
                     <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" /><span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span></div>
-                    <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} />}<Link className="btn btn-sm btn-outline" href={`/orders?order=${o.id}`}>Abrir<Icon name="arrowr" size={13} /></Link></div>
+                    <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} />}<button className="btn btn-sm btn-outline" disabled={loadingId === o.id} onClick={() => openDrawer(o.id)}>{loadingId === o.id ? "…" : "Abrir"}<Icon name="arrowr" size={13} /></button></div>
                   </div>
                 );
               })}
@@ -97,6 +105,19 @@ export function CustomerOverlay({ detail, agents, stages, onClose }: { detail: C
             ); })}</div>
         )}
       </div>
+
+      {openOrder && (
+        <OrderDrawer
+          detail={openOrder}
+          stages={stages}
+          areas={areas}
+          agents={agents}
+          businessId={businessId}
+          convDetail={detail}
+          connected={connected}
+          onClose={() => { setOpenOrder(null); router.refresh(); }}
+        />
+      )}
     </div>
   );
 }

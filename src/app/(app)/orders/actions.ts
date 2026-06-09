@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 
 /** Add an internal note to an order. */
 export async function addOrderNote(orderId: string, body: string): Promise<void> {
@@ -15,6 +16,11 @@ export async function addOrderNote(orderId: string, body: string): Promise<void>
     author_id: user?.id ?? null, body: text,
   });
   revalidatePath("/orders");
+}
+
+/** Load a single order's full detail (for opening the drawer in place, e.g. from the chat). */
+export async function loadOrderDetail(orderId: string): Promise<OrderDetail | null> {
+  return getOrderDetail(orderId);
 }
 
 /** Send a payment link to the order's chat. */

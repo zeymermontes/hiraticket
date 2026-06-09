@@ -298,7 +298,7 @@ export function ChatScreen({
         <>
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
-          {show360 && <CustomerOverlay detail={detail} agents={agents} stages={stages} onClose={() => setShow360(false)} />}
+          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
