@@ -9,6 +9,7 @@ import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
+import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead,
@@ -611,6 +612,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const [actOpen, setActOpen] = useState(true);
+  const [show360, setShow360] = useState(false);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
@@ -650,6 +652,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
               <div className="row gap-2" style={{ marginTop: 3 }}><Icon name="whatsapp" size={14} /><span className="mono t-sm muted nowrap">{detail.contact?.phone}</span></div>
             </div>
             <div className="row gap-1">
+              <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={() => setShow360(true)}><Icon name="eye" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
@@ -740,6 +743,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
         </div>
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
+      {show360 && <CustomerOverlay detail={detail} agents={agents} onClose={() => setShow360(false)} />}
     </div>
   );
 }
