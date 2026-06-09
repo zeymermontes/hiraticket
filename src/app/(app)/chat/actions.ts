@@ -99,6 +99,13 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
   }
 }
 
+/** Mark a conversation read (reset unread) when it's opened. */
+export async function markConvRead(convId: string): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("conversations").update({ unread: 0 }).eq("id", convId);
+  revalidatePath("/chat");
+}
+
 export async function acceptConv(convId: string): Promise<void> {
   const { supabase, userId } = await ctx();
   const businessId = await businessOf(convId);

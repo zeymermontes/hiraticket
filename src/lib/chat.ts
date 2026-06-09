@@ -57,6 +57,7 @@ export interface ConvDetail {
   id: string;
   status: "open" | "pending" | "resolved";
   assignee_id: string | null;
+  unread: number;
   hidden: boolean;
   snoozed_until: string | null;
   area: { name: string; color: string } | null;
@@ -133,7 +134,7 @@ export async function getConversationDetail(
 
   const { data: conv } = await supabase
     .from("conversations")
-    .select("id, status, assignee_id, contact_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url)")
+    .select("id, status, assignee_id, contact_id, unread, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url)")
     .eq("id", convId)
     .maybeSingle();
   if (!conv) return null;
@@ -170,6 +171,7 @@ export async function getConversationDetail(
     id: conv.id,
     status: conv.status,
     assignee_id: conv.assignee_id,
+    unread: conv.unread ?? 0,
     hidden: conv.hidden,
     snoozed_until: conv.snoozed_until,
     area: conv.area as unknown as ConvDetail["area"],

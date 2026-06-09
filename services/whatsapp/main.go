@@ -335,6 +335,28 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1 AND status='connected'`, s.ID)
 	case *events.Message:
 		m.handleIncoming(ctx, s, v)
+	case *events.Receipt:
+		m.handleReceipt(ctx, v)
+	}
+}
+
+// handleReceipt advances outbound message ticks to delivered/read.
+func (m *Manager) handleReceipt(ctx context.Context, v *events.Receipt) {
+	var state string
+	switch v.Type {
+	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
+		state = "read"
+	case types.ReceiptTypeDelivered:
+		state = "delivered"
+	default:
+		return
+	}
+	for _, id := range v.MessageIDs {
+		if state == "read" {
+			m.exec(ctx, `UPDATE messages SET state='read' WHERE wa_id=$1 AND direction='out'`, string(id))
+		} else {
+			m.exec(ctx, `UPDATE messages SET state='delivered' WHERE wa_id=$1 AND direction='out' AND state <> 'read'`, string(id))
+		}
 	}
 }
 

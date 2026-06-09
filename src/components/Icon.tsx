@@ -58,6 +58,7 @@ export const ICONS: Record<string, IconFn> = {
   edit: () => <>{P("M5 19h3l9-9-3-3-9 9v3ZM14.5 6.5l3 3")}</>,
   columns: () => <><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M10 5v14M15 5v14")}</>,
   refresh: () => <>{P("M4 12a8 8 0 0 1 13.5-5.8L20 8M20 4v4h-4M20 12a8 8 0 0 1-13.5 5.8L4 16M4 20v-4h4")}</>,
+  checks: () => <>{P("m2.5 12.5 4 4L14 8")}{P("m11 16.5.5.5L22 7")}</>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

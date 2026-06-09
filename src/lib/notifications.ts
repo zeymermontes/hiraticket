@@ -1,14 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 
-/** Count of your active (non-resolved) chats — shown as a badge on the Chat nav item. */
-export async function getMyChatBadge(businessId: string, userId: string): Promise<number> {
+/** Count of chats with unread messages — badge on the Chat nav item. */
+export async function getMyChatBadge(businessId: string): Promise<number> {
   const supabase = await createClient();
   const { count } = await supabase
     .from("conversations")
     .select("id", { count: "exact", head: true })
     .eq("business_id", businessId)
-    .eq("assignee_id", userId)
-    .neq("status", "resolved");
+    .gt("unread", 0);
   return count ?? 0;
 }
 

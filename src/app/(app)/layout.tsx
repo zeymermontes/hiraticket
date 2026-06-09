@@ -36,7 +36,7 @@ export default async function AppLayout({
   };
 
   const [chatBadge, notifications] = await Promise.all([
-    getMyChatBadge(business.id, user.id),
+    getMyChatBadge(business.id),
     getNotifications(business.id),
   ]);
 

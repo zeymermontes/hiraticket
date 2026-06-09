@@ -11,8 +11,15 @@ import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import {
   sendMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo,
+  deleteConv, renameContact, requestContactInfo, markConvRead,
 } from "@/app/(app)/chat/actions";
+
+function Tick({ state }: { state: string | null }) {
+  if (state === "read") return <span style={{ color: "var(--wa)", display: "inline-flex" }}><Icon name="checks" size={15} /></span>;
+  if (state === "delivered") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="checks" size={15} /></span>;
+  if (state === "sent") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="check" size={13} /></span>;
+  return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
+}
 
 function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boolean {
   return c.hidden || (c.snoozed_until ? new Date(c.snoozed_until).getTime() > Date.now() : false);
@@ -65,6 +72,12 @@ export function ChatScreen({
       .subscribe();
     return () => { clearTimeout(t); supabase.removeChannel(ch); };
   }, [businessId, router]);
+
+  // Mark a conversation read (reset unread) when it's opened.
+  useEffect(() => {
+    if (detail && detail.unread > 0) markConvRead(detail.id).then(() => router.refresh());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id]);
 
   // Center column: show/hide + drag-resize (persisted).
   const [ctxVisible, setCtxVisible] = useState(true);
@@ -286,7 +299,7 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: {
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 <div>{m.body}</div>
-                <div className="bubble-meta">{relTime(m.created_at, lang)}</div>
+                <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
               </div>
             </div>
           );
