@@ -42,6 +42,16 @@ function ContactBlock({ m }: { m: ChatMessage }) {
   );
 }
 
+/** Popover whose menu is fixed-positioned from the trigger rect, so it never gets clipped
+ *  by a scrolling/overflow ancestor. */
+function usePopover() {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const toggle = () => { if (!open && ref.current) setRect(ref.current.getBoundingClientRect()); setOpen((o) => !o); };
+  return { ref, open, rect, toggle, close: () => setOpen(false) };
+}
+
 function MediaBlock({ m }: { m: ChatMessage }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
@@ -73,17 +83,17 @@ function QuotedBlock({ m }: { m: ChatMessage }) {
 
 function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void }) {
   const { lang } = useApp();
-  const [open, setOpen] = useState(false);
+  const { ref, open, rect, toggle, close } = usePopover();
   return (
     <span className={"msg-menu" + (open ? " open" : "")} style={{ position: "absolute", top: 3, [out ? "right" : "left"]: 4 }}>
-      <button className="msg-menu-btn" onClick={() => setOpen((o) => !o)} aria-label="Menu"><Icon name="dots" size={14} /></button>
-      {open && (
+      <button ref={ref} className="msg-menu-btn" onClick={toggle} aria-label="Menu"><Icon name="dots" size={14} /></button>
+      {open && rect && (
         <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ position: "absolute", top: "100%", [out ? "right" : "left"]: 0, width: 160, zIndex: 50 }}>
-            <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
-            {out && m.type === "text" && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
-            {out && <button className="menu-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, [out ? "right" : "left"]: out ? window.innerWidth - rect.right : rect.left, width: 160, zIndex: 201 }}>
+            <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
+            {out && m.type === "text" && <button className="menu-item" onClick={() => { close(); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
+            {out && <button className="menu-item danger" onClick={() => { close(); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
           </div>
         </>
       )}
@@ -577,35 +587,38 @@ function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
 function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents: Agent[]; areas: Area[] }) {
   const { lang } = useApp();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const { ref, open, rect, toggle, close } = usePopover();
   const [pending, start] = useTransition();
 
   function pick(mode: "agent" | "area", id: string) {
-    setOpen(false);
+    close();
     start(async () => { await transferConv(detail.id, mode, id); router.refresh(); });
   }
 
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button className="btn btn-sm btn-outline" disabled={pending} onClick={() => setOpen((o) => !o)}>
+    <span style={{ display: "inline-flex" }}>
+      <button ref={ref} className="btn btn-sm btn-outline" disabled={pending} onClick={toggle}>
         <Icon name="swap" size={14} />{lang === "es" ? "Transferir" : "Transfer"}
       </button>
-      {open && (
-        <div className="menu scroll" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, width: 220, maxHeight: 340, zIndex: 50 }}>
-          <div className="menu-label">{lang === "es" ? "A un agente" : "To an agent"}</div>
-          {agents.filter((a) => a.role !== "viewer").map((a) => (
-            <button className="menu-item" key={a.id} onClick={() => pick("agent", a.id)}>
-              <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}
-            </button>
-          ))}
-          <div className="menu-sep" />
-          <div className="menu-label">{lang === "es" ? "A un área" : "To an area"}</div>
-          {areas.map((ar) => (
-            <button className="menu-item" key={ar.id} onClick={() => pick("area", ar.id)}>
-              <Pill color={ar.color as PillColor}>{ar.name}</Pill>
-            </button>
-          ))}
-        </div>
+      {open && rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
+          <div className="menu scroll" style={{ position: "fixed", top: rect.bottom + 6, right: window.innerWidth - rect.right, width: 220, maxHeight: 340, zIndex: 201 }}>
+            <div className="menu-label">{lang === "es" ? "A un agente" : "To an agent"}</div>
+            {agents.filter((a) => a.role !== "viewer").map((a) => (
+              <button className="menu-item" key={a.id} onClick={() => pick("agent", a.id)}>
+                <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}
+              </button>
+            ))}
+            <div className="menu-sep" />
+            <div className="menu-label">{lang === "es" ? "A un área" : "To an area"}</div>
+            {areas.map((ar) => (
+              <button className="menu-item" key={ar.id} onClick={() => pick("area", ar.id)}>
+                <Pill color={ar.color as PillColor}>{ar.name}</Pill>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </span>
   );
@@ -765,19 +778,22 @@ function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail
 function StatusControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button className="act" onClick={() => setOpen((o) => !o)}><Icon name="dot" />{lang === "es" ? "Estado" : "Status"}</button>
-      {open && (
-        <div className="menu" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, width: 180, zIndex: 50 }}>
-          {(["open", "pending", "resolved"] as const).map((s) => (
-            <button className="menu-item" key={s} onClick={() => { setOpen(false); start(async () => { await setConvStatus(detail.id, s); router.refresh(); }); }}>
-              <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
-            </button>
-          ))}
-        </div>
+    <span style={{ display: "inline-flex" }}>
+      <button ref={ref} className="act" onClick={toggle}><Icon name="dot" />{lang === "es" ? "Estado" : "Status"}</button>
+      {open && rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 180, zIndex: 201 }}>
+            {(["open", "pending", "resolved"] as const).map((s) => (
+              <button className="menu-item" key={s} onClick={() => { close(); start(async () => { await setConvStatus(detail.id, s); router.refresh(); }); }}>
+                <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </span>
   );
@@ -786,16 +802,18 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
 function SnoozeControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   const snoozed = detail.snoozed_until ? new Date(detail.snoozed_until).getTime() > Date.now() : false;
-  const apply = (iso: string | null) => { setOpen(false); start(async () => { await snoozeConv(detail.id, iso); router.refresh(); }); };
+  const apply = (iso: string | null) => { close(); start(async () => { await snoozeConv(detail.id, iso); router.refresh(); }); };
 
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button className={"act" + (snoozed ? " warn" : "")} onClick={() => setOpen((o) => !o)}><Icon name="clock" />{lang === "es" ? "Posponer" : "Snooze"}</button>
-      {open && (
-        <div className="menu" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, width: 220, zIndex: 50 }}>
+    <span style={{ display: "inline-flex" }}>
+      <button ref={ref} className={"act" + (snoozed ? " warn" : "")} onClick={toggle}><Icon name="clock" />{lang === "es" ? "Posponer" : "Snooze"}</button>
+      {open && rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 220, zIndex: 201 }}>
           {snoozeShortcuts(lang).map((o) => (
             <button className="menu-item" key={o.label} onClick={() => apply(o.iso)}><Icon name="clock" size={15} />{o.label}</button>
           ))}
@@ -811,7 +829,8 @@ function SnoozeControl({ detail }: { detail: ConvDetail }) {
               <button className="menu-item" onClick={() => apply(null)}><Icon name="check" size={15} />{lang === "es" ? "Reactivar ahora" : "Un-snooze now"}</button>
             </>
           )}
-        </div>
+          </div>
+        </>
       )}
     </span>
   );
