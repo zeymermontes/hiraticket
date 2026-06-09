@@ -31,18 +31,19 @@ export function CampaignsScreen({
           <div className="ws-block-head"><Icon name="send" size={16} /><h4>{lang === "es" ? "Historial" : "History"}</h4></div>
           <div className="tablewrap">
             <table className="tbl">
-              <thead><tr><th>{lang === "es" ? "Campaña" : "Campaign"}</th><th>{lang === "es" ? "Audiencia" : "Audience"}</th><th>{lang === "es" ? "Enviados" : "Sent"}</th><th>{lang === "es" ? "Leídos" : "Read"}</th><th>{lang === "es" ? "Fecha" : "Date"}</th></tr></thead>
+              <thead><tr><th>{lang === "es" ? "Campaña" : "Campaign"}</th><th>{lang === "es" ? "Estado" : "Status"}</th><th>{lang === "es" ? "Audiencia" : "Audience"}</th><th>{lang === "es" ? "Entregado" : "Delivered"}</th><th>{lang === "es" ? "Leído" : "Read"}</th><th>{lang === "es" ? "Fecha" : "Date"}</th></tr></thead>
               <tbody>
                 {campaigns.map((c) => (
                   <tr key={c.id}>
                     <td><strong>{c.name}</strong></td>
+                    <td><Pill color={c.sent_at ? "green" : "slate"} dot>{c.sent_at ? (lang === "es" ? "Enviada" : "Sent") : (lang === "es" ? "Borrador" : "Draft")}</Pill></td>
                     <td className="t-sm muted">{c.audience}</td>
-                    <td className="mono">{c.delivered}/{c.recipients}</td>
+                    <td className="mono">{c.recipients ? Math.round((c.delivered / c.recipients) * 100) : 0}% <span className="muted t-xs">({c.delivered}/{c.recipients})</span></td>
                     <td className="mono">{c.recipients ? Math.round((c.read / c.recipients) * 100) : 0}%</td>
                     <td className="t-sm muted">{fmt(c.sent_at)}</td>
                   </tr>
                 ))}
-                {campaigns.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: "center", padding: 24 }}>{lang === "es" ? "Sin campañas." : "No campaigns."}</td></tr>}
+                {campaigns.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 24 }}>{lang === "es" ? "Sin campañas." : "No campaigns."}</td></tr>}
               </tbody>
             </table>
           </div>

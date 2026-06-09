@@ -2,12 +2,24 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
-import { Pill } from "@/components/ui";
+import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Appointment } from "@/lib/extras";
 import { createAppointment, setAppointmentStatus } from "@/app/(app)/features-actions";
 
 const ST_COLOR = { scheduled: "blue", done: "green", canceled: "red" } as const;
+const ST_LABEL: Record<string, { es: string; en: string }> = {
+  scheduled: { es: "Programada", en: "Scheduled" },
+  done: { es: "Hecha", en: "Done" },
+  canceled: { es: "Cancelada", en: "Canceled" },
+};
+
+function dayBucket(iso: string, lang: "es" | "en"): string {
+  const d = new Date(iso), today = new Date(), tom = new Date(); tom.setDate(today.getDate() + 1);
+  if (d.toDateString() === today.toDateString()) return lang === "es" ? "Hoy" : "Today";
+  if (d.toDateString() === tom.toDateString()) return lang === "es" ? "Mañana" : "Tomorrow";
+  return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { weekday: "long", day: "2-digit", month: "long" });
+}
 
 export function AgendaScreen({ businessId, appointments }: { businessId: string; appointments: Appointment[] }) {
   const { lang } = useApp();
@@ -23,25 +35,32 @@ export function AgendaScreen({ businessId, appointments }: { businessId: string;
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Agenda" : "Agenda"}</h1><Pill color="slate" large>{appointments.length}</Pill></div>
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
-        <section className="ws-block">
-          <div className="ws-block-head"><Icon name="calendar" size={16} /><h4>{lang === "es" ? "Citas" : "Appointments"}</h4></div>
-          <div className="ws-block-body col gap-2">
-            {appointments.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin citas." : "No appointments."}</div>}
-            {appointments.map((a) => (
-              <div key={a.id} className="row gap-3" style={{ alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 12 }}>
-                <span style={{ width: 38, height: 38, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar" size={18} /></span>
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600 }} className="truncate">{a.title}</div>
-                  <div className="t-xs muted">{fmt(a.starts_at)}{a.contact ? ` · ${a.contact.name}` : ""}</div>
-                </div>
-                <Pill color={ST_COLOR[a.status as keyof typeof ST_COLOR] ?? "slate"} dot>{a.status}</Pill>
-                {a.status === "scheduled" && (
-                  <button className="iconbtn sm" title={lang === "es" ? "Marcar hecha" : "Mark done"} style={{ color: "var(--green)" }} onClick={() => run(() => setAppointmentStatus(a.id, "done"))}><Icon name="check" size={15} /></button>
-                )}
+        <div className="col gap-3" style={{ minWidth: 0 }}>
+          {appointments.length === 0 && <section className="ws-block"><div className="ws-block-body"><div className="muted t-sm">{lang === "es" ? "Sin citas." : "No appointments."}</div></div></section>}
+          {[...new Set(appointments.map((a) => dayBucket(a.starts_at, lang)))].map((bucket) => (
+            <section className="ws-block" key={bucket}>
+              <div className="ws-block-head"><Icon name="calendar" size={16} /><h4 className="grow" style={{ textTransform: "capitalize" }}>{bucket}</h4><span className="badge badge-soft">{appointments.filter((a) => dayBucket(a.starts_at, lang) === bucket).length}</span></div>
+              <div className="ws-block-body col gap-2">
+                {appointments.filter((a) => dayBucket(a.starts_at, lang) === bucket).map((a) => (
+                  <div key={a.id} className="row gap-3" style={{ alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 12 }}>
+                    <div style={{ textAlign: "center", minWidth: 52, borderRight: "1px solid var(--border)", paddingRight: 10 }}>
+                      <div className="mono" style={{ fontWeight: 800, fontSize: 15 }}>{new Date(a.starts_at).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "2-digit", minute: "2-digit" })}</div>
+                    </div>
+                    {a.contact ? <Avatar name={a.contact.name} initials={deriveInitials(a.contact.name)} size={32} /> : <span style={{ width: 32, height: 32, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar" size={16} /></span>}
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600 }} className="truncate">{a.title}</div>
+                      {a.contact && <div className="t-xs muted">{a.contact.name}</div>}
+                    </div>
+                    <Pill color={ST_COLOR[a.status as keyof typeof ST_COLOR] ?? "slate"} dot>{ST_LABEL[a.status]?.[lang] ?? a.status}</Pill>
+                    {a.status === "scheduled" && (
+                      <button className="iconbtn sm" title={lang === "es" ? "Marcar hecha" : "Mark done"} style={{ color: "var(--green)" }} onClick={() => run(() => setAppointmentStatus(a.id, "done"))}><Icon name="check" size={15} /></button>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </section>
+            </section>
+          ))}
+        </div>
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Nueva cita" : "New appointment"}</h4></div>
