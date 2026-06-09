@@ -10,8 +10,23 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import {
-  sendMessage, setConvStatus, acceptConv, addConvNote, transferConv,
+  sendMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
 } from "@/app/(app)/chat/actions";
+
+function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boolean {
+  return c.hidden || (c.snoozed_until ? new Date(c.snoozed_until).getTime() > Date.now() : false);
+}
+
+function snoozeShortcuts(lang: "es" | "en"): { label: string; iso: string }[] {
+  const mk = (fn: (d: Date) => void) => { const d = new Date(); fn(d); return d.toISOString(); };
+  return [
+    { label: lang === "es" ? "En 1 hora" : "In 1 hour", iso: mk((d) => d.setHours(d.getHours() + 1)) },
+    { label: lang === "es" ? "En 3 horas" : "In 3 hours", iso: mk((d) => d.setHours(d.getHours() + 3)) },
+    { label: lang === "es" ? "Esta tarde (18:00)" : "This evening (6pm)", iso: mk((d) => d.setHours(18, 0, 0, 0)) },
+    { label: lang === "es" ? "Mañana 9:00" : "Tomorrow 9am", iso: mk((d) => { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }) },
+    { label: lang === "es" ? "Próxima semana" : "Next week", iso: mk((d) => { d.setDate(d.getDate() + 7); d.setHours(9, 0, 0, 0); }) },
+  ];
+}
 
 const STATUS_COLOR: Record<string, PillColor> = { open: "blue", pending: "amber", resolved: "green" };
 const STATUS_LABEL: Record<string, { es: string; en: string }> = {
@@ -50,11 +65,14 @@ export function ChatScreen({
   }, [businessId, router]);
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   const filtered = useMemo(() => {
     return list.filter((c) => {
+      // Snoozed/hidden live in a separate view; active list excludes them.
+      if (isArchived(c) !== showArchived) return false;
       if (tab === "mine" && c.assignee_id !== meId) return false;
       if (tab === "unassigned" && c.assignee_id != null) return false;
       if (statusF && c.status !== statusF) return false;
@@ -64,7 +82,9 @@ export function ChatScreen({
       }
       return true;
     });
-  }, [list, tab, statusF, q, meId]);
+  }, [list, tab, statusF, q, meId, showArchived]);
+
+  const archivedN = list.filter(isArchived).length;
 
   const mineN = list.filter((c) => c.assignee_id === meId).length;
   const unN = list.filter((c) => c.assignee_id == null).length;
@@ -91,6 +111,9 @@ export function ChatScreen({
                 <Icon name="dot" size={12} /> {STATUS_LABEL[s][lang]}
               </button>
             ))}
+            <button className={"btn btn-sm " + (showArchived ? "btn-primary" : "btn-outline")} onClick={() => setShowArchived((v) => !v)}>
+              <Icon name="clock" size={12} /> {lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}{archivedN > 0 && <span className="badge badge-soft">{archivedN}</span>}
+            </button>
           </div>
         </div>
         <div className="col-scroll scroll">
@@ -112,7 +135,10 @@ export function ChatScreen({
                     </div>
                     <div className="conv-prev truncate">{c.preview}</div>
                     <div className="conv-meta">
-                      <Pill color={STATUS_COLOR[c.status]} dot>{STATUS_LABEL[c.status][lang]}</Pill>
+                      {c.snoozed_until && new Date(c.snoozed_until).getTime() > Date.now()
+                        ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>
+                        : <Pill color={STATUS_COLOR[c.status]} dot>{STATUS_LABEL[c.status][lang]}</Pill>}
+                      {c.hidden && <Pill color="slate"><Icon name="eye" size={11} /></Pill>}
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
                       <span className="grow" />
                       {a ? <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} /> : <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
@@ -329,6 +355,10 @@ function Workspace({ detail, agents, areas }: { detail: ConvDetail; agents: Agen
           <div className="ws-block-body">
             <div className="actions-grid">
               <StatusControl detail={detail} />
+              <SnoozeControl detail={detail} />
+              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
+                <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
+              </button>
               {detail.status === "resolved"
                 ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); router.refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
                 : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); router.refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
@@ -390,6 +420,40 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
               <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
             </button>
           ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function SnoozeControl({ detail }: { detail: ConvDetail }) {
+  const { lang } = useApp();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [, start] = useTransition();
+  const snoozed = detail.snoozed_until ? new Date(detail.snoozed_until).getTime() > Date.now() : false;
+  const apply = (iso: string | null) => { setOpen(false); start(async () => { await snoozeConv(detail.id, iso); router.refresh(); }); };
+
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button className={"act" + (snoozed ? " warn" : "")} onClick={() => setOpen((o) => !o)}><Icon name="clock" />{lang === "es" ? "Posponer" : "Snooze"}</button>
+      {open && (
+        <div className="menu" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, width: 220, zIndex: 50 }}>
+          {snoozeShortcuts(lang).map((o) => (
+            <button className="menu-item" key={o.label} onClick={() => apply(o.iso)}><Icon name="clock" size={15} />{o.label}</button>
+          ))}
+          <div className="menu-sep" />
+          <div style={{ padding: "4px 8px" }}>
+            <div className="t-xs muted" style={{ marginBottom: 4 }}>{lang === "es" ? "Fecha personalizada" : "Custom date"}</div>
+            <input type="datetime-local" className="inp-inline" style={{ width: "100%" }}
+              onChange={(e) => { if (e.target.value) apply(new Date(e.target.value).toISOString()); }} />
+          </div>
+          {snoozed && (
+            <>
+              <div className="menu-sep" />
+              <button className="menu-item" onClick={() => apply(null)}><Icon name="check" size={15} />{lang === "es" ? "Reactivar ahora" : "Un-snooze now"}</button>
+            </>
+          )}
         </div>
       )}
     </span>

@@ -98,6 +98,27 @@ export async function addConvNote(convId: string, body: string): Promise<void> {
   revalidatePath("/chat");
 }
 
+export async function setConvHidden(convId: string, hidden: boolean): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("conversations").update({ hidden }).eq("id", convId);
+  revalidatePath("/chat");
+}
+
+/** Snooze (postpone) a conversation until `untilISO`, or pass null to un-snooze. */
+export async function snoozeConv(convId: string, untilISO: string | null): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  await supabase.from("conversations").update({ snoozed_until: untilISO }).eq("id", convId);
+  if (businessId) {
+    await supabase.from("events").insert({
+      business_id: businessId, parent_type: "conversation", parent_id: convId,
+      actor_id: userId, kind: "clock",
+      text: untilISO ? "Pospuesto" : "Reactivado",
+    });
+  }
+  revalidatePath("/chat");
+}
+
 export async function transferConv(
   convId: string,
   mode: "agent" | "area",

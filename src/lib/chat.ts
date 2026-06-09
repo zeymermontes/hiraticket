@@ -13,6 +13,8 @@ export interface ConvListItem {
   unread: number;
   last_message_at: string | null;
   assignee_id: string | null;
+  hidden: boolean;
+  snoozed_until: string | null;
   area: { name: string; color: string } | null;
   contact: { id: string; name: string; phone: string | null } | null;
   preview: string;
@@ -55,6 +57,8 @@ export interface ConvDetail {
   id: string;
   status: "open" | "pending" | "resolved";
   assignee_id: string | null;
+  hidden: boolean;
+  snoozed_until: string | null;
   area: { name: string; color: string } | null;
   contact: { id: string; name: string; phone: string | null; tags: string[] } | null;
   messages: ChatMessage[];
@@ -95,7 +99,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   const { data, error } = await supabase
     .from("conversations")
     .select(
-      "id, status, unread, last_message_at, assignee_id, area:areas(name,color), contact:contacts(id,name,phone), messages(body,created_at)",
+      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone), messages(body,created_at)",
     )
     .eq("business_id", businessId)
     .order("last_message_at", { ascending: false });
@@ -113,6 +117,8 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       unread: c.unread,
       last_message_at: c.last_message_at,
       assignee_id: c.assignee_id,
+      hidden: c.hidden,
+      snoozed_until: c.snoozed_until,
       area: c.area,
       contact: c.contact,
       preview: last?.body ?? "",
@@ -127,7 +133,7 @@ export async function getConversationDetail(
 
   const { data: conv } = await supabase
     .from("conversations")
-    .select("id, status, assignee_id, contact_id, area:areas(name,color), contact:contacts(id,name,phone,tags)")
+    .select("id, status, assignee_id, contact_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags)")
     .eq("id", convId)
     .maybeSingle();
   if (!conv) return null;
@@ -164,6 +170,8 @@ export async function getConversationDetail(
     id: conv.id,
     status: conv.status,
     assignee_id: conv.assignee_id,
+    hidden: conv.hidden,
+    snoozed_until: conv.snoozed_until,
     area: conv.area as unknown as ConvDetail["area"],
     contact: conv.contact as unknown as ConvDetail["contact"],
     messages: (messages ?? []) as ChatMessage[],

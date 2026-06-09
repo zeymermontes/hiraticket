@@ -365,7 +365,8 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Messa
 	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id)
 		VALUES ($1,$2,$3,'text',$4,$5,$6)`, s.BusinessID, convID, dir, text, state, waID)
 	if dir == "in" {
-		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now() WHERE id=$2`, unread+1, convID)
+		// A new customer message resurfaces the chat: clear snooze/hidden.
+		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
 	} else {
 		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
 	}
