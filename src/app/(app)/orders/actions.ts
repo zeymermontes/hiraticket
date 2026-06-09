@@ -113,11 +113,10 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
   revalidatePath("/orders");
 }
 
+interface NewOrderItem { item: string; qty: number; price: number }
 interface NewOrder {
   contactName: string;
-  item: string;
-  qty: number;
-  price: number;
+  items: NewOrderItem[];
   areaId: string | null;
   stageId: string | null;
   priority?: string;
@@ -147,7 +146,10 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   const { count } = await supabase
     .from("orders").select("id", { count: "exact", head: true }).eq("business_id", businessId);
   const code = "HIR-" + (1044 + (count ?? 0));
-  const total = (input.qty || 1) * (input.price || 0);
+
+  const lines = (input.items ?? []).filter((l) => (l.item ?? "").trim() || l.qty || l.price);
+  if (lines.length === 0) lines.push({ item: "Artículo", qty: 1, price: 0 });
+  const total = lines.reduce((s, l) => s + (l.qty || 1) * (l.price || 0), 0);
 
   const { data: order } = await supabase.from("orders").insert({
     business_id: businessId,
@@ -162,10 +164,10 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   }).select("id").single();
 
   if (order) {
-    await supabase.from("order_items").insert({
-      order_id: order.id, name: input.item.trim() || "Artículo", qty: input.qty || 1,
-      unit_price: input.price || 0, subtotal: total,
-    });
+    await supabase.from("order_items").insert(lines.map((l) => ({
+      order_id: order.id, name: (l.item ?? "").trim() || "Artículo", qty: l.qty || 1,
+      unit_price: l.price || 0, subtotal: (l.qty || 1) * (l.price || 0), stage_id: input.stageId,
+    })));
     await supabase.from("events").insert({
       business_id: businessId, parent_type: "order", parent_id: order.id,
       actor_id: user?.id ?? null, kind: "plus", text: "Pedido creado",

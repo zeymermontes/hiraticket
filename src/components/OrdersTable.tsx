@@ -284,19 +284,35 @@ function NewOrderModal({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [contactName, setContactName] = useState(defaultContact ?? "");
-  const [item, setItem] = useState("");
-  const [qty, setQty] = useState("1");
-  const [price, setPrice] = useState("");
+  type Line = { item: string; qty: string; price: string };
+  const [lines, setLines] = useState<Line[]>([{ item: "", qty: "1", price: "" }]);
   const [priority, setPriority] = useState("normal");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
-  const subtotal = (Number(qty) || 0) * (Number(price) || 0);
+  const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  const hasItem = lines.some((l) => l.item.trim());
+
+  const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const addLine = (l?: Line) => setLines((ls) => [...ls, l ?? { item: "", qty: "1", price: "" }]);
+  const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls));
+  const addFromCatalog = (id: string) => {
+    const p = products.find((x) => x.id === id);
+    if (!p) return;
+    const line: Line = { item: p.name, qty: "1", price: String(p.price) };
+    // Fill the first empty row, else append.
+    setLines((ls) => {
+      const i = ls.findIndex((l) => !l.item.trim());
+      if (i >= 0) return ls.map((l, j) => (j === i ? line : l));
+      return [...ls, line];
+    });
+  };
 
   function submit() {
-    if (!contactName.trim() || !item.trim()) return;
+    if (!contactName.trim() || !hasItem) return;
     start(async () => {
       await createOrder(businessId, {
-        contactName, item, qty: Number(qty) || 1, price: Number(price) || 0,
+        contactName,
+        items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0 })),
         areaId: areaId || null, stageId: stageId || null, priority,
       });
       onClose();
@@ -320,17 +336,23 @@ function NewOrderModal({
           {products.length > 0 && (
             <>
               <label className="lbl">{lang === "es" ? "Agregar del catálogo" : "Add from catalog"}</label>
-              <select className="select" value="" onChange={(e) => { const p = products.find((x) => x.id === e.target.value); if (p) { setItem(p.name); setPrice(String(p.price)); } }}>
+              <select className="select" value="" onChange={(e) => { addFromCatalog(e.target.value); e.target.value = ""; }}>
                 <option value="">{lang === "es" ? "— elige un producto —" : "— pick a product —"}</option>
                 {products.map((p) => <option key={p.id} value={p.id}>{p.name} · ${formatMoney(p.price)}</option>)}
               </select>
             </>
           )}
-          <label className="lbl">{lang === "es" ? "Artículo" : "Item"}</label>
-          <input className="inp-inline" value={item} onChange={(e) => setItem(e.target.value)} placeholder={lang === "es" ? "Descripción" : "Description"} />
-          <div className="row gap-2">
-            <div className="grow"><label className="lbl">{lang === "es" ? "Cantidad" : "Qty"}</label><input className="inp-inline" style={{ width: "100%" }} value={qty} onChange={(e) => setQty(e.target.value)} /></div>
-            <div className="grow"><label className="lbl">{lang === "es" ? "Precio unit." : "Unit price"}</label><input className="inp-inline" style={{ width: "100%" }} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="$" /></div>
+          <label className="lbl">{lang === "es" ? "Artículos" : "Items"}</label>
+          <div className="col gap-2">
+            {lines.map((l, i) => (
+              <div className="row gap-2" key={i} style={{ alignItems: "flex-end" }}>
+                <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={lang === "es" ? "Descripción" : "Description"} /></div>
+                <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>
+                <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>
+                <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
+              </div>
+            ))}
+            <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => addLine()}><Icon name="plus" size={14} />{lang === "es" ? "Agregar producto" : "Add product"}</button>
           </div>
           <div className="row gap-2">
             <div className="grow"><label className="lbl">{lang === "es" ? "Etapa" : "Stage"}</label>
@@ -352,7 +374,7 @@ function NewOrderModal({
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={pending || !contactName.trim() || !item.trim()} onClick={submit}><Icon name="plus" size={15} />{lang === "es" ? "Crear pedido" : "Create order"}</button>
+          <button className="btn btn-primary" disabled={pending || !contactName.trim() || !hasItem} onClick={submit}><Icon name="plus" size={15} />{lang === "es" ? "Crear pedido" : "Create order"}</button>
         </div>
       </div>
     </div>
