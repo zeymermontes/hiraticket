@@ -17,7 +17,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag,
 } from "@/app/(app)/chat/actions";
 
 function LocationBlock({ m }: { m: ChatMessage }) {
@@ -296,6 +296,7 @@ export function ChatScreen({
                         : <Pill color={STATUS_COLOR[c.status]} dot>{STATUS_LABEL[c.status][lang]}</Pill>}
                       {c.hidden && <Pill color="slate"><Icon name="eye" size={11} /></Pill>}
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
+                      {(c.contact?.tags ?? []).slice(0, 3).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
                       <span className="grow" />
                       {a ? <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} /> : <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
                       {c.unread > 0 && <span className="badge badge-red">{c.unread}</span>}
@@ -871,6 +872,7 @@ function Workspace({ detail, agents, areas, businessId, onResizeStart, onOpen360
       {tagRect && detail.contact && (
         <TagPicker businessId={businessId} current={detail.contact.tags ?? []} rect={tagRect}
           onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); router.refresh(); })}
+          onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); router.refresh(); })}
           onClose={() => setTagRect(null)} />
       )}
     </div>

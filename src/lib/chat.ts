@@ -16,7 +16,7 @@ export interface ConvListItem {
   hidden: boolean;
   snoozed_until: string | null;
   area: { name: string; color: string } | null;
-  contact: { id: string; name: string; phone: string | null; avatar_url: string | null } | null;
+  contact: { id: string; name: string; phone: string | null; avatar_url: string | null; tags: string[] | null } | null;
   preview: string;
 }
 
@@ -113,7 +113,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   const { data, error } = await supabase
     .from("conversations")
     .select(
-      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,avatar_url), messages(body,created_at)",
+      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at)",
     )
     .eq("business_id", businessId)
     .order("last_message_at", { ascending: false });

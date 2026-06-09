@@ -214,6 +214,16 @@ export async function addContactTag(contactId: string, tag: string): Promise<voi
   revalidatePath("/chat");
 }
 
+/** Remove a tag from a contact. */
+export async function removeContactTag(contactId: string, tag: string): Promise<void> {
+  const { supabase } = await ctx();
+  const { data: c } = await supabase.from("contacts").select("tags").eq("id", contactId).maybeSingle();
+  const tags = ((c?.tags as string[]) ?? []).filter((t) => t !== tag);
+  await supabase.from("contacts").update({ tags }).eq("id", contactId);
+  revalidatePath("/chat");
+  revalidatePath("/orders");
+}
+
 /** Ask the worker to (re)fetch the contact's WhatsApp name + profile photo. */
 export async function requestContactInfo(contactId: string): Promise<void> {
   const { supabase } = await ctx();

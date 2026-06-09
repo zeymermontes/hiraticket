@@ -14,6 +14,7 @@ import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag } from "@/app/(app)/orders/actions";
+import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -196,6 +197,7 @@ export function OrderDrawer({
       {tagRect && (
         <TagPicker businessId={businessId} current={detail.contact?.tags ?? []} rect={tagRect}
           onPick={(t) => run(() => addOrderTag(detail.id, t))}
+          onRemove={detail.contact ? (t) => run(() => removeContactTag(detail.contact!.id, t)) : undefined}
           onClose={() => setTagRect(null)} />
       )}
     </>

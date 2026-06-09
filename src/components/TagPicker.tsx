@@ -8,12 +8,13 @@ import { tagColor } from "@/lib/types";
 
 /** Popover to pick an existing tag or create a new one (deterministic colors). */
 export function TagPicker({
-  businessId, current, rect, onPick, onClose,
+  businessId, current, rect, onPick, onRemove, onClose,
 }: {
   businessId: string;
   current: string[];
   rect: DOMRect;
   onPick: (tag: string) => void;
+  onRemove?: (tag: string) => void;
   onClose: () => void;
 }) {
   const { lang } = useApp();
@@ -41,6 +42,15 @@ export function TagPicker({
       <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 256), width: 240, maxHeight: 320, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden", zIndex: 201 }}>
         <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
           <div className="field field-sm field-filled"><Icon name="tag" size={14} /><input autoFocus placeholder={lang === "es" ? "Buscar o crear…" : "Search or create…"} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) choose(q); }} /></div>
+          {onRemove && current.length > 0 && (
+            <div className="row gap-1" style={{ flexWrap: "wrap", marginTop: 8 }}>
+              {current.map((t) => (
+                <span key={t} style={{ display: "inline-flex", alignItems: "center" }}>
+                  <Pill color={tagColor(t)}>{t}<button className="iconbtn" style={{ width: 15, height: 15, marginLeft: 3 }} onClick={() => onRemove(t)} aria-label="remove"><Icon name="x" size={11} /></button></Pill>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="scroll" style={{ overflowY: "auto", padding: 4 }}>
           {q.trim() && !exists && (
