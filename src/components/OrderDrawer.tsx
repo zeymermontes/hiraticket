@@ -1,6 +1,5 @@
 "use client";
 import React, { useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -9,6 +8,7 @@ import { type PillColor, priorityColor, formatMoney } from "@/lib/types";
 import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
+import { MobileChatPanel } from "@/components/MobileChatPanel";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, markPaid, assignOrder } from "@/app/(app)/orders/actions";
 
@@ -27,6 +27,7 @@ export function OrderDrawer({
   const [pending, start] = useTransition();
   const [note, setNote] = useState("");
   const [xfer, setXfer] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
   const assignee = detail.assignee_id ? agents.find((a) => a.id === detail.assignee_id) : null;
@@ -71,9 +72,9 @@ export function OrderDrawer({
               {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
             </div>
             {detail.conversation_id && (
-              <Link className="btn btn-sm btn-outline btn-block" style={{ marginTop: 12 }} href={`/chat?c=${detail.conversation_id}`}>
-                <Icon name="whatsapp" size={14} />{lang === "es" ? "Abrir conversación" : "Open conversation"}<span className="grow" /><Icon name="arrowr" size={14} />
-              </Link>
+              <button className={"btn btn-sm btn-block " + (chatOpen ? "btn-primary" : "btn-outline")} style={{ marginTop: 12 }} onClick={() => setChatOpen((v) => !v)}>
+                <Icon name="whatsapp" size={14} />{lang === "es" ? "Abrir conversación" : "Open conversation"}<span className="grow" /><Icon name={chatOpen ? "x" : "arrowr"} size={14} />
+              </button>
             )}
           </div>
 
@@ -149,6 +150,9 @@ export function OrderDrawer({
             : <button className="btn btn-dark grow" onClick={onClose}><Icon name="check" size={15} />{lang === "es" ? "Cerrar" : "Close"}</button>}
         </div>
       </aside>
+      {detail.conversation_id && chatOpen && (
+        <MobileChatPanel conversationId={detail.conversation_id} contactName={detail.contact?.name ?? ""} phone={detail.contact?.phone} onClose={() => setChatOpen(false)} />
+      )}
     </>
   );
 }
