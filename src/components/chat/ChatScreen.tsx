@@ -358,6 +358,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [cannedOpen, setCannedOpen] = useState(false);
   const [canned, setCanned] = useState<{ id: string; title: string; body: string }[]>([]);
+  const emojiBtn = useRef<HTMLButtonElement>(null);
+  const cannedBtn = useRef<HTMLButtonElement>(null);
+  const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
+  const [cannedRect, setCannedRect] = useState<DOMRect | null>(null);
 
   async function loadCanned() {
     if (canned.length) return;
@@ -497,23 +501,23 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <input ref={fileRef} type="file" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
             <button className="iconbtn" onClick={() => fileRef.current?.click()} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
-            <span style={{ position: "relative", display: "inline-flex" }}>
-              <button className="iconbtn" onClick={() => { setEmojiOpen((o) => !o); setCannedOpen(false); }} title="Emoji" style={{ fontSize: 16 }}>😀</button>
-              {emojiOpen && (
+            <span style={{ display: "inline-flex" }}>
+              <button ref={emojiBtn} className="iconbtn" onClick={() => { if (!emojiOpen && emojiBtn.current) setEmojiRect(emojiBtn.current.getBoundingClientRect()); setEmojiOpen((o) => !o); setCannedOpen(false); }} title="Emoji" style={{ fontSize: 16 }}>😀</button>
+              {emojiOpen && emojiRect && (
                 <>
-                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setEmojiOpen(false)} />
-                  <div className="menu" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 232, padding: 8, display: "grid", gridTemplateColumns: "repeat(8,1fr)", gap: 2, zIndex: 50 }}>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setEmojiOpen(false)} />
+                  <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - emojiRect.top + 6, left: emojiRect.left, width: 232, padding: 8, display: "grid", gridTemplateColumns: "repeat(8,1fr)", gap: 2, zIndex: 201 }}>
                     {EMOJIS.map((e) => <button key={e} className="iconbtn" style={{ fontSize: 18 }} onClick={() => { setText((v) => v + e); setEmojiOpen(false); }}>{e}</button>)}
                   </div>
                 </>
               )}
             </span>
-            <span style={{ position: "relative", display: "inline-flex" }}>
-              <button className="iconbtn" onClick={() => { setCannedOpen((o) => !o); setEmojiOpen(false); loadCanned(); }} title={lang === "es" ? "Plantillas" : "Templates"}><Icon name="canned" /></button>
-              {cannedOpen && (
+            <span style={{ display: "inline-flex" }}>
+              <button ref={cannedBtn} className="iconbtn" onClick={() => { if (!cannedOpen && cannedBtn.current) setCannedRect(cannedBtn.current.getBoundingClientRect()); setCannedOpen((o) => !o); setEmojiOpen(false); loadCanned(); }} title={lang === "es" ? "Plantillas" : "Templates"}><Icon name="canned" /></button>
+              {cannedOpen && cannedRect && (
                 <>
-                  <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setCannedOpen(false)} />
-                  <div className="menu scroll" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 300, maxHeight: 320, zIndex: 50 }}>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setCannedOpen(false)} />
+                  <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - cannedRect.top + 6, left: cannedRect.left, width: 300, maxHeight: 320, zIndex: 201 }}>
                     {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div> :
                       canned.map((c) => (
                         <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }} onClick={() => { setText((v) => (v ? v + " " : "") + fillVars(c.body)); setCannedOpen(false); }}>

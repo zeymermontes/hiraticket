@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -85,6 +85,9 @@ function NavRail({ badges, objectName, user }: { badges: Record<string, number |
   const pathname = usePathname();
   const { lang, t } = useApp();
   const [profOpen, setProfOpen] = useState(false);
+  const profBtn = useRef<HTMLButtonElement>(null);
+  const [profRect, setProfRect] = useState<DOMRect | null>(null);
+  const toggleProf = () => { if (!profOpen && profBtn.current) setProfRect(profBtn.current.getBoundingClientRect()); setProfOpen((o) => !o); };
 
   const renderItem = (it: NavItem) => {
     const on = pathname === it.href || pathname.startsWith(it.href + "/");
@@ -107,14 +110,14 @@ function NavRail({ badges, objectName, user }: { badges: Record<string, number |
       <div className="rail-sep" />
       <div className="rail-nav">{ADMIN.map(renderItem)}</div>
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
-        <button className="rail-item" style={{ width: "100%" }} onClick={() => setProfOpen((o) => !o)}>
+        <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
           <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={28} presence="online" />
           <span className="rl truncate">{user.name}</span>
         </button>
-        {profOpen && (
+        {profOpen && profRect && (
           <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setProfOpen(false)} />
-            <div className="menu" style={{ position: "absolute", bottom: "calc(100% + 4px)", left: 8, width: 220, zIndex: 50 }}>
+            <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setProfOpen(false)} />
+            <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - profRect.top + 6, left: profRect.left, width: 220, zIndex: 201 }}>
               <div style={{ padding: "8px 12px" }}><div style={{ fontWeight: 700 }} className="truncate">{user.name}</div><div className="t-xs muted truncate">{user.email}</div></div>
               <div className="menu-sep" />
               <Link className="menu-item" href="/settings" onClick={() => setProfOpen(false)}><Icon name="settings" size={15} />{t("nav_settings")}</Link>
