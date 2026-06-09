@@ -168,16 +168,31 @@ export function ChatScreen({
   // Center column: show/hide + drag-resize (persisted).
   const [ctxVisible, setCtxVisible] = useState(true);
   const [ctxW, setCtxW] = useState(360);
+  const [listW, setListW] = useState(300);
   useEffect(() => {
     try {
       const v = localStorage.getItem("ht_ctxVisible");
       const w = localStorage.getItem("ht_ctxW");
+      const lw = localStorage.getItem("ht_listW");
       if (v != null) setCtxVisible(v === "true");
       if (w != null) setCtxW(Math.max(280, Math.min(680, Number(w) || 360)));
+      if (lw != null) setListW(Math.max(240, Math.min(480, Number(lw) || 300)));
     } catch {}
   }, []);
   useEffect(() => { try { localStorage.setItem("ht_ctxVisible", String(ctxVisible)); } catch {} }, [ctxVisible]);
   useEffect(() => { try { localStorage.setItem("ht_ctxW", String(ctxW)); } catch {} }, [ctxW]);
+  useEffect(() => { try { localStorage.setItem("ht_listW", String(listW)); } catch {} }, [listW]);
+
+  const startListResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const listEl = (e.currentTarget as HTMLElement).parentElement;
+    if (!listEl) return;
+    const left = listEl.getBoundingClientRect().left;
+    const onMove = (ev: PointerEvent) => setListW(Math.max(240, Math.min(480, ev.clientX - left)));
+    const onUp = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); document.body.style.cursor = ""; document.body.style.userSelect = ""; };
+    document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+  };
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -233,12 +248,13 @@ export function ChatScreen({
       style={{
         position: "relative",
         gridTemplateColumns: detail && ctxVisible
-          ? `300px ${ctxW}px minmax(300px,1fr)`
-          : "300px minmax(300px,1fr)",
+          ? `${listW}px ${ctxW}px minmax(300px,1fr)`
+          : `${listW}px minmax(300px,1fr)`,
       }}
     >
       {/* list column */}
-      <div className="chatcol list">
+      <div className="chatcol list" style={{ position: "relative" }}>
+        <div className="col-resizer" onPointerDown={startListResize} title="" />
         <div className="col-head">
           <div className="seg" style={{ width: "100%" }}>
             {([["mine", lang === "es" ? "Míos" : "Mine", mineN], ["unassigned", lang === "es" ? "Sin asignar" : "Unassigned", unN], ["all", lang === "es" ? "Todos" : "All", null]] as const).map(([id, lbl, n]) => (
