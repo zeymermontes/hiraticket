@@ -40,7 +40,7 @@ async function runStageAutomations(orderId: string, businessId: string, stageId:
 
   for (const a of autos ?? []) {
     if (a.trigger_value && a.trigger_value !== stageId) continue;
-    const payload = (a.action_payload as { template?: string; area?: string }) ?? {};
+    const payload = (a.action_payload as { template?: string; area?: string; agent?: string; tag?: string }) ?? {};
 
     if (a.action_type === "send_template" && payload.template) {
       const { data: order } = await supabase
@@ -71,6 +71,18 @@ async function runStageAutomations(orderId: string, businessId: string, stageId:
       await supabase.from("events").insert({
         business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente",
       });
+    } else if (a.action_type === "assign_agent" && payload.agent) {
+      await supabase.from("orders").update({ assignee_id: payload.agent }).eq("id", orderId);
+      await supabase.from("events").insert({
+        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "swap", text: "Auto: asignado a agente",
+      });
+    } else if (a.action_type === "add_tag" && payload.tag) {
+      const { data: o } = await supabase.from("orders").select("contact_id").eq("id", orderId).maybeSingle();
+      if (o?.contact_id) {
+        const { data: c } = await supabase.from("contacts").select("tags").eq("id", o.contact_id).maybeSingle();
+        const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), payload.tag]));
+        await supabase.from("contacts").update({ tags }).eq("id", o.contact_id);
+      }
     }
 
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);

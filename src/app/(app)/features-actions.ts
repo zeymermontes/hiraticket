@@ -17,13 +17,15 @@ export async function createAutomation(
   businessId: string,
   input: {
     name: string; trigger_type: string; trigger_value: string | null;
-    action_type: string; template?: string; area?: string;
+    action_type: string; template?: string; area?: string; agent?: string; tag?: string;
   },
 ) {
   const supabase = await createClient();
   const payload: Record<string, unknown> = {};
   if (input.action_type === "send_template" && input.template) payload.template = input.template;
   if (input.action_type === "transfer_area" && input.area) payload.area = input.area;
+  if (input.action_type === "assign_agent" && input.agent) payload.agent = input.agent;
+  if (input.action_type === "add_tag" && input.tag) payload.tag = input.tag;
 
   await supabase.from("automations").insert({
     business_id: businessId,

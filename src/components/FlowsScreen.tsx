@@ -6,6 +6,7 @@ import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Automation } from "@/lib/extras";
 import type { Area, Stage } from "@/lib/business";
+import type { Agent } from "@/lib/chat";
 import { toggleAutomation, deleteAutomation, createAutomation } from "@/app/(app)/features-actions";
 
 const TRIGGERS: Record<string, { es: string; en: string }> = {
@@ -27,15 +28,17 @@ const ACTIONS: Record<string, { es: string; en: string; icon: string }> = {
   send_template: { es: "Enviar plantilla", en: "Send template", icon: "send" },
   notify_agent: { es: "Notificar al agente asignado", en: "Notify assigned agent", icon: "bell" },
   transfer_area: { es: "Transferir al área", en: "Transfer to area", icon: "swap" },
+  assign_agent: { es: "Asignar a un agente", en: "Assign to an agent", icon: "agents" },
+  add_tag: { es: "Agregar etiqueta", en: "Add a tag", icon: "tag" },
 };
 
-function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: Stage[] }) {
+function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; stages: Stage[]; agents: Agent[] }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
-  const payload = w.action_payload as { template?: string; area?: string };
+  const payload = w.action_payload as { template?: string; area?: string; agent?: string; tag?: string };
   const act = ACTIONS[w.action_type] ?? { es: w.action_type, en: w.action_type, icon: "bolt" };
   const triggerVal = w.trigger_value
     ? (w.trigger_type === "conversation_status"
@@ -43,6 +46,7 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
         : stages.find((s) => s.id === w.trigger_value)?.name)
     : null;
   const areaName = payload.area ? areas.find((a) => a.id === payload.area)?.name : null;
+  const agentName = payload.agent ? agents.find((a) => a.id === payload.agent)?.name : null;
 
   return (
     <div className={"flow-card" + (w.enabled ? "" : " off")}>
@@ -61,6 +65,8 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
           <span className="flow-node then"><Icon name={act.icon} size={14} />{act[lang]}</span>
           {w.action_type === "send_template" && payload.template && <span className="pill pill-brand">{payload.template}</span>}
           {w.action_type === "transfer_area" && areaName && <span className="pill pill-brand">{areaName}</span>}
+          {w.action_type === "assign_agent" && agentName && <span className="pill pill-brand">{agentName}</span>}
+          {w.action_type === "add_tag" && payload.tag && <span className="pill pill-brand">{payload.tag}</span>}
         </div>
       </div>
       <button className="iconbtn" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteAutomation(w.id))}><Icon name="trash" /></button>
@@ -69,13 +75,14 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
 }
 
 export function FlowsScreen({
-  businessId, automations, cannedTitles, areas, stages,
+  businessId, automations, cannedTitles, areas, stages, agents,
 }: {
   businessId: string;
   automations: Automation[];
   cannedTitles: string[];
   areas: Area[];
   stages: Stage[];
+  agents: Agent[];
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -88,6 +95,8 @@ export function FlowsScreen({
   const [action, setAction] = useState("send_template");
   const [template, setTemplate] = useState(cannedTitles[0] ?? "");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
+  const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
+  const [tag, setTag] = useState("");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -104,10 +113,12 @@ export function FlowsScreen({
         action_type: action,
         template: action === "send_template" ? template : undefined,
         area: action === "transfer_area" ? areaId : undefined,
+        agent: action === "assign_agent" ? agentId : undefined,
+        tag: action === "add_tag" ? tag.trim() : undefined,
       });
       router.refresh();
     });
-    setName("");
+    setName(""); setTag("");
   }
 
   return (
@@ -136,7 +147,7 @@ export function FlowsScreen({
               <h3>{lang === "es" ? "Sin flujos todavía" : "No flows yet"}</h3>
               <p className="muted t-sm">{lang === "es" ? "Crea tu primer flujo para automatizar respuestas y transferencias." : "Create your first flow to automate replies and transfers."}</p>
             </div>
-          ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} />)}
+          ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} agents={agents} />)}
           {filtered.length > 0 && <div className="t-xs muted" style={{ padding: "8px 4px" }}>{lang === "es" ? "Pruébalo: avanza un pedido a “Listo” y se envía la plantilla automáticamente." : "Try it: advance an order to “Ready” and the template is sent automatically."}</div>}
         </div>
 
@@ -175,6 +186,14 @@ export function FlowsScreen({
               <select className="select" value={areaId} onChange={(e) => setAreaId(e.target.value)}>
                 {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
+            )}
+            {action === "assign_agent" && (
+              <select className="select" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+                {agents.filter((a) => a.role !== "viewer").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            )}
+            {action === "add_tag" && (
+              <input className="inp-inline" placeholder={lang === "es" ? "Etiqueta (ej. VIP)" : "Tag (e.g. VIP)"} value={tag} onChange={(e) => setTag(e.target.value)} />
             )}
 
             <button className="btn btn-primary btn-block" disabled={pending || !name.trim()} onClick={create}>

@@ -111,7 +111,7 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
 
   for (const a of autos ?? []) {
     if (a.trigger_value && a.trigger_value !== status) continue;
-    const payload = (a.action_payload as { template?: string; area?: string }) ?? {};
+    const payload = (a.action_payload as { template?: string; area?: string; agent?: string; tag?: string }) ?? {};
 
     if (a.action_type === "send_template" && payload.template) {
       const { data: conv } = await supabase.from("conversations").select("contact:contacts(name)").eq("id", convId).maybeSingle();
@@ -128,6 +128,16 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
       await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: transferido de área" });
     } else if (a.action_type === "notify_agent") {
       await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente" });
+    } else if (a.action_type === "assign_agent" && payload.agent) {
+      await supabase.from("conversations").update({ assignee_id: payload.agent }).eq("id", convId);
+      await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: asignado a agente" });
+    } else if (a.action_type === "add_tag" && payload.tag) {
+      const { data: conv } = await supabase.from("conversations").select("contact_id").eq("id", convId).maybeSingle();
+      if (conv?.contact_id) {
+        const { data: c } = await supabase.from("contacts").select("tags").eq("id", conv.contact_id).maybeSingle();
+        const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), payload.tag]));
+        await supabase.from("contacts").update({ tags }).eq("id", conv.contact_id);
+      }
     }
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
   }
