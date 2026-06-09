@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hiraticket — WhatsApp y pedidos en un solo lugar</title>
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="ui.css" />
+<link rel="stylesheet" href="landing.css" />
+</head>
+<body class="landing">
+
+<!-- icon symbols -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12.1 7.5L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-orders" viewBox="0 0 24 24"><path d="M8 4h8a2 2 0 0 1 2 2v13a1 1 0 0 1-1.5.9L15 19l-1.5 1-1.5-1-1.5 1L9 19l-1.5.9A1 1 0 0 1 6 19V6a2 2 0 0 1 2-2ZM9.5 9h5M9.5 12.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-kanban" viewBox="0 0 24 24"><path d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-wa" viewBox="0 0 24 24"><path d="M12 2.2a9.8 9.8 0 0 0-8.4 14.9L2.2 21.8l4.8-1.3A9.8 9.8 0 1 0 12 2.2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 7.8c-.2-.5-.4-.5-.6-.5h-.5a1 1 0 0 0-.7.3c-.3.3-.9.9-.9 2.1s.9 2.4 1 2.6c.1.2 1.7 2.8 4.3 3.8 2.1.8 2.6.7 3 .6.5-.1 1.4-.6 1.6-1.1.2-.6.2-1 .1-1.1l-.5-.3-1.5-.7c-.2-.1-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a5.8 5.8 0 0 1-1.7-1.1 6.5 6.5 0 0 1-1.2-1.5c-.1-.2 0-.3.1-.4l.4-.5.3-.5v-.4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19M20 19v-1.5a3.5 3.5 0 0 0-2.6-3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 8h12l-3-3M17 16H5l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 4l1.4 3.6L17 9l-3.6 1.4L12 14l-1.4-3.6L7 9l3.6-1.4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 7.7 7 9 4-1.3 7-4.5 7-9V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4.3l2.8 1.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-store" viewBox="0 0 24 24"><path d="M5 9.5 6 5h12l1 4.5M5 9.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5M5 9.5a2.2 2.2 0 0 0 4.5 0 2.2 2.2 0 0 0 4.5 0 2.2 2.2 0 0 0 4.5 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</defs></svg>
+
+<!-- announce -->
+<div class="announce">
+  <span data-i18n="ann1">🎉 14 días gratis · sin tarjeta de crédito</span>
+  <span class="sep">·</span>
+  <span data-i18n="ann2">Conecta tu WhatsApp en 2 minutos</span>
+</div>
+
+<!-- nav -->
+<nav class="lnav"><div class="lwrap lnav-inner">
+  <a class="brand" href="Landing.html"><span class="mark">H</span>Hiraticket</a>
+  <div class="lnav-links">
+    <a href="#features" data-i18n="nav_product">Producto</a>
+    <a href="#pricing" data-i18n="nav_pricing">Precios</a>
+    <a href="#faq">FAQ</a>
+    <a href="Platform.html" data-i18n="nav_platform">Plataforma</a>
+  </div>
+  <span style="flex:1"></span>
+  <div class="seg" style="height:34px"><button data-lang="es">ES</button><button data-lang="en">EN</button></div>
+  <button class="iconbtn" id="themeBtn" aria-label="theme"></button>
+  <a class="btn btn-ghost" href="Login.html" data-i18n="nav_login">Iniciar sesión</a>
+  <a class="btn btn-primary" href="Login.html" data-i18n="nav_trial">Prueba gratis</a>
+</div></nav>
+
+<!-- hero -->
+<section class="hero"><div class="lwrap hero-grid">
+  <div>
+    <span class="hero-badge"><svg width="14" height="14"><use href="#i-wa"/></svg><span data-i18n="hero_badge">WhatsApp + Pedidos</span></span>
+    <h1 id="heroTitle"></h1>
+    <p class="hero-sub" data-i18n="hero_sub">Atiende cada chat de WhatsApp, rutea pedidos entre áreas y guarda todo el historial del cliente. La bandeja y el back-office de tu negocio, juntos.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary btn-lg" href="Login.html"><span data-i18n="hero_cta1">Empieza gratis</span></a>
+      <a class="btn btn-lg" href="Hiraticket.html" style="background:rgba(255,255,255,.1);color:#fff"><span data-i18n="hero_cta2">Ver demo en vivo</span> →</a>
+    </div>
+    <div class="hero-trust">
+      <span class="it"><svg><use href="#i-check"/></svg><span data-i18n="trust1">Sin tarjeta</span></span>
+      <span class="it"><svg><use href="#i-check"/></svg><span data-i18n="trust2">Conexión en 2 min</span></span>
+      <span class="it"><svg><use href="#i-check"/></svg><span data-i18n="trust3">Cancela cuando quieras</span></span>
+    </div>
+  </div>
+  <div>
+    <div class="window">
+      <div class="window-bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="addr">app.hiraticket.com</span></div>
+      <img src="screenshots/chat.png" alt="Hiraticket" onerror="this.style.display='none';this.parentNode.insertAdjacentHTML('beforeend','<div class=&quot;shot-ph&quot;>captura del producto</div>')" />
+    </div>
+  </div>
+</div></section>
+
+<!-- logos -->
+<section class="logos"><div class="lwrap">
+  <div style="text-align:center;color:var(--text-faint);font-size:13px;font-weight:600;margin-bottom:20px" data-i18n="logos_title">Negocios de todo México ya venden por WhatsApp con Hiraticket</div>
+  <div class="logos-row">
+    <span class="lg">Hirata</span><span class="lg">Boutique Lunaria</span><span class="lg">TecnoCelular</span><span class="lg">IronFit</span><span class="lg">La Espiga</span>
+  </div>
+</div></section>
+
+<!-- features -->
+<section class="sec" id="features"><div class="lwrap">
+  <div class="sec-head">
+    <div class="sec-eyebrow" data-i18n="feat_eyebrow">Todo en un lugar</div>
+    <h2 data-i18n="feat_title">Deja de saltar entre apps</h2>
+    <p data-i18n="feat_sub">Chats, pedidos y equipo en una sola pantalla pensada para negocios que venden por WhatsApp.</p>
+  </div>
+  <div class="feat-grid">
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-chat"/></svg></div><h3 data-i18n="f1t">Bandeja unificada</h3><p data-i18n="f1d">Todos los chats de WhatsApp de tu negocio en una bandeja, con filtros, asignación y estados.</p></div>
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-orders"/></svg></div><h3 data-i18n="f2t">Pedidos vinculados</h3><p data-i18n="f2d">Crea pedidos desde el chat y mira el cliente, sus compras y su historial lado a lado.</p></div>
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-kanban"/></svg></div><h3 data-i18n="f3t">Tablero Kanban</h3><p data-i18n="f3d">Arrastra pedidos por etapas o por áreas: Ventas, Diseño, Producción y Envíos.</p></div>
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-swap"/></svg></div><h3 data-i18n="f4t">Áreas y ruteo</h3><p data-i18n="f4d">Transfiere chats y pedidos entre agentes y áreas con bitácora completa de cada cambio.</p></div>
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-sparkles"/></svg></div><h3 data-i18n="f5t">Plantillas rápidas</h3><p data-i18n="f5d">Respuestas listas con variables como {{name}} y {{order_number}} que se llenan solas.</p></div>
+    <div class="feat"><div class="feat-ic"><svg><use href="#i-bolt"/></svg></div><h3 data-i18n="f6t">En tiempo real</h3><p data-i18n="f6d">Mensajes, transferencias y estados se actualizan al instante para todo el equipo.</p></div>
+  </div>
+</div></section>
+
+<!-- split -->
+<section class="sec bg-soft"><div class="lwrap split">
+  <div>
+    <div class="sec-eyebrow" data-i18n="split_eyebrow">Cliente 360</div>
+    <h2 style="font-size:34px;font-weight:800;letter-spacing:-.02em;margin-top:10px;line-height:1.1" data-i18n="split_title">Todo el contexto del cliente, sin buscar</h2>
+    <p style="color:var(--text-muted);font-size:16px;margin-top:14px;line-height:1.55" data-i18n="split_sub">Abre una conversación y ve sus pedidos, notas internas e historial completo. Atiende mejor, sin pedir el número de pedido tres veces.</p>
+    <div class="split-list">
+      <div class="split-item"><span class="ic"><svg><use href="#i-orders"/></svg></span><div><h4 data-i18n="s1t">Pedidos e historial</h4><p data-i18n="s1d">Cada compra, estado y monto del cliente en una vista expandible.</p></div></div>
+      <div class="split-item"><span class="ic"><svg><use href="#i-users"/></svg></span><div><h4 data-i18n="s2t">Notas internas</h4><p data-i18n="s2d">Comparte contexto con tu equipo sin que lo vea el cliente.</p></div></div>
+      <div class="split-item"><span class="ic"><svg><use href="#i-clock"/></svg></span><div><h4 data-i18n="s3t">Bitácora de cambios</h4><p data-i18n="s3d">Quién transfirió, quién cambió el estado y cuándo. Todo queda registrado.</p></div></div>
+    </div>
+  </div>
+  <div class="window">
+    <div class="window-bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div>
+    <img src="screenshots/cust360.png" alt="Cliente 360" onerror="this.style.display='none';this.parentNode.insertAdjacentHTML('beforeend','<div class=&quot;shot-ph&quot;>cliente 360</div>')" />
+  </div>
+</div></section>
+
+<!-- pricing -->
+<section class="sec" id="pricing"><div class="lwrap">
+  <div class="sec-head">
+    <div class="sec-eyebrow" data-i18n="price_eyebrow">Precios</div>
+    <h2 data-i18n="price_title">Planes simples, en pesos</h2>
+    <p data-i18n="price_sub">Empieza con 14 días gratis. Cambia o cancela tu plan cuando quieras.</p>
+  </div>
+  <div style="text-align:center">
+    <div class="pricing-toggle">
+      <span data-i18n="bill_monthly" id="lblMonthly" style="font-weight:600">Mensual</span>
+      <button class="switch" id="billToggle"></button>
+      <span data-i18n="bill_annual" id="lblAnnual" style="font-weight:600;color:var(--text-muted)">Anual</span>
+      <span class="pill pill-brand" data-i18n="bill_save">2 meses gratis</span>
+    </div>
+  </div>
+  <div class="price-grid" id="priceGrid"></div>
+</div></section>
+
+<!-- quote -->
+<section class="sec bg-soft"><div class="lwrap quote">
+  <div class="sec-eyebrow" data-i18n="quote_eyebrow" style="text-align:center">Historias reales</div>
+  <blockquote data-i18n="quote_text" style="margin-top:16px">“Antes perdíamos pedidos en mensajes sin contestar. Con Hiraticket todo el equipo ve el mismo chat y nada se cae.”</blockquote>
+  <div class="by"><span style="width:44px;height:44px;border-radius:50%;background:#C99A04;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">MO</span><div style="text-align:left"><div style="font-weight:700">Mariana Ortiz</div><div class="muted" style="font-size:13px" data-i18n="quote_by">Hirata · Impresión Digital</div></div></div>
+</div></section>
+
+<!-- faq -->
+<section class="sec" id="faq"><div class="lwrap">
+  <div class="sec-head"><div class="sec-eyebrow">FAQ</div><h2 data-i18n="faq_title">Preguntas frecuentes</h2></div>
+  <div class="faq" id="faqList"></div>
+</div></section>
+
+<!-- cta -->
+<section class="sec" style="padding-top:0"><div class="lwrap"><div class="cta-band">
+  <h2 data-i18n="cta_title">Empieza hoy</h2>
+  <p data-i18n="cta_sub">Conecta tu WhatsApp y organiza tus pedidos en minutos. 14 días gratis.</p>
+  <a class="btn btn-primary btn-lg" href="Login.html" style="position:relative"><span data-i18n="cta_btn">Crear cuenta gratis</span> →</a>
+</div></div></section>
+
+<!-- footer -->
+<footer class="footer"><div class="lwrap">
+  <div class="footer-grid">
+    <div>
+      <a class="brand" href="Landing.html"><span class="mark">H</span>Hiraticket</a>
+      <p class="muted" style="font-size:14px;margin-top:12px;max-width:260px" data-i18n="foot_tag">La bandeja de WhatsApp y los pedidos de tu negocio, en un solo lugar.</p>
+    </div>
+    <div><h5 data-i18n="foot_product">Producto</h5><a href="#features" data-i18n="nav_product">Producto</a><a href="#pricing" data-i18n="nav_pricing">Precios</a><a href="Hiraticket.html" data-i18n="foot_demo">Demo</a></div>
+    <div><h5 data-i18n="foot_company">Empresa</h5><a href="#faq">FAQ</a><a href="Platform.html" data-i18n="nav_platform">Plataforma</a><a href="Login.html" data-i18n="nav_login">Iniciar sesión</a></div>
+    <div><h5 data-i18n="foot_legal">Legal</h5><a href="#" data-i18n="foot_privacy">Privacidad</a><a href="#" data-i18n="foot_terms">Términos</a></div>
+  </div>
+  <div class="footer-bottom">
+    <span>© 2026 Hiraticket</span><span class="sep">·</span><span data-i18n="foot_made">Hecho en México 🇲🇽</span>
+    <span style="flex:1"></span>
+    <span data-i18n="foot_note">Integración no oficial vía WhatsApp Web.</span>
+  </div>
+</div></footer>
+
+<script src="plans.js"></script>
+<script src="landing.js"></script>
+</body>
+</html>

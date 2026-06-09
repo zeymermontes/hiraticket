@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hiraticket — Iniciar sesión</title>
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="ui.css" />
+<style>
+  body { height: 100%; }
+  .login-grid { height: 100vh; display: grid; grid-template-columns: 1.05fr 1fr; }
+  .brand-panel { background: var(--ink); color: #fff; padding: 48px 56px; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+  .brand-panel .glow { position: absolute; width: 520px; height: 520px; border-radius: 50%; background: radial-gradient(circle, rgba(245,197,24,.16), transparent 70%); right: -160px; top: -120px; }
+  .brand-row { display: flex; align-items: center; gap: 12px; position: relative; }
+  .brand-row .mark { width: 44px; height: 44px; border-radius: 14px; background: var(--brand); color: var(--on-brand); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 22px; font-family: 'Archivo Expanded','Archivo',sans-serif; box-shadow: var(--sh-brand); }
+  .brand-big { font-family: 'Archivo Expanded','Archivo',sans-serif; font-weight: 900; font-size: 40px; line-height: 1.04; letter-spacing: -.02em; text-transform: uppercase; margin-top: auto; position: relative; }
+  .brand-big .y { color: var(--brand); }
+  .brand-sub { color: rgba(255,255,255,.66); max-width: 380px; margin-top: 18px; font-size: 14.5px; position: relative; }
+  .brand-feats { display: flex; gap: 18px; margin-top: 28px; position: relative; flex-wrap: wrap; }
+  .brand-feats .it { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: rgba(255,255,255,.8); }
+  .brand-feats .it .ic { width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,.08); display: flex; align-items: center; justify-content: center; color: var(--brand); }
+  .form-panel { display: flex; align-items: center; justify-content: center; padding: 32px; position: relative; }
+  .form-top { position: absolute; top: 20px; right: 24px; display: flex; align-items: center; gap: 8px; }
+  form.login { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }
+  .login h1 { font-size: 26px; }
+  .login-row { display: flex; align-items: center; justify-content: space-between; }
+  .platform-link { margin-top: 4px; text-align: center; font-size: 13px; }
+  @media (max-width: 880px) { .login-grid { grid-template-columns: 1fr; } .brand-panel { display: none; } }
+</style>
+<script>
+  (function(){ try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('ht_theme')||'"light"'); document.documentElement.lang = JSON.parse(localStorage.getItem('ht_lang')||'"es"'); } catch(e){} })();
+</script>
+</head>
+<body>
+<div class="login-grid">
+  <div class="brand-panel">
+    <div class="glow"></div>
+    <a class="brand-row" href="Landing.html" style="text-decoration:none;color:#fff">
+      <span class="mark">H</span>
+      <span><span style="font-weight:900;font-size:20px;letter-spacing:-.02em">Hiraticket</span><br><span style="font-size:12px;color:rgba(255,255,255,.6)">by Hirata · Impresión Digital</span></span>
+    </a>
+    <div class="brand-big" id="brandBig"></div>
+    <p class="brand-sub" data-i18n="bsub">Atiende WhatsApp, rutea pedidos entre áreas y mantén todo el historial del cliente — sin perder un solo mensaje.</p>
+    <div class="brand-feats">
+      <span class="it"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12.1 7.5L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5Z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span><span data-i18n="bf1">Bandeja unificada</span></span>
+      <span class="it"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M8 4h8a2 2 0 0 1 2 2v13a1 1 0 0 1-1.5.9L15 19l-3 2-3-2-1.5.9A1 1 0 0 1 6 19V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span><span data-i18n="bf2">Pedidos por área</span></span>
+      <span class="it"><span class="ic"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 2.2a9.8 9.8 0 0 0-8.4 14.9L2.2 21.8l4.8-1.3A9.8 9.8 0 1 0 12 2.2Z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span><span data-i18n="bf3">WhatsApp en vivo</span></span>
+    </div>
+  </div>
+
+  <div class="form-panel">
+    <div class="form-top">
+      <div class="seg" style="height:32px"><button data-lang="es">ES</button><button data-lang="en">EN</button></div>
+      <button class="iconbtn" id="themeBtn" aria-label="theme"></button>
+    </div>
+    <form class="login" onsubmit="window.location.href='Hiraticket.html';return false;">
+      <div><h1 data-i18n="welcome">Bienvenido de vuelta</h1><p class="muted" data-i18n="sub" style="margin-top:4px">Chats y pedidos de clientes, en un solo lugar.</p></div>
+      <div><label class="lbl" data-i18n="email">Correo</label><div class="field" style="height:44px"><svg width="17" height="17" viewBox="0 0 24 24" style="color:var(--text-faint)"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><input type="email" value="mariana@hirata.mx" /></div></div>
+      <div><label class="lbl" data-i18n="password">Contraseña</label><div class="field" style="height:44px"><svg width="17" height="17" viewBox="0 0 24 24" style="color:var(--text-faint)"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><input type="password" value="hirata2026" /></div></div>
+      <div class="login-row">
+        <button type="button" id="rememberBtn" style="display:flex;align-items:center;gap:8px;background:none;border:none;color:var(--text);font-size:13px;font-weight:500;cursor:pointer"><span class="switch on"></span><span data-i18n="remember">Mantener sesión</span></button>
+        <a href="#" style="color:var(--brand-700);font-weight:600;font-size:13px" data-i18n="forgot" onclick="return false">¿Olvidaste tu contraseña?</a>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-block"><span data-i18n="signin">Iniciar sesión</span> →</button>
+      <div class="muted" style="font-size:11px;text-align:center" data-i18n="demo">Demo — cualquier credencial entra.</div>
+      <div class="hr" style="margin:6px 0"></div>
+      <a class="btn btn-outline btn-block" href="Platform.html"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 7.7 7 9 4-1.3 7-4.5 7-9V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="platform">Acceso de plataforma (super admin)</span></a>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  var DICT = {
+    es: { bsub:'Atiende WhatsApp, rutea pedidos entre áreas y mantén todo el historial del cliente — sin perder un solo mensaje.', bf1:'Bandeja unificada', bf2:'Pedidos por área', bf3:'WhatsApp en vivo', welcome:'Bienvenido de vuelta', sub:'Chats y pedidos de clientes, en un solo lugar.', email:'Correo', password:'Contraseña', remember:'Mantener sesión', forgot:'¿Olvidaste tu contraseña?', signin:'Iniciar sesión', demo:'Demo — cualquier credencial entra.', platform:'Acceso de plataforma (super admin)', big:'CHATS Y<br>PEDIDOS,<br><span class="y">EN UN LUGAR.</span>' },
+    en: { bsub:'Handle WhatsApp, route orders across areas and keep every customer\'s history — without dropping a single message.', bf1:'Unified inbox', bf2:'Orders by area', bf3:'Live WhatsApp', welcome:'Welcome back', sub:'Customer chats & orders, in one place.', email:'Email', password:'Password', remember:'Keep me signed in', forgot:'Forgot password?', signin:'Sign in', demo:'Demo — any credentials work.', platform:'Platform access (super admin)', big:'CHATS &<br>ORDERS,<br><span class="y">IN ONE PLACE.</span>' },
+  };
+  var lang = (function(){ try { return JSON.parse(localStorage.getItem('ht_lang')||'"es"'); } catch(e){ return 'es'; } })();
+  var theme = (function(){ try { return JSON.parse(localStorage.getItem('ht_theme')||'"light"'); } catch(e){ return 'light'; } })();
+  function applyTheme(){ document.documentElement.dataset.theme = theme; document.getElementById('themeBtn').innerHTML = theme==='dark' ? '<svg width="19" height="19" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' : '<svg width="19" height="19" viewBox="0 0 24 24"><path d="M20 13.5A8 8 0 1 1 10.5 4a6.5 6.5 0 0 0 9.5 9.5Z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>'; }
+  function applyLang(){ var d=DICT[lang]; document.documentElement.lang=lang; document.querySelectorAll('[data-i18n]').forEach(function(el){ var k=el.getAttribute('data-i18n'); if(d[k]!=null) el.textContent=d[k]; }); document.getElementById('brandBig').innerHTML=d.big; document.querySelectorAll('[data-lang]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-lang')===lang); }); }
+  document.querySelectorAll('[data-lang]').forEach(function(b){ b.addEventListener('click', function(){ lang=b.getAttribute('data-lang'); try{ localStorage.setItem('ht_lang', JSON.stringify(lang)); }catch(e){} applyLang(); }); });
+  document.getElementById('themeBtn').addEventListener('click', function(){ theme=theme==='dark'?'light':'dark'; try{ localStorage.setItem('ht_theme', JSON.stringify(theme)); }catch(e){} applyTheme(); });
+  document.getElementById('rememberBtn').addEventListener('click', function(){ this.querySelector('.switch').classList.toggle('on'); });
+  applyTheme(); applyLang();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Render Blueprint — deploys the Hiraticket Next.js app as a web service.
+# Database + auth are provided by Supabase (managed separately), so this
+# blueprint only declares the web service and its environment.
+#
+# Deploy: push to GitHub → Render → New → Blueprint → pick this repo.
+# Then set the three Supabase env vars (marked sync:false) in the dashboard.
+services:
+  - type: web
+    name: hiraticket
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /login
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
