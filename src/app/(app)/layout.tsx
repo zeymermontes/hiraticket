@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
+import { getMyChatBadge, getNotifications } from "@/lib/notifications";
 import { Shell, type ShellUser } from "@/components/Shell";
 import { AppProvider } from "@/components/AppContext";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
@@ -34,5 +35,14 @@ export default async function AppLayout({
       (user.email ? user.email.split("@")[0] : "Agente"),
   };
 
-  return <Shell user={shellUser}>{children}</Shell>;
+  const [chatBadge, notifications] = await Promise.all([
+    getMyChatBadge(business.id, user.id),
+    getNotifications(business.id),
+  ]);
+
+  return (
+    <Shell user={shellUser} badges={{ chat: chatBadge }} notifications={notifications}>
+      {children}
+    </Shell>
+  );
 }

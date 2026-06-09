@@ -30,13 +30,21 @@ function VariableTextarea({
   const { lang } = useApp();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [menu, setMenu] = useState<{ q: string; at: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const [sel, setSel] = useState(0);
 
   function detect(v: string, caret: number) {
     const before = v.slice(0, caret);
     const m = before.match(/(?:^|\s)@(\w*)$/);
-    if (m) { setMenu({ q: m[1], at: caret - m[1].length - 1 }); setSel(0); }
-    else setMenu(null);
+    if (m) {
+      setMenu({ q: m[1], at: caret - m[1].length - 1 });
+      setSel(0);
+      const el = ref.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setPos({ top: Math.min(r.bottom + 4, window.innerHeight - 270), left: r.left, width: Math.min(320, Math.max(240, r.width)) });
+      }
+    } else setMenu(null);
   }
 
   const filtered = menu
@@ -82,8 +90,8 @@ function VariableTextarea({
         }}
         onBlur={() => { setTimeout(() => setMenu(null), 150); onCommit?.(); }}
       />
-      {menu && filtered.length > 0 && (
-        <div className="menu scroll" style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, width: 280, maxHeight: 240, zIndex: 60 }}>
+      {menu && filtered.length > 0 && pos && (
+        <div className="menu scroll" style={{ position: "fixed", top: pos.top, left: pos.left, width: pos.width, maxHeight: 250, zIndex: 1000 }}>
           <div className="menu-label">{lang === "es" ? "Variables (@)" : "Variables (@)"}</div>
           {filtered.map((va, i) => (
             <button type="button" key={va.key} className={"menu-item" + (i === sel ? " on" : "")}
