@@ -29,7 +29,7 @@ export default async function OrdersPage({
   return (
     <OrdersTable
       rows={orders}
-      objectName={business.object_singular + "s"}
+      objectName={(business.object_singular ?? "Pedido") + "s"}
       businessId={business.id}
       areas={areas}
       stages={stages}

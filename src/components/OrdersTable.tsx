@@ -83,7 +83,8 @@ export function OrdersTable({
   }, [rows, q, sortKey, dir, stageF, areaF, assigneeF, prioF]);
 
   const pageCount = Math.max(1, Math.ceil(sortedAll.length / PER));
-  const view = useMemo(() => sortedAll.slice(page * PER, page * PER + PER), [sortedAll, page]);
+  const curPage = Math.min(page, pageCount - 1); // clamp so a shrunk list never lands on an empty page
+  const view = useMemo(() => sortedAll.slice(curPage * PER, curPage * PER + PER), [sortedAll, curPage]);
 
   function sortBy(k: SortKey) {
     if (sortKey === k) setDir(dir === "asc" ? "desc" : "asc");
@@ -165,7 +166,7 @@ export function OrdersTable({
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: 32 }}><input type="checkbox" checked={view.length > 0 && view.every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(view.map((o) => o.id)) : new Set())} /></th>
+              <th style={{ width: 32 }}><input type="checkbox" title={lang === "es" ? "Seleccionar todos los filtrados" : "Select all filtered"} checked={sortedAll.length > 0 && sortedAll.every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(sortedAll.map((o) => o.id)) : new Set())} /></th>
               <Sort k="code">{t("col_order")}</Sort>
               <th>{t("col_customer")}</th>
               <th>{t("col_status")}</th>
@@ -216,11 +217,11 @@ export function OrdersTable({
 
       {pageCount > 1 && (
         <div className="row gap-2" style={{ padding: "10px 4px", alignItems: "center" }}>
-          <span className="muted t-sm">{lang === "es" ? "Mostrando" : "Showing"} {page * PER + 1}–{Math.min((page + 1) * PER, sortedAll.length)} {lang === "es" ? "de" : "of"} {sortedAll.length}</span>
+          <span className="muted t-sm">{lang === "es" ? "Mostrando" : "Showing"} {curPage * PER + 1}–{Math.min((curPage + 1) * PER, sortedAll.length)} {lang === "es" ? "de" : "of"} {sortedAll.length}</span>
           <span className="grow" />
-          <button className="btn btn-sm btn-outline" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹</button>
-          <span className="t-sm">{page + 1} / {pageCount}</span>
-          <button className="btn btn-sm btn-outline" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>›</button>
+          <button className="btn btn-sm btn-outline" disabled={curPage === 0} onClick={() => setPage(Math.max(0, curPage - 1))}>‹</button>
+          <span className="t-sm">{curPage + 1} / {pageCount}</span>
+          <button className="btn btn-sm btn-outline" disabled={curPage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, curPage + 1))}>›</button>
         </div>
       )}
 

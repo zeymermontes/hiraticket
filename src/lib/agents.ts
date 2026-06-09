@@ -7,7 +7,7 @@ export interface DetailedAgent {
   color: string;
   role: "admin" | "agent" | "viewer";
   email: string | null;
-  area: { name: string; color: string } | null;
+  area: { id: string; name: string; color: string } | null;
   openChats: number;
   openOrders: number;
 }
@@ -37,12 +37,13 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
   const orderCount = new Map<string, number>();
   (orders ?? []).forEach((o) => { if (o.assignee_id) orderCount.set(o.assignee_id as string, (orderCount.get(o.assignee_id as string) ?? 0) + 1); });
 
-  // Emails come from auth.users (service-role only); best-effort.
+  // Emails come from auth.users (service-role only); best-effort, fetched only for
+  // this business's members (not the whole platform).
   const emailMap = new Map<string, string>();
   try {
     const admin = createAdminClient();
-    const { data } = await admin.auth.admin.listUsers({ perPage: 1000 });
-    (data?.users ?? []).forEach((u) => { if (u.email) emailMap.set(u.id, u.email); });
+    const results = await Promise.all(ids.map((id) => admin.auth.admin.getUserById(id)));
+    results.forEach((r) => { const u = r.data?.user; if (u?.email) emailMap.set(u.id, u.email); });
   } catch { /* admin not configured — skip emails */ }
 
   return members.map((m) => {
@@ -55,7 +56,7 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
       color: (p?.avatar_color as string) || "#5A6373",
       role: m.role as DetailedAgent["role"],
       email: emailMap.get(uid) ?? null,
-      area: ar ? { name: ar.name as string, color: ar.color as string } : null,
+      area: ar ? { id: ar.id as string, name: ar.name as string, color: ar.color as string } : null,
       openChats: chatCount.get(uid) ?? 0,
       openOrders: orderCount.get(uid) ?? 0,
     };

@@ -81,7 +81,7 @@ export function AgentsScreen({
                 </td>
                 <td>
                   {isAdmin ? (
-                    <select className="select select-sm" defaultValue={a.area ? areas.find((ar) => ar.name === a.area!.name)?.id ?? "" : ""} onChange={(e) => run(() => setAgentArea(businessId, a.id, e.target.value || null))}>
+                    <select className="select select-sm" defaultValue={a.area?.id ?? ""} onChange={(e) => run(() => setAgentArea(businessId, a.id, e.target.value || null))}>
                       <option value="">—</option>
                       {areas.map((ar) => <option key={ar.id} value={ar.id}>{ar.name}</option>)}
                     </select>

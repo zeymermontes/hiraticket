@@ -32,7 +32,7 @@ const PRIORITY_COLOR: Record<OrderRow["priority"], PillColor> = {
 };
 
 export function priorityColor(p: OrderRow["priority"]): PillColor {
-  return PRIORITY_COLOR[p];
+  return PRIORITY_COLOR[p] ?? "slate";
 }
 
 export function formatMoney(n: number): string {

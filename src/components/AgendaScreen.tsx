@@ -29,8 +29,6 @@ export function AgendaScreen({ businessId, appointments }: { businessId: string;
   const [when, setWhen] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
-  const fmt = (iso: string) => new Date(iso).toLocaleString(lang === "es" ? "es-MX" : "en-US", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-
   return (
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Agenda" : "Agenda"}</h1><Pill color="slate" large>{appointments.length}</Pill></div>

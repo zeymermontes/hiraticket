@@ -37,16 +37,18 @@ export default async function AppLayout({
       (user.email ? user.email.split("@")[0] : "Agente"),
   };
 
-  const [chatBadge, notifications, sessions, stages, { data: orderRows }] = await Promise.all([
+  const [chatBadge, notifications, sessions, stages] = await Promise.all([
     getMyChatBadge(business.id),
     getNotifications(business.id),
     getSessions(business.id),
     getStages(business.id),
-    supabase.from("orders").select("stage_id").eq("business_id", business.id),
   ]);
 
+  // Open orders = not yet in the terminal stage. Bounded head-count (no full table scan).
   const lastStageId = stages.length ? stages[stages.length - 1].id : null;
-  const openOrders = (orderRows ?? []).filter((o) => o.stage_id !== lastStageId).length;
+  let q = supabase.from("orders").select("id", { count: "exact", head: true }).eq("business_id", business.id);
+  if (lastStageId) q = q.neq("stage_id", lastStageId);
+  const { count: openOrders } = await q;
   const objectName = (business.object_singular ?? "Pedido") + "s";
 
   return (
