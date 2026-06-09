@@ -24,8 +24,57 @@ export async function moveOrderStage(orderId: string, stageId: string): Promise<
     business_id: businessId, parent_type: "order", parent_id: orderId,
     actor_id: userId, kind: "status", text: "Cambio de etapa",
   });
+  await runStageAutomations(orderId, businessId, stageId, userId);
   revalidatePath("/kanban");
   revalidatePath("/orders");
+  revalidatePath("/chat");
+  revalidatePath("/flows");
+}
+
+/** Fire enabled automations triggered by an order reaching a stage. */
+async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null) {
+  const supabase = await createClient();
+  const { data: autos } = await supabase
+    .from("automations").select("id, action_type, action_payload, trigger_value, runs")
+    .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "order_stage");
+
+  for (const a of autos ?? []) {
+    if (a.trigger_value && a.trigger_value !== stageId) continue;
+    const payload = (a.action_payload as { template?: string; area?: string }) ?? {};
+
+    if (a.action_type === "send_template" && payload.template) {
+      const { data: order } = await supabase
+        .from("orders").select("code,total,contact_id,conversation_id").eq("id", orderId).maybeSingle();
+      if (order?.conversation_id) {
+        const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
+        const { data: tpl } = await supabase.from("canned_messages").select("body").eq("business_id", businessId).eq("title", payload.template).maybeSingle();
+        if (tpl) {
+          const first = (contact?.name ?? "").split(" ")[0];
+          const body = String(tpl.body)
+            .replace(/\{\{name\}\}/g, first)
+            .replace(/\{\{order_number\}\}/g, order.code as string)
+            .replace(/\{\{total\}\}/g, String(order.total));
+          await supabase.from("messages").insert({
+            business_id: businessId, conversation_id: order.conversation_id,
+            direction: "out", type: "text", body, author_id: userId, state: "queued",
+          });
+          await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+        }
+      }
+    } else if (a.action_type === "transfer_area" && payload.area) {
+      const { data: ar } = await supabase.from("areas").select("route_to").eq("id", payload.area).maybeSingle();
+      await supabase.from("orders").update({ area_id: payload.area, assignee_id: (ar?.route_to as string) ?? null }).eq("id", orderId);
+      await supabase.from("events").insert({
+        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "swap", text: "Auto: transferido de área",
+      });
+    } else if (a.action_type === "notify_agent") {
+      await supabase.from("events").insert({
+        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente",
+      });
+    }
+
+    await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
+  }
 }
 
 /** Move an order to a different area/department. */

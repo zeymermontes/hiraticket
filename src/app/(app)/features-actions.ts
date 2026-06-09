@@ -15,16 +15,23 @@ export async function deleteAutomation(id: string) {
 }
 export async function createAutomation(
   businessId: string,
-  input: { name: string; trigger_type: string; trigger_value: string | null; action_type: string; template?: string },
+  input: {
+    name: string; trigger_type: string; trigger_value: string | null;
+    action_type: string; template?: string; area?: string;
+  },
 ) {
   const supabase = await createClient();
+  const payload: Record<string, unknown> = {};
+  if (input.action_type === "send_template" && input.template) payload.template = input.template;
+  if (input.action_type === "transfer_area" && input.area) payload.area = input.area;
+
   await supabase.from("automations").insert({
     business_id: businessId,
     name: input.name.trim() || "Flujo",
     trigger_type: input.trigger_type,
     trigger_value: input.trigger_value,
     action_type: input.action_type,
-    action_payload: input.template ? { template: input.template } : {},
+    action_payload: payload,
     enabled: true,
   });
   revalidatePath("/flows");
