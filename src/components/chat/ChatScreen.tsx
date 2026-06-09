@@ -447,6 +447,19 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
   useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
 
+  // Auto-grow the composer as lines are typed, capped at 4 lines (then it scrolls).
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const max = lh * 4 + padY;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, max) + "px";
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+  }, [text]);
+
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
   const messages = [...detail.messages, ...extra];
   const msgMap = useMemo(() => new Map(detail.messages.map((mm) => [mm.id, mm])), [detail.messages]);
@@ -604,7 +617,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         <div className="composer-box">
           <div className="composer-input">
-            <textarea ref={taRef} className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje… ( / para plantillas)" : "Type a message… ( / for templates)"} value={text}
+            <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Escribe un mensaje… ( / para plantillas)" : "Type a message… ( / for templates)"} value={text}
               onChange={(e) => { setText(e.target.value); detectSlash(e.target.value, e.target.selectionStart); }}
               onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); stageFiles(files); } }}
               onBlur={() => setTimeout(() => setSlash(null), 150)}
