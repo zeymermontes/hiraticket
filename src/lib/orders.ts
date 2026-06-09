@@ -27,18 +27,27 @@ export interface OrderDetail {
 
 export async function getOrderDetail(orderId: string): Promise<OrderDetail | null> {
   const supabase = await createClient();
-  const { data: order } = await supabase
-    .from("orders")
-    .select("id, code, total, priority, pay_status, created_at, updated_at, stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color), business:businesses(product_stages)")
-    .eq("id", orderId)
-    .maybeSingle();
+  const ORDER_BASE = "id, code, total, priority, pay_status, created_at, updated_at, stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)";
+  // Try with the businesses(product_stages) join (migration 0019); fall back if not applied.
+  let { data: order, error: orderErr } = await supabase
+    .from("orders").select(`${ORDER_BASE}, business:businesses(product_stages)`).eq("id", orderId).maybeSingle();
+  if (orderErr) {
+    const r = await supabase.from("orders").select(ORDER_BASE).eq("id", orderId).maybeSingle();
+    order = r.data as typeof order;
+  }
   if (!order) return null;
 
-  const [{ data: items }, { data: notes }, { data: events }] = await Promise.all([
+  const [itemsRes, { data: notes }, { data: events }] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, stage:stages(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
     supabase.from("events").select("id, kind, text, created_at").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
   ]);
+  // Fall back to base item columns if stage_id/stage isn't available yet.
+  let items = itemsRes.data;
+  if (itemsRes.error) {
+    const r = await supabase.from("order_items").select("id, name, qty, unit_price, subtotal").eq("order_id", orderId);
+    items = ((r.data ?? []) as Record<string, unknown>[]).map((it) => ({ ...it, stage_id: null, stage: null })) as typeof items;
+  }
 
   return {
     ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "contact" | "stage" | "area">),
