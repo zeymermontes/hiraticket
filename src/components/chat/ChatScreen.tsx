@@ -47,12 +47,12 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: b
   const { lang } = useApp();
   const [open, setOpen] = useState(false);
   return (
-    <span className={"msg-menu" + (open ? " open" : "")} style={{ position: "relative", display: "inline-flex" }}>
-      <button className="msg-menu-btn" onClick={() => setOpen((o) => !o)} aria-label="Menu"><Icon name="dots" size={16} /></button>
+    <span className={"msg-menu" + (open ? " open" : "")} style={{ position: "absolute", top: 3, [out ? "right" : "left"]: 4 }}>
+      <button className="msg-menu-btn" onClick={() => setOpen((o) => !o)} aria-label="Menu"><Icon name="dots" size={14} /></button>
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ position: "absolute", top: "100%", [out ? "left" : "right"]: 0, width: 160, zIndex: 50 }}>
+          <div className="menu" style={{ position: "absolute", top: "100%", [out ? "right" : "left"]: 0, width: 160, zIndex: 50 }}>
             <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {out && m.type === "text" && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {out && <button className="menu-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
@@ -395,11 +395,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   </>
                 )}
                 <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                {!m.deleted && !m.id.startsWith("tmp") && (
+                  <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
+                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
+                )}
               </div>
-              {!m.deleted && !m.id.startsWith("tmp") && (
-                <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
-                  onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
-              )}
             </div>
           );
         })}

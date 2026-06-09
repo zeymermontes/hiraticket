@@ -36,18 +36,19 @@
 .inp-inline:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-50); }
 .iconbtn.sm { width: 30px; height: 30px; }
 
-/* Per-message actions menu — beside the bubble, revealed on hover (never over text). */
-.msg { align-items: center; gap: 4px; }
-.msg .msg-menu { opacity: 0; transition: opacity .12s; flex: none; }
-.msg:hover .msg-menu, .msg .msg-menu.open { opacity: 1; }
-.msg.in .bubble { order: 1; } .msg.in .msg-menu { order: 2; }
-.msg.out .bubble { order: 2; } .msg.out .msg-menu { order: 1; }
+/* Per-message actions menu — always visible, top outer corner inside the bubble. */
+.bubble { position: relative; }
+.msg.out .bubble { padding-right: 26px; }
+.msg.in .bubble { padding-left: 26px; }
+.msg-menu { z-index: 3; }
 .msg-menu-btn {
-  width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border);
-  background: var(--surface); color: var(--text-muted);
-  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--sh-sm);
+  width: 20px; height: 20px; border-radius: 50%; border: none;
+  background: rgba(0, 0, 0, .07); color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.msg-menu-btn:hover { background: var(--surface-2); color: var(--text); }
+.msg-menu-btn:hover { background: rgba(0, 0, 0, .14); color: var(--text); }
+[data-theme="dark"] .msg-menu-btn { background: rgba(255, 255, 255, .12); }
+[data-theme="dark"] .msg-menu-btn:hover { background: rgba(255, 255, 255, .2); }
 
 /* Draggable divider on the right edge of the chat center column. */
 .col-resizer {
