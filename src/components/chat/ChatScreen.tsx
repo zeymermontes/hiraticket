@@ -249,27 +249,36 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
   const [extra, setExtra] = useState<ChatMessage[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [staged, setStaged] = useState<File[]>([]);
+  const [caption, setCaption] = useState("");
+  const [sending, setSending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  async function uploadAndSend(files: FileList | File[]) {
+  function stageFiles(files: FileList | File[]) {
+    setStaged((s) => [...s, ...Array.from(files)]);
+  }
+
+  // Upload staged files, then send (caption goes on the first item, like WhatsApp).
+  async function sendStaged() {
+    if (!staged.length) return;
+    setSending(true);
     const supabase = createClient();
-    setUploading(true);
     try {
-      for (const file of Array.from(files)) {
+      for (let i = 0; i < staged.length; i++) {
+        const file = staged[i];
         const ext = (file.name.split(".").pop() || "bin").toLowerCase();
         const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
         if (error) { console.error(error); continue; }
         const { data } = supabase.storage.from("media").getPublicUrl(path);
         const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: data.publicUrl, mime: file.type || "application/octet-stream", name: file.name, caption: text.trim() || undefined });
+        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: data.publicUrl, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
       }
-      setText("");
+      setStaged([]); setCaption("");
       router.refresh();
     } finally {
-      setUploading(false);
+      setSending(false);
     }
   }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
@@ -351,18 +360,53 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
           <div className="composer-input">
             <textarea className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje…" : "Type a message…"} value={text}
               onChange={(e) => setText(e.target.value)}
-              onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); uploadAndSend(files); } }}
+              onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); stageFiles(files); } }}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } }} />
           </div>
           <div className="composer-actions">
             <input ref={fileRef} type="file" multiple style={{ display: "none" }}
-              onChange={(e) => { if (e.target.files?.length) uploadAndSend(e.target.files); e.target.value = ""; }} />
-            <button className="iconbtn" onClick={() => fileRef.current?.click()} disabled={uploading} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
+              onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
+            <button className="iconbtn" onClick={() => fileRef.current?.click()} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
             <span className="grow" />
-            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending || uploading}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
+            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
         </div>
       </div>
+
+      {staged.length > 0 && (
+        <div className="modal-wrap">
+          <div className="scrim" onClick={() => { if (!sending) setStaged([]); }} />
+          <div className="modal">
+            <div className="modal-head">
+              <h3 className="grow">{lang === "es" ? "Enviar archivos" : "Send files"}{staged.length > 1 ? ` (${staged.length})` : ""}</h3>
+              <button className="iconbtn" disabled={sending} onClick={() => setStaged([])}><Icon name="x" /></button>
+            </div>
+            <div className="modal-body">
+              <div className="row gap-2" style={{ flexWrap: "wrap", justifyContent: "center" }}>
+                {staged.map((f, i) => <MediaThumb key={i} file={f} onRemove={() => setStaged((s) => s.filter((_, j) => j !== i))} />)}
+                <button className="iconbtn" style={{ width: 86, height: 86, border: "1px dashed var(--border-strong)", borderRadius: 10 }} onClick={() => fileRef.current?.click()}><Icon name="plus" /></button>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <div className="field field-filled grow"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
+              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : (lang === "es" ? "Enviar" : "Send")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const url = useMemo(() => (file.type.startsWith("image/") || file.type.startsWith("video/") ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  return (
+    <div style={{ position: "relative", width: 86, height: 86, borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {file.type.startsWith("image/") && url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        : file.type.startsWith("video/") && url ? <video src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          : <div className="col" style={{ alignItems: "center", gap: 4, padding: 6 }}><Icon name="file" size={20} /><span className="t-xs muted truncate" style={{ maxWidth: 76 }}>{file.name}</span></div>}
+      <button className="iconbtn sm" style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.55)", color: "#fff" }} onClick={onRemove}><Icon name="x" size={13} /></button>
     </div>
   );
 }
