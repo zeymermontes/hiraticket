@@ -7,6 +7,7 @@ import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
+import { GlobalSearch } from "@/components/GlobalSearch";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -143,16 +144,12 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
   );
 }
 
-function TopBar({ notifications, connected }: { notifications: Notif[]; connected: boolean }) {
+function TopBar({ notifications, connected, businessId }: { notifications: Notif[]; connected: boolean; businessId: string }) {
   const { lang, setLang, theme, setTheme, t } = useApp();
-  const [search, setSearch] = useState("");
   return (
     <header className="topbar">
       <div className="topbar-search">
-        <div className="field field-filled">
-          <Icon name="search" />
-          <input placeholder={t("search_ph")} value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
+        <GlobalSearch businessId={businessId} />
       </div>
       <span className="grow" />
 
@@ -210,7 +207,7 @@ export function Shell({
         <div className="app">
           <NavRail badges={badges} secondaryBadges={secondaryBadges} objectName={objectName} user={user} />
           <div className="main">
-            <TopBar notifications={notifications} connected={connected} />
+            <TopBar notifications={notifications} connected={connected} businessId={businessId} />
             {children}
           </div>
         </div>
