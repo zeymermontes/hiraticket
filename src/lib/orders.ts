@@ -46,7 +46,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   let items = itemsRes.data;
   if (itemsRes.error) {
     const r = await supabase.from("order_items").select("id, name, qty, unit_price, subtotal").eq("order_id", orderId);
-    items = ((r.data ?? []) as Record<string, unknown>[]).map((it) => ({ ...it, stage_id: null, stage: null })) as typeof items;
+    items = ((r.data ?? []) as Record<string, unknown>[]).map((it) => ({ ...it, stage_id: null, stage: null })) as unknown as typeof items;
   }
 
   return {

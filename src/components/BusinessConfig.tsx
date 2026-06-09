@@ -57,7 +57,7 @@ export function BusinessConfig({
   const [newStage, setNewStage] = useState("");
   const [newArea, setNewArea] = useState("");
   const [newField, setNewField] = useState("");
-  const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
+  const run = (fn: () => Promise<unknown>) => start(async () => { await fn(); router.refresh(); });
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
 
@@ -117,7 +117,11 @@ export function BusinessConfig({
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4>
             <button className={"chip" + (productStages ? " on" : "")} title={lang === "es" ? "Cada producto avanza por su propia etapa; el pedido muestra la menos avanzada" : "Each product moves through its own stage; the order shows the least-advanced one"}
-              onClick={() => run(() => updateBusinessProfile(businessId, { product_stages: !productStages }))}>
+              onClick={() => start(async () => {
+                const r = await updateBusinessProfile(businessId, { product_stages: !productStages });
+                if (!r.ok) { alert((lang === "es" ? "No se pudo activar. Aplica la migración 0019_item_stages.sql.\n\n" : "Couldn't toggle. Apply migration 0019_item_stages.sql.\n\n") + (r.error ?? "")); return; }
+                router.refresh();
+              })}>
               <Icon name="layers" size={13} />{lang === "es" ? "Etapas por producto" : "Per-product stages"}
             </button>
           </div>
