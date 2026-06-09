@@ -22,14 +22,18 @@ export async function setAgentRole(
   revalidatePath("/agents");
 }
 
-/** Rename an agent (admins only) — updates their profile display name. */
+/** Rename an agent (admins only) — updates the profile AND the auth metadata so the
+ *  name + avatar refresh everywhere (agents list, chat author, top-bar profile). */
 export async function setAgentName(businessId: string, userId: string, name: string): Promise<void> {
   if (!(await assertAdmin(businessId))) return;
   const clean = name.trim();
   if (!clean) return;
   const admin = createAdminClient();
   await admin.from("profiles").update({ full_name: clean }).eq("id", userId);
+  await admin.auth.admin.updateUserById(userId, { user_metadata: { full_name: clean } });
   revalidatePath("/agents");
+  revalidatePath("/chat");
+  revalidatePath("/", "layout");
 }
 
 /** Assign an agent to an area (admins only). */
