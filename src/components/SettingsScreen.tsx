@@ -17,7 +17,7 @@ const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = 
   disconnected: { color: "slate", es: "Desconectado", en: "Disconnected" },
 };
 
-function SessionCard({ session }: { session: WaSession }) {
+function SessionCard({ session, primary }: { session: WaSession; primary?: boolean }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -27,14 +27,15 @@ function SessionCard({ session }: { session: WaSession }) {
 
   const st = WA_STATUS[session.status] ?? WA_STATUS.disconnected;
   const idle = session.status === "disconnected";
+  const live = session.status === "connected";
 
   return (
     <div className="row gap-3" style={{ alignItems: "flex-start", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14 }}>
-      <span style={{ width: 40, height: 40, borderRadius: 11, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-        <Icon name="whatsapp" size={20} />
+      <span style={{ width: 40, height: 40, borderRadius: 11, background: live ? "var(--wa)" : "var(--surface-2)", color: live ? "#fff" : "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <Icon name={live ? "whatsapp" : "wifioff"} size={20} />
       </span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row gap-2"><strong>{session.label}</strong><Pill color={st.color} dot>{st[lang]}</Pill></div>
+        <div className="row gap-2"><strong>{session.label}</strong>{primary && <Pill color="slate">{lang === "es" ? "Principal" : "Primary"}</Pill>}<Pill color={st.color} dot>{st[lang]}</Pill></div>
         <div className="t-sm muted mono">{session.phone ?? (lang === "es" ? "Sin número vinculado" : "No number linked")}</div>
 
         {idle && (
@@ -95,7 +96,7 @@ function SessionCard({ session }: { session: WaSession }) {
 }
 
 export function SettingsScreen({ businessId, sessions }: { businessId: string; sessions: WaSession[] }) {
-  const { lang, theme, setTheme, setLang } = useApp();
+  const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
 
@@ -136,7 +137,7 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
           </div>
           <div className="ws-block-body col gap-3">
             {sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
-            {sessions.map((s) => <SessionCard key={s.id} session={s} />)}
+            {sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             <div className="t-xs muted">
               {lang === "es"
                 ? "Usa Baileys (mismo método que Whaticket SaaS): escanea el QR o vincula con código. El worker debe estar corriendo."
@@ -156,10 +157,31 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
             </div>
             <div className="row gap-2"><span className="grow">{lang === "es" ? "Idioma" : "Language"}</span>
               <div className="seg">
-                <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
-                <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+                <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>Español</button>
+                <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>English</button>
               </div>
             </div>
+            <div className="row gap-2"><span className="grow">{lang === "es" ? "Densidad" : "Density"}</span>
+              <div className="seg">
+                <button className={density === "comfortable" ? "on" : ""} onClick={() => setDensity("comfortable")}>{lang === "es" ? "Cómodo" : "Comfortable"}</button>
+                <button className={density === "compact" ? "on" : ""} onClick={() => setDensity("compact")}>{lang === "es" ? "Compacto" : "Compact"}</button>
+              </div>
+            </div>
+            <div className="row gap-2"><span className="grow">{lang === "es" ? "Color de marca" : "Brand color"}</span>
+              <div className="row gap-2">
+                {[["", "#F5C518"], ["#0E8C82", "#0E8C82"], ["#2563EB", "#2563EB"], ["#7C3AED", "#7C3AED"]].map(([val, col]) => (
+                  <button key={col} onClick={() => setBrand(val)} aria-label="brand" style={{ width: 26, height: 26, borderRadius: "50%", background: col, border: (brand === val ? "2px solid var(--text)" : "2px solid var(--border)"), cursor: "pointer" }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Áreas y etapas" : "Areas & stages"}</h4></div>
+          <div className="ws-block-body col gap-2">
+            <p className="muted t-sm">{lang === "es" ? "Las áreas, etapas y tu vertical se configuran en Negocio." : "Areas, stages and your vertical are configured in Business."}</p>
+            <a className="btn btn-outline btn-block" href="/business"><Icon name="store" size={15} />{lang === "es" ? "Ir a Negocio" : "Go to Business"}</a>
           </div>
         </section>
 

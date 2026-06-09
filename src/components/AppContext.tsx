@@ -3,12 +3,17 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { type Lang, type StringKey, tr } from "@/lib/i18n";
 
 type Theme = "light" | "dark";
+type Density = "comfortable" | "compact";
 
 interface AppState {
   lang: Lang;
   theme: Theme;
+  density: Density;
+  brand: string;
   setLang: (l: Lang) => void;
   setTheme: (t: Theme) => void;
+  setDensity: (d: Density) => void;
+  setBrand: (c: string) => void;
   t: (k: StringKey) => string;
 }
 
@@ -27,11 +32,15 @@ function readLS<T>(key: string, fallback: T): T {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>("es");
   const [theme, setThemeState] = useState<Theme>("light");
+  const [density, setDensityState] = useState<Density>("comfortable");
+  const [brand, setBrandState] = useState<string>("");
 
   // Hydrate from localStorage after mount (matches the prototype's persistence).
   useEffect(() => {
     setLangState(readLS<Lang>("lang", "es"));
     setThemeState(readLS<Theme>("theme", "light"));
+    setDensityState(readLS<Density>("density", "comfortable"));
+    setBrandState(readLS<string>("brand", ""));
   }, []);
 
   useEffect(() => {
@@ -44,11 +53,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem("ht_lang", JSON.stringify(lang)); } catch {}
   }, [lang]);
 
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+    try { localStorage.setItem("ht_density", JSON.stringify(density)); } catch {}
+  }, [density]);
+
+  useEffect(() => {
+    if (brand) document.documentElement.style.setProperty("--brand", brand);
+    else document.documentElement.style.removeProperty("--brand");
+    try { localStorage.setItem("ht_brand", JSON.stringify(brand)); } catch {}
+  }, [brand]);
+
   const value: AppState = {
     lang,
     theme,
+    density,
+    brand,
     setLang: setLangState,
     setTheme: setThemeState,
+    setDensity: setDensityState,
+    setBrand: setBrandState,
     t: (k) => tr(k, lang),
   };
 
