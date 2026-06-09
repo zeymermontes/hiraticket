@@ -13,7 +13,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -82,11 +82,11 @@ export function OrderDrawer({
         <div className="drawer-body scroll">
           {/* pipeline */}
           <div>
-            <label className="lbl">{lang === "es" ? "Etapa del pedido" : "Order stage"}</label>
+            <label className="lbl">{lang === "es" ? "Etapa del pedido" : "Order stage"}{detail.product_stages && <span className="muted" style={{ fontWeight: 400 }}> · {lang === "es" ? "derivada de los productos" : "rolled up from products"}</span>}</label>
             <div className="pipe">
               {stages.map((s, i) => {
                 const cls = i < curIdx ? "done" : i === curIdx ? "cur" : "";
-                return <button className={"pipe-step " + cls} key={s.id} disabled={pending} onClick={() => run(() => moveOrderStage(detail.id, s.id))}>{s.name}</button>;
+                return <button className={"pipe-step " + cls} key={s.id} disabled={pending || detail.product_stages} onClick={() => run(() => moveOrderStage(detail.id, s.id))}>{s.name}</button>;
               })}
             </div>
           </div>
@@ -127,7 +127,13 @@ export function OrderDrawer({
               {detail.items.map((li) => (
                 <div className="lineitem" key={li.id}>
                   <div className="lineitem-thumb" />
-                  <div className="grow" style={{ minWidth: 0 }}><div style={{ fontWeight: 600, fontSize: 13 }}>{li.name}</div><div className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</div></div>
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{li.name}</div>
+                    <div className="row gap-2" style={{ marginTop: 2 }}>
+                      <span className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</span>
+                      {detail.product_stages && <StageChip itemId={li.id} value={li.stage_id} stages={stages} lang={lang} onChange={(sid) => run(() => setItemStage(li.id, sid))} />}
+                    </div>
+                  </div>
                   <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(li.subtotal)}</span>
                 </div>
               ))}
@@ -197,6 +203,34 @@ export function OrderDrawer({
           onPick={(t) => run(() => addOrderTag(detail.id, t))}
           onRemove={detail.contact ? (t) => run(() => removeContactTag(detail.contact!.id, t)) : undefined}
           onClose={() => setTagRect(null)} />
+      )}
+    </>
+  );
+}
+
+/** Per-product stage chip + popover (used when the business tracks stages per product). */
+function StageChip({ value, stages, lang, onChange }: { itemId: string; value: string | null; stages: Stage[]; lang: "es" | "en"; onChange: (stageId: string | null) => void }) {
+  const btn = useRef<HTMLButtonElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const cur = stages.find((s) => s.id === value) ?? null;
+  return (
+    <>
+      <button ref={btn} onClick={() => setRect(rect ? null : btn.current?.getBoundingClientRect() ?? null)}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "transparent", border: "none", padding: 0, cursor: "pointer" }}>
+        {cur ? <Pill color={cur.color as PillColor} dot>{cur.name}</Pill> : <Pill color="slate">{lang === "es" ? "Sin etapa" : "No stage"}</Pill>}
+        <Icon name="chevd" size={12} />
+      </button>
+      {rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, left: rect.left, width: 180, maxHeight: 280, zIndex: 201 }}>
+            {stages.map((s) => (
+              <button key={s.id} className={"menu-item" + (s.id === value ? " on" : "")} onClick={() => { setRect(null); onChange(s.id); }}>
+                <Pill color={s.color as PillColor} dot>{s.name}</Pill>{s.id === value && <><span className="grow" /><Icon name="check" size={14} /></>}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </>
   );

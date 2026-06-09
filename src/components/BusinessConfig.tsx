@@ -39,7 +39,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages,
 }: {
   businessId: string;
   businessName: string;
@@ -49,6 +49,7 @@ export function BusinessConfig({
   vertical: string | null;
   objectSingular: string;
   customFields: string[];
+  productStages: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -114,7 +115,12 @@ export function BusinessConfig({
 
         {/* Stages */}
         <section className="ws-block">
-          <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4></div>
+          <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4>
+            <button className={"chip" + (productStages ? " on" : "")} title={lang === "es" ? "Cada producto avanza por su propia etapa; el pedido muestra la menos avanzada" : "Each product moves through its own stage; the order shows the least-advanced one"}
+              onClick={() => run(() => updateBusinessProfile(businessId, { product_stages: !productStages }))}>
+              <Icon name="layers" size={13} />{lang === "es" ? "Etapas por producto" : "Per-product stages"}
+            </button>
+          </div>
           <div className="ws-block-body col gap-2">
             <ReorderList items={stages} getKey={(s) => s.id} className="col gap-2"
               onReorder={(ids) => run(() => reorderStages(businessId, ids))}

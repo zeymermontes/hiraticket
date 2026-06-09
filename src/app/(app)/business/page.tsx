@@ -25,6 +25,7 @@ export default async function BusinessPage() {
       vertical={business.vertical ?? null}
       objectSingular={business.object_singular ?? "Pedido"}
       customFields={(business.custom_fields as string[] | null) ?? []}
+      productStages={business.product_stages ?? false}
     />
   );
 }

@@ -48,6 +48,35 @@ export async function markPaid(orderId: string): Promise<void> {
   revalidatePath("/orders");
 }
 
+/** Set a single product's (line item's) production stage, then roll the order's stage up to the
+ *  least-advanced product so existing order/Kanban/chat views reflect it. */
+export async function setItemStage(itemId: string, stageId: string | null): Promise<void> {
+  const supabase = await createClient();
+  const { data: item } = await supabase.from("order_items").select("order_id").eq("id", itemId).maybeSingle();
+  await supabase.from("order_items").update({ stage_id: stageId }).eq("id", itemId);
+  if (item?.order_id) await rollupOrderStage(item.order_id as string);
+  revalidatePath("/orders");
+  revalidatePath("/kanban");
+  revalidatePath("/chat");
+}
+
+/** order.stage_id := the least-advanced (lowest-position) stage among products that have one. */
+async function rollupOrderStage(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
+  if (!order) return;
+  const [{ data: items }, { data: stages }] = await Promise.all([
+    supabase.from("order_items").select("stage_id").eq("order_id", orderId),
+    supabase.from("stages").select("id, position").eq("business_id", order.business_id),
+  ]);
+  const pos = new Map((stages ?? []).map((s) => [s.id as string, s.position as number]));
+  const staged = (items ?? []).map((i) => i.stage_id as string | null).filter((x): x is string => !!x);
+  if (staged.length === 0) return; // no per-product stages set → leave the order's stage untouched
+  let best = staged[0];
+  for (const sid of staged) if ((pos.get(sid) ?? 0) < (pos.get(best) ?? 0)) best = sid;
+  await supabase.from("orders").update({ stage_id: best }).eq("id", orderId);
+}
+
 /** Change an order's priority. */
 export async function setOrderPriority(orderId: string, priority: string): Promise<void> {
   const supabase = await createClient();

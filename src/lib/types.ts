@@ -8,6 +8,7 @@ export interface Business {
   object_singular: string;
   onboarded: boolean;
   custom_fields: string[] | null;
+  product_stages: boolean;
 }
 
 export interface OrderRow {
