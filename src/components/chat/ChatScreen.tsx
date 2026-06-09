@@ -664,10 +664,11 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
             {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={10} />{tg}</Pill>)}
             {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
           </div>
-          <div className="row gap-4" style={{ marginTop: 10 }}>
-            <div><div className="t-xs muted">{lang === "es" ? "Total gastado" : "Lifetime"}</div><div className="mono" style={{ fontWeight: 700 }}>${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</div></div>
-            {detail.contact?.created_at && <div><div className="t-xs muted">{lang === "es" ? "Primer contacto" : "First seen"}</div><div style={{ fontWeight: 600, fontSize: 13 }}>{new Date(detail.contact.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" })}</div></div>}
+          <div className="col gap-1" style={{ paddingTop: 4 }}>
+            <div className="kv"><span className="k">{lang === "es" ? "Total gastado" : "Lifetime"}</span><span className="v mono">${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</span></div>
+            <div className="kv"><span className="k">{lang === "es" ? "Primer contacto" : "First seen"}</span><span className="v">{detail.contact?.created_at ? new Date(detail.contact.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</span></div>
           </div>
+          <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={() => setShow360(true)}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>
         </div>
 
         {/* orders */}
