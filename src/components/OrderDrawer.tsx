@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -30,7 +30,30 @@ export function OrderDrawer({
   const [note, setNote] = useState("");
   const [xfer, setXfer] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatW, setChatW] = useState(380);
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
+
+  const DRAWER_W = 560; // width of the order drawer this panel docks against
+  useEffect(() => {
+    const saved = Number(localStorage.getItem("hira.orderChatW"));
+    if (saved >= 320) setChatW(saved);
+  }, []);
+  function startResize(e: React.PointerEvent) {
+    e.preventDefault();
+    const onMove = (ev: PointerEvent) => {
+      const w = Math.max(320, Math.min(window.innerWidth - (DRAWER_W + 40), (window.innerWidth - DRAWER_W) - ev.clientX));
+      setChatW(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+  useEffect(() => { try { localStorage.setItem("hira.orderChatW", String(chatW)); } catch {} }, [chatW]);
 
   const assignee = detail.assignee_id ? agents.find((a) => a.id === detail.assignee_id) : null;
   const curIdx = stages.findIndex((s) => s.id === detail.stage_id);
@@ -153,7 +176,8 @@ export function OrderDrawer({
         </div>
       </aside>
       {chatOpen && convDetail && (
-        <div style={{ position: "fixed", top: 0, bottom: 0, right: 560, width: 380, maxWidth: "calc(100vw - 600px)", zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
+        <div style={{ position: "fixed", top: 0, bottom: 0, right: DRAWER_W, width: chatW, maxWidth: `calc(100vw - ${DRAWER_W + 40}px)`, zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
+          <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />
           <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
         </div>
       )}

@@ -50,6 +50,11 @@
 [data-theme="dark"] .msg-menu-btn { background: rgba(255, 255, 255, .12); }
 [data-theme="dark"] .msg-menu-btn:hover { background: rgba(255, 255, 255, .2); }
 
+/* Draggable left edge of the order chat panel (docks left of the order drawer). */
+.order-chat-resizer { position: absolute; top: 0; left: -4px; bottom: 0; width: 9px; cursor: col-resize; z-index: 10; touch-action: none; }
+.order-chat-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--border); transition: background .12s, width .12s; }
+.order-chat-resizer:hover::after { background: var(--brand); width: 2px; }
+
 /* Draggable divider on the right edge of the chat center column. */
 .col-resizer {
   position: absolute; top: 0; right: -3px; bottom: 0; width: 7px;
