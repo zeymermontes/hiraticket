@@ -100,6 +100,7 @@ func main() {
 	go m.pollSessions(ctx)
 	go m.pollOutbound(ctx)
 	go m.pollContacts(ctx)
+	go m.pollOps(ctx)
 	select {} // run forever
 }
 
@@ -169,7 +170,7 @@ func (m *Manager) reap(ctx context.Context, alive map[string]bool) {
 func (m *Manager) pollOutbound(ctx context.Context) {
 	for {
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name
+			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name, reply_to
 			   FROM messages
 			  WHERE direction='out' AND state='queued'
 			  ORDER BY created_at LIMIT 50`)
@@ -177,12 +178,13 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 			var pending []outMsg
 			for rows.Next() {
 				var o outMsg
-				var body, murl, mmime, mname sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname) == nil {
+				var body, murl, mmime, mname, replyTo sql.NullString
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo) == nil {
 					o.body = body.String
 					o.murl = murl.String
 					o.mmime = mmime.String
 					o.mname = mname.String
+					o.replyTo = replyTo.String
 					pending = append(pending, o)
 				}
 			}
@@ -584,7 +586,7 @@ func nullIf(s string) interface{} {
 }
 
 type outMsg struct {
-	id, biz, conv, body, mtype, murl, mmime, mname string
+	id, biz, conv, body, mtype, murl, mmime, mname, replyTo string
 }
 
 func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
@@ -619,6 +621,11 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 		m.log.Errorf("build %s: %v", o.id, err)
 		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
 		return
+	}
+	if o.replyTo != "" {
+		if ci := m.replyContext(ctx, client, jid, o.replyTo); ci != nil {
+			attachContext(waMsg, ci)
+		}
 	}
 
 	resp, err := client.SendMessage(ctx, jid, waMsg)
@@ -691,6 +698,109 @@ func strOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// replyContext builds the quoted-message context for a reply.
+func (m *Manager) replyContext(ctx context.Context, client *whatsmeow.Client, chatJID types.JID, replyToID string) *waE2E.ContextInfo {
+	var waID, body, dir sql.NullString
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT wa_id, body, direction FROM messages WHERE id=$1`, replyToID).Scan(&waID, &body, &dir); err != nil || !waID.Valid || waID.String == "" {
+		return nil
+	}
+	participant := chatJID.String()
+	if dir.String == "out" && client.Store.ID != nil {
+		participant = client.Store.ID.ToNonAD().String()
+	}
+	return &waE2E.ContextInfo{
+		StanzaID:      proto.String(waID.String),
+		Participant:   proto.String(participant),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(body.String)},
+	}
+}
+
+func attachContext(msg *waE2E.Message, ci *waE2E.ContextInfo) {
+	switch {
+	case msg.Conversation != nil:
+		txt := msg.GetConversation()
+		msg.Conversation = nil
+		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{Text: proto.String(txt), ContextInfo: ci}
+	case msg.ExtendedTextMessage != nil:
+		msg.ExtendedTextMessage.ContextInfo = ci
+	case msg.ImageMessage != nil:
+		msg.ImageMessage.ContextInfo = ci
+	case msg.VideoMessage != nil:
+		msg.VideoMessage.ContextInfo = ci
+	case msg.AudioMessage != nil:
+		msg.AudioMessage.ContextInfo = ci
+	case msg.DocumentMessage != nil:
+		msg.DocumentMessage.ContextInfo = ci
+	}
+}
+
+// pollOps processes edit/delete requests (pending_op) from the app.
+func (m *Manager) pollOps(ctx context.Context) {
+	for {
+		rows, err := m.db.QueryContext(ctx,
+			`SELECT id, business_id, conversation_id, body, wa_id, pending_op
+			   FROM messages WHERE pending_op IS NOT NULL AND wa_id IS NOT NULL LIMIT 30`)
+		if err == nil {
+			type op struct{ id, biz, conv, body, waID, op string }
+			var ops []op
+			for rows.Next() {
+				var o op
+				var body sql.NullString
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op) == nil {
+					o.body = body.String
+					ops = append(ops, o)
+				}
+			}
+			rows.Close()
+			for _, o := range ops {
+				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op)
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op string) {
+	m.mu.Lock()
+	client := m.byBiz[biz]
+	m.mu.Unlock()
+	if client == nil {
+		return // not connected — retry later
+	}
+	var phone sql.NullString
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, conv).
+		Scan(&phone); err != nil || !phone.Valid || digits(phone.String) == "" {
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
+		return
+	}
+	chatJID := types.NewJID(digits(phone.String), types.DefaultUserServer)
+
+	switch op {
+	case "edit":
+		edit := client.BuildEdit(chatJID, types.MessageID(waID), &waE2E.Message{Conversation: proto.String(body)})
+		if _, err := client.SendMessage(ctx, chatJID, edit); err != nil {
+			m.log.Errorf("edit %s: %v", id, err)
+			return
+		}
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
+	case "delete":
+		var own types.JID
+		if client.Store.ID != nil {
+			own = *client.Store.ID
+		}
+		revoke := client.BuildRevoke(chatJID, own, types.MessageID(waID))
+		if _, err := client.SendMessage(ctx, chatJID, revoke); err != nil {
+			m.log.Errorf("revoke %s: %v", id, err)
+			return
+		}
+		m.exec(ctx, `UPDATE messages SET deleted=true, body='', pending_op=NULL WHERE id=$1`, id)
+	default:
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
+	}
 }
 
 // ---------- helpers ----------
