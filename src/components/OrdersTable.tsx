@@ -12,7 +12,16 @@ import type { ConvDetail } from "@/lib/chat";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { createOrder } from "@/app/(app)/orders/actions";
 
-type SortKey = "code" | "total" | "updated_at";
+type SortKey = "code" | "total" | "updated_at" | "created_at";
+
+const PRIO_LABEL: Record<string, { es: string; en: string }> = {
+  low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
+  high: { es: "Alta", en: "High" }, urgent: { es: "Urgente", en: "Urgent" },
+};
+
+function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
+  return <Pill color={priorityColor(p as never)}><Icon name="flag" size={11} />{PRIO_LABEL[p]?.[lang] ?? p}</Pill>;
+}
 
 export function OrdersTable({
   rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected,
@@ -36,26 +45,40 @@ export function OrdersTable({
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [showNew, setShowNew] = useState(false);
+  const [stageF, setStageF] = useState("");
+  const [areaF, setAreaF] = useState("");
+  const [assigneeF, setAssigneeF] = useState("");
+  const [prioF, setPrioF] = useState("");
+  const [dense, setDense] = useState(false);
+  const [page, setPage] = useState(0);
+  const PER = 25;
 
   useEffect(() => { if (autoOpen) setShowNew(true); }, [autoOpen]);
+  useEffect(() => { setPage(0); }, [q, stageF, areaF, assigneeF, prioF]);
 
-  const view = useMemo(() => {
+  const sortedAll = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const filtered = rows.filter((o) =>
-      !needle ||
-      o.code.toLowerCase().includes(needle) ||
-      (o.contact?.name ?? "").toLowerCase().includes(needle),
+      (!needle || o.code.toLowerCase().includes(needle) || (o.contact?.name ?? "").toLowerCase().includes(needle)) &&
+      (!stageF || o.stage?.name === stageF) &&
+      (!areaF || o.area?.name === areaF) &&
+      (!assigneeF || o.assignee_id === assigneeF) &&
+      (!prioF || o.priority === prioF),
     );
     const sorted = [...filtered].sort((a, b) => {
       let av: string | number, bv: string | number;
       if (sortKey === "total") { av = a.total; bv = b.total; }
       else if (sortKey === "updated_at") { av = a.updated_at; bv = b.updated_at; }
+      else if (sortKey === "created_at") { av = a.created_at ?? a.updated_at; bv = b.created_at ?? b.updated_at; }
       else { av = a.code; bv = b.code; }
       const r = av < bv ? -1 : av > bv ? 1 : 0;
       return dir === "asc" ? r : -r;
     });
     return sorted;
-  }, [rows, q, sortKey, dir]);
+  }, [rows, q, sortKey, dir, stageF, areaF, assigneeF, prioF]);
+
+  const pageCount = Math.max(1, Math.ceil(sortedAll.length / PER));
+  const view = useMemo(() => sortedAll.slice(page * PER, page * PER + PER), [sortedAll, page]);
 
   function sortBy(k: SortKey) {
     if (sortKey === k) setDir(dir === "asc" ? "desc" : "asc");
@@ -76,30 +99,55 @@ export function OrdersTable({
       day: "2-digit", month: "short",
     });
 
+  function exportCsv() {
+    const head = ["Code", "Customer", "Stage", "Area", "Agent", "Priority", "Total", "Created", "Updated"];
+    const lines = sortedAll.map((o) => [o.code, o.contact?.name ?? "", o.stage?.name ?? "", o.area?.name ?? "", (o.assignee_id && agentMap.get(o.assignee_id)?.name) || "", o.priority, o.total, o.created_at ?? "", o.updated_at].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const csv = [head.join(","), ...lines].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "pedidos.csv"; a.click(); URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="page">
       <div className="phead">
         <h1>{objectName}</h1>
-        <Pill color="slate" large>{view.length}</Pill>
+        <Pill color="slate" large>{sortedAll.length} {objectName.toLowerCase()}</Pill>
         <span className="grow" />
+        <div className="seg seg-sm">
+          <button className={!dense ? "on" : ""} onClick={() => setDense(false)} title={lang === "es" ? "Cómodo" : "Comfortable"}><Icon name="layers" size={14} /></button>
+          <button className={dense ? "on" : ""} onClick={() => setDense(true)} title={lang === "es" ? "Compacto" : "Compact"}><Icon name="sliders" size={14} /></button>
+        </div>
       </div>
 
       <div className="toolbar">
-        <div className="field field-sm" style={{ width: 240 }}>
+        <div className="field field-sm" style={{ width: 220 }}>
           <Icon name="search" />
-          <input
-            placeholder={t("search_ph")}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+          <input placeholder={t("search_ph")} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        <select className="select select-sm" value={stageF} onChange={(e) => setStageF(e.target.value)}>
+          <option value="">{lang === "es" ? "Todo estado" : "All status"}</option>
+          {stages.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+        </select>
+        <select className="select select-sm" value={areaF} onChange={(e) => setAreaF(e.target.value)}>
+          <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
+          {areas.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+        </select>
+        <select className="select select-sm" value={assigneeF} onChange={(e) => setAssigneeF(e.target.value)}>
+          <option value="">{lang === "es" ? "Todo agente" : "All agents"}</option>
+          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+        <select className="select select-sm" value={prioF} onChange={(e) => setPrioF(e.target.value)}>
+          <option value="">{lang === "es" ? "Toda prioridad" : "All priority"}</option>
+          {(["urgent", "high", "normal", "low"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
+        </select>
         <span className="grow" />
+        <button className="btn btn-sm btn-outline" type="button" onClick={exportCsv}><Icon name="file" size={14} /> {lang === "es" ? "Exportar" : "Export"}</button>
         <button className="btn btn-sm btn-primary" type="button" onClick={() => setShowNew(true)}>
           <Icon name="plus" size={14} /> {t("new_order")}
         </button>
       </div>
 
-      <div className="tablewrap scroll">
+      <div className={"tablewrap scroll" + (dense ? " dense" : "")}>
         <table className="tbl">
           <thead>
             <tr>
@@ -111,6 +159,7 @@ export function OrdersTable({
               <th>{lang === "es" ? "Prioridad" : "Priority"}</th>
               <th>{lang === "es" ? "Artículos" : "Items"}</th>
               <Sort k="total">{t("col_total")}</Sort>
+              <Sort k="created_at">{lang === "es" ? "Creado" : "Created"}</Sort>
               <Sort k="updated_at">{t("col_updated")}</Sort>
             </tr>
           </thead>
@@ -130,16 +179,17 @@ export function OrdersTable({
                 <td>{o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{o.area ? <Pill color={o.area.color as PillColor}>{o.area.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
-                <td><Pill color={priorityColor(o.priority)}><Icon name="dot" size={10} />{o.priority}</Pill></td>
+                <td><PriorityFlag p={o.priority} lang={lang} /></td>
                 <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>
+                <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
                 <td className="muted t-sm">{relDate(o.updated_at)}</td>
               </tr>
               );
             })}
             {view.length === 0 && (
               <tr>
-                <td colSpan={9} className="muted" style={{ textAlign: "center", padding: 40 }}>
+                <td colSpan={10} className="muted" style={{ textAlign: "center", padding: 40 }}>
                   {t("empty_orders")}
                 </td>
               </tr>
@@ -147,6 +197,16 @@ export function OrdersTable({
           </tbody>
         </table>
       </div>
+
+      {pageCount > 1 && (
+        <div className="row gap-2" style={{ padding: "10px 4px", alignItems: "center" }}>
+          <span className="muted t-sm">{lang === "es" ? "Mostrando" : "Showing"} {page * PER + 1}–{Math.min((page + 1) * PER, sortedAll.length)} {lang === "es" ? "de" : "of"} {sortedAll.length}</span>
+          <span className="grow" />
+          <button className="btn btn-sm btn-outline" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹</button>
+          <span className="t-sm">{page + 1} / {pageCount}</span>
+          <button className="btn btn-sm btn-outline" disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>›</button>
+        </div>
+      )}
 
       {showNew && (
         <NewOrderModal

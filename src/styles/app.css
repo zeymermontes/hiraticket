@@ -50,6 +50,10 @@
 [data-theme="dark"] .msg-menu-btn { background: rgba(255, 255, 255, .12); }
 [data-theme="dark"] .msg-menu-btn:hover { background: rgba(255, 255, 255, .2); }
 
+/* Orders table density toggle + compact segmented control. */
+.seg.seg-sm button { height: 28px; padding: 0 9px; }
+.tablewrap.dense .tbl td, .tablewrap.dense .tbl th { padding-top: 5px; padding-bottom: 5px; }
+
 /* Draggable left edge of the order chat panel (docks left of the order drawer). */
 .order-chat-resizer { position: absolute; top: 0; left: -4px; bottom: 0; width: 9px; cursor: col-resize; z-index: 10; touch-action: none; }
 .order-chat-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--border); transition: background .12s, width .12s; }
