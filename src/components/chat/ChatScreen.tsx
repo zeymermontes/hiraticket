@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
-import { Pill, Avatar, deriveInitials } from "@/components/ui";
+import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
@@ -169,7 +169,7 @@ export function ChatScreen({
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
                 <Link key={c.id} href={`/chat?c=${c.id}`} className={"conv" + (c.id === selectedId ? " sel" : "") + (c.unread ? " unread" : "")}>
-                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name ?? "?")} src={c.contact?.avatar_url ?? undefined} size={42} />
+                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">
                       <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
@@ -252,7 +252,7 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: {
   return (
     <div className="chatcol">
       <div className="thread-head">
-        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} src={detail.contact?.avatar_url ?? undefined} size={38} />
+        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38} />
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="row gap-2">
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
@@ -383,7 +383,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
       <div className="ws scroll">
         <div className="ws-contact">
           <div className="row gap-3">
-            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} src={detail.contact?.avatar_url ?? undefined} size={52} />
+            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={52} />
             <div className="grow" style={{ minWidth: 0 }}>
               {editingName ? (
                 <input className="inp-inline" style={{ width: "100%" }} value={nameVal} autoFocus
@@ -396,7 +396,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
             </div>
             <div className="row gap-1">
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
-              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre y foto" : "Fetch name & photo"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
+              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
             </div>
           </div>
