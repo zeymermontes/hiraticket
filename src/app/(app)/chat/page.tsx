@@ -3,7 +3,6 @@ import { getConversationList, getConversationDetail, getAgents } from "@/lib/cha
 import { getAreas } from "@/lib/business";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { createClient } from "@/lib/supabase/server";
-import { Onboarding } from "@/components/Onboarding";
 import { ChatScreen } from "@/components/chat/ChatScreen";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +13,7 @@ export default async function ChatPage({
   searchParams: Promise<{ c?: string }>;
 }) {
   const business = await getMyBusiness();
-  if (!business) return <Onboarding />;
+  if (!business) return null;
 
   const sp = await searchParams;
   const [list, agents, areas, sessions] = await Promise.all([

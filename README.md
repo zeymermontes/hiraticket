@@ -35,14 +35,13 @@ The app is a **native Next.js + Supabase** build (the original design prototype 
 ## 1. Supabase setup
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Run the migrations (SQL editor, **in order**) — paste each file:
-   - `supabase/migrations/0001_init.sql`
-   - `supabase/migrations/0002_seed_demo.sql`
-   - `supabase/migrations/0003_saas.sql`
-   - `supabase/migrations/0004_catalog_agenda_campaigns.sql`
-   (Or with the CLI: `supabase db push`.)
+2. Run the migrations (SQL editor, **in order**) — paste each `supabase/migrations/*.sql`
+   file (`0001` … `0006`), or use the CLI: `supabase db push`.
    Then enable **Realtime** on `whatsapp_sessions` and `messages` (Database → Replication)
    so the WhatsApp worker reacts live.
+   *(`0002`/`0004` define optional demo-data seeders that are **not** run automatically — the
+   app starts with no sample data; call `seed_demo_data(business_id)` manually if you want a
+   demo tenant.)*
 
 ## 1. Supabase setup
 
@@ -63,9 +62,9 @@ npm install
 npm run dev                     # http://localhost:3000
 ```
 
-Sign up → you'll land on **Chat** with a "Create your business" card → create one and it
-seeds a demo sticker shop (orders, conversations, areas, stages, catalog, agenda) you can use
-across every view.
+Sign up → a **one-time onboarding wizard**: name your business + pick an industry (this sets
+up a working pipeline — stages & areas — with **no sample data**), then a short, **skippable**
+welcome. After that you land in an empty, ready-to-use workspace.
 
 ## 3. Deploy to Render
 

@@ -6,7 +6,7 @@ export async function getMyBusiness(): Promise<Business | null> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("businesses")
-    .select("id, name, vertical, object_singular")
+    .select("id, name, vertical, object_singular, onboarded")
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();

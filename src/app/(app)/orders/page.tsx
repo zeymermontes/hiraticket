@@ -1,7 +1,6 @@
 import { getMyBusiness, getOrders } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { OrdersTable } from "@/components/OrdersTable";
-import { Onboarding } from "@/components/Onboarding";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +10,7 @@ export default async function OrdersPage({
   searchParams: Promise<{ new?: string }>;
 }) {
   const business = await getMyBusiness();
-  if (!business) return <Onboarding />;
+  if (!business) return null;
 
   const sp = await searchParams;
   const [orders, areas, stages] = await Promise.all([

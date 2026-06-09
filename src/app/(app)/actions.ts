@@ -45,27 +45,24 @@ export async function moveOrderArea(orderId: string, areaId: string): Promise<vo
   revalidatePath("/orders");
 }
 
-/** Creates the caller's business and seeds demo sticker-shop data. */
-export async function createDemoBusiness(formData: FormData): Promise<void> {
-  const name = (formData.get("name") as string)?.trim() || "Mi negocio";
-  const vertical = (formData.get("vertical") as string) || "imprenta";
-
+/**
+ * Creates the caller's business with a working default pipeline (no sample data).
+ * Used by the first-run onboarding wizard.
+ */
+export async function createBusiness(name: string, vertical: string): Promise<void> {
   const supabase = await createClient();
-  const { data: businessId, error } = await supabase.rpc("create_business", {
-    p_name: name,
-    p_vertical: vertical,
+  const { error } = await supabase.rpc("create_business", {
+    p_name: name.trim() || "Mi negocio",
+    p_vertical: vertical || "imprenta",
   });
   if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
+}
 
-  const { error: seedErr } = await supabase.rpc("seed_demo_data", {
-    p_business: businessId,
-  });
-  if (seedErr) throw new Error(seedErr.message);
-
-  // Catalog / agenda / campaigns demo data (separate migration).
-  await supabase.rpc("seed_demo_extra", { p_business: businessId });
-
-  revalidatePath("/orders");
-  revalidatePath("/chat");
-  revalidatePath("/kanban");
+/** Marks the one-time onboarding as done (finished or skipped). */
+export async function completeOnboarding(businessId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("complete_onboarding", { p_business: businessId });
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
 }

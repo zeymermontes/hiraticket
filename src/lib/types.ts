@@ -6,6 +6,7 @@ export interface Business {
   name: string;
   vertical: string;
   object_singular: string;
+  onboarded: boolean;
 }
 
 export interface OrderRow {

@@ -1,14 +1,13 @@
 import { getMyBusiness } from "@/lib/queries";
 import { getAgents } from "@/lib/chat";
 import { createClient } from "@/lib/supabase/server";
-import { Onboarding } from "@/components/Onboarding";
 import { AgentsScreen } from "@/components/AgentsScreen";
 
 export const dynamic = "force-dynamic";
 
 export default async function AgentsPage() {
   const business = await getMyBusiness();
-  if (!business) return <Onboarding />;
+  if (!business) return null;
 
   const agents = await getAgents(business.id);
   const supabase = await createClient();

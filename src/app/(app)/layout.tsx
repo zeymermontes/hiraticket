@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getMyBusiness } from "@/lib/queries";
 import { Shell, type ShellUser } from "@/components/Shell";
+import { AppProvider } from "@/components/AppContext";
+import { OnboardingWizard } from "@/components/OnboardingWizard";
 
 export default async function AppLayout({
   children,
@@ -13,6 +16,16 @@ export default async function AppLayout({
   } = await supabase.auth.getUser();
 
   if (!user) redirect("/login");
+
+  // First-run onboarding: no business yet, or setup not finished/skipped.
+  const business = await getMyBusiness();
+  if (!business || !business.onboarded) {
+    return (
+      <AppProvider>
+        <OnboardingWizard business={business} />
+      </AppProvider>
+    );
+  }
 
   const shellUser: ShellUser = {
     email: user.email ?? "",

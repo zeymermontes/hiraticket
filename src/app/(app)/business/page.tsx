@@ -1,14 +1,13 @@
 import { getMyBusiness } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
-import { Onboarding } from "@/components/Onboarding";
 import { BusinessConfig } from "@/components/BusinessConfig";
 
 export const dynamic = "force-dynamic";
 
 export default async function BusinessPage() {
   const business = await getMyBusiness();
-  if (!business) return <Onboarding />;
+  if (!business) return null;
 
   const [stages, areas, agents] = await Promise.all([
     getStages(business.id),
