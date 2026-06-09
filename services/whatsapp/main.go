@@ -87,6 +87,7 @@ func main() {
 	logger.Infof("worker booting")
 	go m.pollSessions(ctx)
 	go m.pollOutbound(ctx)
+	go m.pollContacts(ctx)
 	select {} // run forever
 }
 
@@ -178,6 +179,68 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// pollContacts fulfils on-demand "fetch name & photo" requests from the app.
+func (m *Manager) pollContacts(ctx context.Context) {
+	for {
+		rows, err := m.db.QueryContext(ctx,
+			`SELECT id, business_id, phone FROM contacts WHERE fetch_requested IS NOT NULL LIMIT 20`)
+		if err == nil {
+			type c struct{ id, biz, phone string }
+			var list []c
+			for rows.Next() {
+				var x c
+				var ph sql.NullString
+				if rows.Scan(&x.id, &x.biz, &ph) == nil {
+					x.phone = ph.String
+					list = append(list, x)
+				}
+			}
+			rows.Close()
+			for _, x := range list {
+				m.fetchContactInfo(ctx, x.id, x.biz, x.phone)
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+func (m *Manager) fetchContactInfo(ctx context.Context, id, biz, phone string) {
+	m.mu.Lock()
+	client := m.byBiz[biz]
+	m.mu.Unlock()
+	if client == nil {
+		return // not connected — keep the flag, retry when a number is linked
+	}
+	defer m.exec(ctx, `UPDATE contacts SET fetch_requested=NULL WHERE id=$1`, id)
+
+	num := digits(phone)
+	if num == "" {
+		return
+	}
+	jid := types.NewJID(num, types.DefaultUserServer)
+
+	if ci, err := client.Store.Contacts.GetContact(ctx, jid); err == nil && ci.Found {
+		name := firstNonEmpty(ci.FullName, ci.BusinessName, ci.PushName, ci.FirstName)
+		if name != "" {
+			// only override the auto name (the bare phone), never a manual rename
+			m.exec(ctx, `UPDATE contacts SET name=$1 WHERE id=$2 AND name=$3`, name, id, phone)
+		}
+	}
+	if pic, err := client.GetProfilePictureInfo(ctx, jid, nil); err == nil && pic != nil && pic.URL != "" {
+		m.exec(ctx, `UPDATE contacts SET avatar_url=$1 WHERE id=$2`, pic.URL, id)
+	}
+	m.log.Infof("fetched contact info %s", phone)
 }
 
 // ---------- session lifecycle ----------

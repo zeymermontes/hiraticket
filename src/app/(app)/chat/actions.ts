@@ -98,6 +98,34 @@ export async function addConvNote(convId: string, body: string): Promise<void> {
   revalidatePath("/chat");
 }
 
+/** Permanently delete a conversation and its messages (FK cascade). */
+export async function deleteConv(convId: string): Promise<void> {
+  const { supabase } = await ctx();
+  const businessId = await businessOf(convId);
+  if (businessId) {
+    await supabase.from("notes").delete().eq("parent_type", "conversation").eq("parent_id", convId);
+    await supabase.from("events").delete().eq("parent_type", "conversation").eq("parent_id", convId);
+  }
+  await supabase.from("conversations").delete().eq("id", convId);
+  revalidatePath("/chat");
+}
+
+/** Rename the contact behind a chat. */
+export async function renameContact(contactId: string, name: string): Promise<void> {
+  const { supabase } = await ctx();
+  const clean = name.trim();
+  if (!clean) return;
+  await supabase.from("contacts").update({ name: clean }).eq("id", contactId);
+  revalidatePath("/chat");
+}
+
+/** Ask the worker to (re)fetch the contact's WhatsApp name + profile photo. */
+export async function requestContactInfo(contactId: string): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("contacts").update({ fetch_requested: new Date().toISOString() }).eq("id", contactId);
+  revalidatePath("/chat");
+}
+
 export async function setConvHidden(convId: string, hidden: boolean): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("conversations").update({ hidden }).eq("id", convId);

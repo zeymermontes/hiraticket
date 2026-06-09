@@ -11,6 +11,7 @@ import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import {
   sendMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
+  deleteConv, renameContact, requestContactInfo,
 } from "@/app/(app)/chat/actions";
 
 function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boolean {
@@ -60,9 +61,42 @@ export function ChatScreen({
       .channel(`chat-${businessId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, bump)
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, bump)
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, bump)
       .subscribe();
     return () => { clearTimeout(t); supabase.removeChannel(ch); };
   }, [businessId, router]);
+
+  // Center column: show/hide + drag-resize (persisted).
+  const [ctxVisible, setCtxVisible] = useState(true);
+  const [ctxW, setCtxW] = useState(360);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("ht_ctxVisible");
+      const w = localStorage.getItem("ht_ctxW");
+      if (v != null) setCtxVisible(v === "true");
+      if (w != null) setCtxW(Math.max(280, Math.min(680, Number(w) || 360)));
+    } catch {}
+  }, []);
+  useEffect(() => { try { localStorage.setItem("ht_ctxVisible", String(ctxVisible)); } catch {} }, [ctxVisible]);
+  useEffect(() => { try { localStorage.setItem("ht_ctxW", String(ctxW)); } catch {} }, [ctxW]);
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const ctxEl = (e.currentTarget as HTMLElement).parentElement;
+    if (!ctxEl) return;
+    const left = ctxEl.getBoundingClientRect().left;
+    const onMove = (ev: PointerEvent) => setCtxW(Math.max(280, Math.min(680, ev.clientX - left)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -90,7 +124,15 @@ export function ChatScreen({
   const unN = list.filter((c) => c.assignee_id == null).length;
 
   return (
-    <div className="chat" style={{ position: "relative" }}>
+    <div
+      className="chat"
+      style={{
+        position: "relative",
+        gridTemplateColumns: detail && ctxVisible
+          ? `300px ${ctxW}px minmax(300px,1fr)`
+          : "300px minmax(300px,1fr)",
+      }}
+    >
       {/* list column */}
       <div className="chatcol list">
         <div className="col-head">
@@ -127,7 +169,7 @@ export function ChatScreen({
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
                 <Link key={c.id} href={`/chat?c=${c.id}`} className={"conv" + (c.id === selectedId ? " sel" : "") + (c.unread ? " unread" : "")}>
-                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name ?? "?")} size={42} />
+                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name ?? "?")} src={c.contact?.avatar_url ?? undefined} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">
                       <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
@@ -154,8 +196,8 @@ export function ChatScreen({
 
       {detail ? (
         <>
-          <Workspace detail={detail} agents={agents} areas={areas} />
-          <Thread detail={detail} agents={agents} areas={areas} connected={connected} />
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} />}
+          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} />
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
@@ -171,7 +213,7 @@ export function ChatScreen({
 }
 
 /* ---------- Thread (right column) ---------- */
-function Thread({ detail, agents, areas, connected }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean }) {
+function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible: boolean; onToggleCtx: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -210,7 +252,7 @@ function Thread({ detail, agents, areas, connected }: { detail: ConvDetail; agen
   return (
     <div className="chatcol">
       <div className="thread-head">
-        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} size={38} />
+        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} src={detail.contact?.avatar_url ?? undefined} size={38} />
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="row gap-2">
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
@@ -218,6 +260,9 @@ function Thread({ detail, agents, areas, connected }: { detail: ConvDetail; agen
           </div>
           <div className="t-xs muted">{assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
         </div>
+        <button className={"iconbtn" + (ctxVisible ? " active" : "")} title={ctxVisible ? (lang === "es" ? "Ocultar panel" : "Hide panel") : (lang === "es" ? "Mostrar panel" : "Show panel")} onClick={onToggleCtx}>
+          <Icon name="columns" />
+        </button>
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); router.refresh(); })}>
             <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
@@ -304,12 +349,16 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas }: { detail: ConvDetail; agents: Agent[]; areas: Area[] }) {
+function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; onResizeStart: (e: React.PointerEvent) => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [note, setNote] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+
+  useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
 
   function postNote() {
     const body = note.trim();
@@ -317,16 +366,38 @@ function Workspace({ detail, agents, areas }: { detail: ConvDetail; agents: Agen
     setNote("");
     start(async () => { await addConvNote(detail.id, body); router.refresh(); });
   }
+  function saveName() {
+    setEditingName(false);
+    const v = nameVal.trim();
+    if (v && detail.contact && v !== detail.contact.name) {
+      start(async () => { await renameContact(detail.contact!.id, v); router.refresh(); });
+    }
+  }
+  function removeChat() {
+    if (!confirm(lang === "es" ? "¿Eliminar esta conversación y sus mensajes?" : "Delete this conversation and its messages?")) return;
+    start(async () => { await deleteConv(detail.id); router.push("/chat"); router.refresh(); });
+  }
 
   return (
-    <div className="chatcol ctx">
+    <div className="chatcol ctx" style={{ position: "relative" }}>
       <div className="ws scroll">
         <div className="ws-contact">
           <div className="row gap-3">
-            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} size={52} />
+            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name ?? "?")} src={detail.contact?.avatar_url ?? undefined} size={52} />
             <div className="grow" style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 16 }} className="truncate">{detail.contact?.name}</div>
+              {editingName ? (
+                <input className="inp-inline" style={{ width: "100%" }} value={nameVal} autoFocus
+                  onChange={(e) => setNameVal(e.target.value)} onBlur={saveName}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }} />
+              ) : (
+                <div style={{ fontWeight: 800, fontSize: 16 }} className="truncate">{detail.contact?.name}</div>
+              )}
               <div className="row gap-2" style={{ marginTop: 3 }}><Icon name="whatsapp" size={14} /><span className="mono t-sm muted nowrap">{detail.contact?.phone}</span></div>
+            </div>
+            <div className="row gap-1">
+              <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
+              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre y foto" : "Fetch name & photo"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
+              <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
             </div>
           </div>
           <div className="row gap-2" style={{ flexWrap: "wrap" }}>
@@ -401,6 +472,7 @@ function Workspace({ detail, agents, areas }: { detail: ConvDetail; agents: Agen
           </div></div>
         </div>
       </div>
+      <div className="col-resizer" onPointerDown={onResizeStart} title="" />
     </div>
   );
 }
