@@ -254,6 +254,23 @@ export function ChatScreen({
   const mineN = list.filter((c) => c.assignee_id === meId).length;
   const unN = list.filter((c) => c.assignee_id == null).length;
 
+  // Counts for the filter chips — scoped by the active tab/area/archived view (not by the
+  // status/unread filters themselves).
+  const chipCounts = useMemo(() => {
+    const scope = list.filter((c) =>
+      isArchived(c) === showArchived &&
+      !(tab === "mine" && c.assignee_id !== meId) &&
+      !(tab === "unassigned" && c.assignee_id != null) &&
+      !(areaF && c.area?.name !== areaF));
+    return {
+      all: scope.length,
+      open: scope.filter((c) => c.status === "open").length,
+      pending: scope.filter((c) => c.status === "pending").length,
+      resolved: scope.filter((c) => c.status === "resolved").length,
+      unread: scope.filter((c) => c.unread > 0).length,
+    };
+  }, [list, tab, areaF, showArchived, meId]);
+
   return (
     <div
       className="chat"
@@ -279,23 +296,26 @@ export function ChatScreen({
             <Icon name="search" />
             <input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+          <div className="chip-row">
+            <button className={"chip" + (!statusF && !unreadOnly ? " on" : "")} onClick={() => { setStatusF(null); setUnreadOnly(false); }}>
+              {lang === "es" ? "Todos" : "All"}<span className="chip-n">{chipCounts.all}</span>
+            </button>
             {(["open", "pending", "resolved"] as const).map((s) => (
-              <button key={s} className={"btn btn-sm " + (statusF === s ? "btn-primary" : "btn-outline")} onClick={() => setStatusF(statusF === s ? null : s)}>
-                <Icon name="dot" size={12} /> {STATUS_LABEL[s][lang]}
+              <button key={s} className={"chip" + (statusF === s ? " on" : "")} onClick={() => setStatusF(statusF === s ? null : s)}>
+                <span className="chip-dot" style={{ background: `var(--${STATUS_COLOR[s]})` }} />{STATUS_LABEL[s][lang]}<span className="chip-n">{chipCounts[s]}</span>
               </button>
             ))}
-            <button className={"btn btn-sm " + (unreadOnly ? "btn-primary" : "btn-outline")} onClick={() => setUnreadOnly((v) => !v)}>
-              <Icon name="dot" size={12} /> {lang === "es" ? "No leídos" : "Unread"}
+            <button className={"chip" + (unreadOnly ? " on" : "")} onClick={() => setUnreadOnly((v) => !v)}>
+              <span className="chip-dot" style={{ background: "var(--red)" }} />{lang === "es" ? "No leídos" : "Unread"}{chipCounts.unread > 0 && <span className="chip-n">{chipCounts.unread}</span>}
             </button>
             {areaNames.length > 0 && (
-              <select className="select select-sm" value={areaF ?? ""} onChange={(e) => setAreaF(e.target.value || null)}>
+              <select className="select select-sm chip-select" value={areaF ?? ""} onChange={(e) => setAreaF(e.target.value || null)}>
                 <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
                 {areaNames.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             )}
-            <button className={"btn btn-sm " + (showArchived ? "btn-primary" : "btn-outline")} onClick={() => setShowArchived((v) => !v)}>
-              <Icon name="clock" size={12} /> {lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}{archivedN > 0 && <span className="badge badge-soft">{archivedN}</span>}
+            <button className={"chip" + (showArchived ? " on" : "")} onClick={() => setShowArchived((v) => !v)} title={lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}>
+              <Icon name="clock" size={12} />{lang === "es" ? "Pospuestos" : "Snoozed"}{archivedN > 0 && <span className="chip-n">{archivedN}</span>}
             </button>
           </div>
         </div>

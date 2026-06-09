@@ -72,6 +72,23 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Compact filter chip strip (chat list) — one scrollable row */
+.chip-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.chip-row::-webkit-scrollbar { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: none;
+  height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.chip:hover { border-color: var(--border-strong); }
+.chip.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.chip-dot { width: 7px; height: 7px; border-radius: 7px; flex: none; }
+.chip.on .chip-dot { box-shadow: 0 0 0 1.5px rgba(255,255,255,.5); }
+.chip-n { font-size: 11px; font-weight: 700; opacity: .65; }
+.chip.on .chip-n { opacity: .95; }
+.chip-select { height: 28px; flex: none; border-radius: 999px; }
+
 /* Reorderable center-column blocks */
 .ws-grip { cursor: grab; color: var(--text-muted); opacity: .45; display: inline-flex; align-items: center; margin-right: 2px; }
 .ws-grip:hover { opacity: 1; }
