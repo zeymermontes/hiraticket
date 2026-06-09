@@ -24,3 +24,27 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+
+  # WhatsApp Web worker (whatsapp-web.js). Long-running; keeps the session on a disk.
+  - type: worker
+    name: hiraticket-whatsapp
+    runtime: docker
+    dockerfilePath: ./services/whatsapp/Dockerfile
+    dockerContext: ./services/whatsapp
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    disk:
+      name: wa-auth
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: WA_DATA_PATH
+        value: /data/wwebjs
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/google-chrome-stable
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

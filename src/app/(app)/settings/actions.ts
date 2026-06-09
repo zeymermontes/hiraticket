@@ -1,0 +1,30 @@
+"use server";
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+
+/** Ask the worker to (re)connect this session — it will publish a QR. */
+export async function connectSession(sessionId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase
+    .from("whatsapp_sessions")
+    .update({ status: "connecting", qr: null, updated_at: new Date().toISOString() })
+    .eq("id", sessionId);
+  revalidatePath("/settings");
+}
+
+export async function disconnectSession(sessionId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase
+    .from("whatsapp_sessions")
+    .update({ status: "disconnected", qr: null, phone: null, updated_at: new Date().toISOString() })
+    .eq("id", sessionId);
+  revalidatePath("/settings");
+}
+
+export async function addSession(businessId: string, label: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase
+    .from("whatsapp_sessions")
+    .insert({ business_id: businessId, label: label.trim() || "Número", status: "disconnected" });
+  revalidatePath("/settings");
+}

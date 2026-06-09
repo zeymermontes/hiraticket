@@ -1,0 +1,174 @@
+import { createClient } from "@/lib/supabase/server";
+
+export interface Agent {
+  id: string;
+  name: string;
+  color: string;
+  role: "admin" | "agent" | "viewer";
+}
+
+export interface ConvListItem {
+  id: string;
+  status: "open" | "pending" | "resolved";
+  unread: number;
+  last_message_at: string | null;
+  assignee_id: string | null;
+  area: { name: string; color: string } | null;
+  contact: { id: string; name: string; phone: string | null } | null;
+  preview: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  direction: "in" | "out";
+  type: string;
+  body: string | null;
+  state: string | null;
+  author_id: string | null;
+  created_at: string;
+}
+
+export interface ConvNote {
+  id: string;
+  body: string;
+  author_id: string | null;
+  created_at: string;
+}
+
+export interface ConvEvent {
+  id: string;
+  kind: string;
+  text: string | null;
+  created_at: string;
+}
+
+export interface ChatOrderCard {
+  id: string;
+  code: string;
+  total: number;
+  priority: string;
+  stage: { name: string; color: string } | null;
+  area: { name: string; color: string } | null;
+}
+
+export interface ConvDetail {
+  id: string;
+  status: "open" | "pending" | "resolved";
+  assignee_id: string | null;
+  area: { name: string; color: string } | null;
+  contact: { id: string; name: string; phone: string | null; tags: string[] } | null;
+  messages: ChatMessage[];
+  notes: ConvNote[];
+  events: ConvEvent[];
+  orders: ChatOrderCard[];
+}
+
+/** Members of a business with their display name + avatar color. */
+export async function getAgents(businessId: string): Promise<Agent[]> {
+  const supabase = await createClient();
+  const { data: members } = await supabase
+    .from("business_members")
+    .select("user_id, role")
+    .eq("business_id", businessId);
+  if (!members?.length) return [];
+
+  const ids = members.map((m) => m.user_id as string);
+  const { data: profs } = await supabase
+    .from("profiles")
+    .select("id, full_name, avatar_color")
+    .in("id", ids);
+
+  const pmap = new Map((profs ?? []).map((p) => [p.id as string, p]));
+  return members.map((m) => {
+    const p = pmap.get(m.user_id as string);
+    return {
+      id: m.user_id as string,
+      name: (p?.full_name as string) || "Agente",
+      color: (p?.avatar_color as string) || "#5A6373",
+      role: m.role as Agent["role"],
+    };
+  });
+}
+
+export async function getConversationList(businessId: string): Promise<ConvListItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select(
+      "id, status, unread, last_message_at, assignee_id, area:areas(name,color), contact:contacts(id,name,phone), messages(body,created_at)",
+    )
+    .eq("business_id", businessId)
+    .order("last_message_at", { ascending: false });
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((c: Record<string, unknown>) => {
+    const msgs = (c.messages as { body: string; created_at: string }[]) ?? [];
+    const last = msgs.reduce<{ body: string; created_at: string } | null>(
+      (acc, m) => (!acc || m.created_at > acc.created_at ? m : acc),
+      null,
+    );
+    return {
+      id: c.id,
+      status: c.status,
+      unread: c.unread,
+      last_message_at: c.last_message_at,
+      assignee_id: c.assignee_id,
+      area: c.area,
+      contact: c.contact,
+      preview: last?.body ?? "",
+    } as ConvListItem;
+  });
+}
+
+export async function getConversationDetail(
+  convId: string,
+): Promise<ConvDetail | null> {
+  const supabase = await createClient();
+
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("id, status, assignee_id, contact_id, area:areas(name,color), contact:contacts(id,name,phone,tags)")
+    .eq("id", convId)
+    .maybeSingle();
+  if (!conv) return null;
+
+  const [{ data: messages }, { data: notes }, { data: events }, { data: orders }] =
+    await Promise.all([
+      supabase
+        .from("messages")
+        .select("id, direction, type, body, state, author_id, created_at")
+        .eq("conversation_id", convId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("notes")
+        .select("id, body, author_id, created_at")
+        .eq("parent_type", "conversation")
+        .eq("parent_id", convId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("events")
+        .select("id, kind, text, created_at")
+        .eq("parent_type", "conversation")
+        .eq("parent_id", convId)
+        .order("created_at", { ascending: false }),
+      conv.contact_id
+        ? supabase
+            .from("orders")
+            .select("id, code, total, priority, stage:stages(name,color), area:areas(name,color)")
+            .eq("contact_id", conv.contact_id)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] as unknown[] }),
+    ]);
+
+  return {
+    id: conv.id,
+    status: conv.status,
+    assignee_id: conv.assignee_id,
+    area: conv.area as unknown as ConvDetail["area"],
+    contact: conv.contact as unknown as ConvDetail["contact"],
+    messages: (messages ?? []) as ChatMessage[],
+    notes: (notes ?? []) as ConvNote[],
+    events: (events ?? []) as ConvEvent[],
+    orders: (orders ?? []) as unknown as ChatOrderCard[],
+  };
+}

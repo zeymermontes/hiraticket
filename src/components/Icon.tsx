@@ -51,6 +51,11 @@ export const ICONS: Record<string, IconFn> = {
   mail: () => <><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("m4 7 8 6 8-6")}</>,
   wifioff: () => <>{P("M2 5l20 14M5 11.5a10 10 0 0 1 4-2.6M19 11.5a10 10 0 0 0-4.5-2.8M7.8 14.5a6 6 0 0 1 3-1.5M12 18h.01")}</>,
   dot: () => <><circle cx="12" cy="12" r="4" fill="currentColor" /></>,
+  shield: () => <>{P("M12 3 5 6v5c0 4.5 3 7.7 7 9 4-1.3 7-4.5 7-9V6l-7-3Z")}{P("m9 12 2 2 4-4")}</>,
+  eye: () => <>{P("M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z")}<circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.8" /></>,
+  user: () => <><circle cx="12" cy="8.5" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M5.5 20a6.5 6.5 0 0 1 13 0")}</>,
+  trash: () => <>{P("M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-12")}</>,
+  edit: () => <>{P("M5 19h3l9-9-3-3-9 9v3ZM14.5 6.5l3 3")}</>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

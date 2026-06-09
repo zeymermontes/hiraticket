@@ -9,7 +9,7 @@ function Inner() {
   const { lang, setLang, theme, setTheme, t } = useApp();
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/app/Hiraticket.html";
+  const next = params.get("next") || "/chat";
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");

@@ -3,8 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/auth", "/logout", "/favicon.ico"];
 
-// Where authenticated users land — the full Hiraticket app (served from /public/app).
-const APP_HOME = "/app/Hiraticket.html";
+// Where authenticated users land — the native app home.
+const APP_HOME = "/chat";
 
 /** Refreshes the Supabase session and gates protected routes. */
 export async function updateSession(request: NextRequest) {
