@@ -1,6 +1,6 @@
 import { getMyBusiness } from "@/lib/queries";
 import { getConversationList, getConversationDetail, getAgents } from "@/lib/chat";
-import { getAreas } from "@/lib/business";
+import { getAreas, getStages } from "@/lib/business";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { createClient } from "@/lib/supabase/server";
 import { ChatScreen } from "@/components/chat/ChatScreen";
@@ -16,10 +16,11 @@ export default async function ChatPage({
   if (!business) return null;
 
   const sp = await searchParams;
-  const [list, agents, areas, sessions] = await Promise.all([
+  const [list, agents, areas, stages, sessions] = await Promise.all([
     getConversationList(business.id),
     getAgents(business.id),
     getAreas(business.id),
+    getStages(business.id),
     getSessions(business.id),
   ]);
 
@@ -36,6 +37,7 @@ export default async function ChatPage({
       selectedId={detail?.id ?? null}
       agents={agents}
       areas={areas}
+      stages={stages}
       meId={user!.id}
       businessId={business.id}
       connected={isConnected(sessions)}

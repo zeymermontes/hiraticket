@@ -8,7 +8,7 @@ import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
-import type { Area } from "@/lib/business";
+import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { TransferModal } from "@/components/TransferModal";
 import {
@@ -114,19 +114,21 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
 };
 
 export function ChatScreen({
-  list, detail, selectedId, agents, areas, meId, businessId, connected,
+  list, detail, selectedId, agents, areas, stages, meId, businessId, connected,
 }: {
   list: ConvListItem[];
   detail: ConvDetail | null;
   selectedId: string | null;
   agents: Agent[];
   areas: Area[];
+  stages: Stage[];
   meId: string;
   businessId: string;
   connected: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
+  const [show360, setShow360] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
 
   // Live updates: refresh server data when messages/conversations change.
@@ -294,8 +296,9 @@ export function ChatScreen({
 
       {detail ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
+          {show360 && <CustomerOverlay detail={detail} agents={agents} stages={stages} onClose={() => setShow360(false)} />}
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
@@ -605,7 +608,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; onResizeStart: (e: React.PointerEvent) => void }) {
+function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -613,7 +616,6 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const [actOpen, setActOpen] = useState(true);
-  const [show360, setShow360] = useState(false);
   const [showXfer, setShowXfer] = useState(false);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
@@ -654,7 +656,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
               <div className="row gap-2" style={{ marginTop: 3 }}><Icon name="whatsapp" size={14} /><span className="mono t-sm muted nowrap">{detail.contact?.phone}</span></div>
             </div>
             <div className="row gap-1">
-              <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={() => setShow360(true)}><Icon name="eye" size={15} /></button>
+              <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={onOpen360}><Icon name="eye" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
@@ -668,7 +670,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
             <div className="kv"><span className="k">{lang === "es" ? "Total gastado" : "Lifetime"}</span><span className="v mono">${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</span></div>
             <div className="kv"><span className="k">{lang === "es" ? "Primer contacto" : "First seen"}</span><span className="v">{detail.contact?.created_at ? new Date(detail.contact.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</span></div>
           </div>
-          <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={() => setShow360(true)}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>
+          <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={onOpen360}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>
         </div>
 
         {/* orders */}
@@ -748,7 +750,6 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
         </div>
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
-      {show360 && <CustomerOverlay detail={detail} agents={agents} onClose={() => setShow360(false)} />}
       {showXfer && (
         <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
           onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); router.refresh(); }} />

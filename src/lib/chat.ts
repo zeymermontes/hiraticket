@@ -57,9 +57,13 @@ export interface ChatOrderCard {
   code: string;
   total: number;
   priority: string;
+  stage_id: string | null;
+  assignee_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
-  items: { name: string }[];
+  items: { name: string; qty: number; unit_price: number; subtotal: number }[];
 }
 
 export interface ConvDetail {
@@ -169,7 +173,7 @@ export async function getConversationDetail(
       conv.contact_id
         ? supabase
             .from("orders")
-            .select("id, code, total, priority, stage:stages(name,color), area:areas(name,color), items:order_items(name)")
+            .select("id, code, total, priority, stage_id, assignee_id, created_at, updated_at, stage:stages(name,color), area:areas(name,color), items:order_items(name, qty, unit_price, subtotal)")
             .eq("contact_id", conv.contact_id)
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [] as unknown[] }),
