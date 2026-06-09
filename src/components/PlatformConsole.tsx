@@ -1,11 +1,13 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { PlatformConsoleData, TenantDetail } from "@/lib/platform";
+import { updatePlan } from "@/app/platform/actions";
 
 const SUB: Record<string, { color: PillColor; es: string; en: string }> = {
   active: { color: "green", es: "Activo", en: "Active" },
@@ -35,6 +37,9 @@ function Kpi({ icon, label, value }: { icon: string; label: string; value: strin
 
 export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
   const { lang, theme, setTheme } = useApp();
+  const router = useRouter();
+  const [, start] = useTransition();
+  const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const [tab, setTab] = useState<Tab>("overview");
   const [openTenant, setOpenTenant] = useState<TenantDetail | null>(null);
   const t = data.totals;
@@ -139,7 +144,12 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
                   <div className={"price-card" + (p.popular ? " pop" : "")} key={p.id}>
                     {p.popular && <span className="pill pill-brand" style={{ position: "absolute", top: -11, left: "50%", transform: "translateX(-50%)" }}>★ {lang === "es" ? "Popular" : "Popular"}</span>}
                     <div className="pname">{p.name}</div>
-                    <div className="price-amt"><span className="amt">{money(p.price_monthly)}</span></div>
+                    <div className="row gap-1" style={{ alignItems: "baseline" }}>
+                      <span className="mono" style={{ fontWeight: 800, fontSize: 22 }}>$</span>
+                      <input className="inp-inline mono" style={{ width: 96, fontSize: 20, fontWeight: 800, height: 34 }} defaultValue={String(p.price_monthly)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price_monthly) run(() => updatePlan(p.id, { price_monthly: v })); }} />
+                      <span className="t-sm muted">MXN/{lang === "es" ? "mes" : "mo"}</span>
+                    </div>
+                    <button className={"btn btn-sm " + (p.popular ? "btn-primary" : "btn-outline")} onClick={() => run(() => updatePlan(p.id, { popular: !p.popular }))}><Icon name="bolt" size={13} />{p.popular ? (lang === "es" ? "Popular ✓" : "Popular ✓") : (lang === "es" ? "Marcar popular" : "Mark popular")}</button>
                     <div className="t-sm muted">{p.subscribers} {lang === "es" ? "suscriptores" : "subscribers"}</div>
                     <div className="price-feats">
                       {Object.entries(p.limits || {}).map(([k, v]) => <div className="price-feat" key={k}><span className="ck"><Icon name="check" size={12} /></span>{k}: {v < 0 ? "∞" : v}</div>)}
