@@ -153,12 +153,9 @@ export function OrderDrawer({
         </div>
       </aside>
       {chatOpen && convDetail && (
-        <>
-          <div className="scrim" style={{ zIndex: 95 }} onClick={() => setChatOpen(false)} />
-          <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 410, maxWidth: "94vw", zIndex: 96, boxShadow: "var(--sh-lg)", display: "flex" }}>
-            <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
-          </div>
-        </>
+        <div style={{ position: "fixed", top: 0, bottom: 0, right: 560, width: 380, maxWidth: "calc(100vw - 600px)", zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
+          <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
+        </div>
       )}
     </>
   );
