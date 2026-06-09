@@ -8,19 +8,28 @@ import { type PillColor, priorityColor, PRIORITY_LABEL as PRIO } from "@/lib/typ
 import type { KanbanOrder } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
+import type { OrderDetail } from "@/lib/orders";
+import { OrderDrawer } from "@/components/OrderDrawer";
+import { loadOrderDetail } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 
 export function KanbanBoard({
-  orders, stages, areas, agents,
+  orders, stages, areas, agents, businessId, connected,
 }: {
   orders: KanbanOrder[];
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
+  businessId: string;
+  connected: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
+  const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [, startLoad] = useTransition();
+  const openDrawer = (id: string) => { setLoadingId(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingId(null); }); };
   const [group, setGroup] = useState<"status" | "area">("status");
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
@@ -118,6 +127,10 @@ export function KanbanBoard({
                         {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null; })()}
                         <span className="grow" />
                         <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>
+                        <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === o.id}
+                          onClick={(e) => { e.stopPropagation(); openDrawer(o.id); }} onPointerDown={(e) => e.stopPropagation()}>
+                          {loadingId === o.id ? "…" : (lang === "es" ? "Abrir" : "Open")}<Icon name="arrowr" size={13} />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -128,6 +141,11 @@ export function KanbanBoard({
           })}
         </div>
       </div>
+      {openOrder && (
+        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
+          convDetail={null} connected={connected}
+          onClose={() => { setOpenOrder(null); router.refresh(); }} />
+      )}
     </div>
   );
 }
