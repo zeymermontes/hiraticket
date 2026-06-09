@@ -420,6 +420,25 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const messages = [...detail.messages, ...extra];
   const msgMap = useMemo(() => new Map(detail.messages.map((mm) => [mm.id, mm])), [detail.messages]);
 
+  // Group consecutive plain images (same sender) into a WhatsApp-style album.
+  type Row = { kind: "album"; dir: string; items: ChatMessage[]; created_at: string } | { kind: "msg"; m: ChatMessage };
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    let album: ChatMessage[] = [];
+    const flush = () => {
+      if (album.length >= 2) out.push({ kind: "album", dir: album[0].direction, items: album, created_at: album[0].created_at });
+      else album.forEach((m) => out.push({ kind: "msg", m }));
+      album = [];
+    };
+    for (const m of messages) {
+      const isImg = m.type === "image" && !!m.media_url && !m.reply_to && !m.deleted && !m.body;
+      if (isImg && (album.length === 0 || album[album.length - 1].direction === m.direction)) album.push(m);
+      else { flush(); if (isImg) album.push(m); else out.push({ kind: "msg", m }); }
+    }
+    flush();
+    return out;
+  }, [messages]);
+
   function startEdit(mm: ChatMessage) { setEditing(mm); setReplyTo(null); setText(mm.body ?? ""); }
   function startReply(mm: ChatMessage) { setReplyTo(mm); setEditing(null); }
 
@@ -481,14 +500,42 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       </div>
 
       <div className="thread thread-wa-tint scroll" ref={endRef}>
-        {messages.map((m, i) => {
+        {rows.map((row, i) => {
+          const created = row.kind === "album" ? row.created_at : row.m.created_at;
+          const prevRow = i > 0 ? rows[i - 1] : null;
+          const prevCreated = prevRow ? (prevRow.kind === "album" ? prevRow.created_at : prevRow.m.created_at) : null;
+          const showDay = !prevCreated || new Date(prevCreated).toDateString() !== new Date(created).toDateString();
+          const key = row.kind === "album" ? row.items[0].id : row.m.id;
+          const daySep = showDay ? <div className="day-sep"><span>{dayLabel(created, lang)}</span></div> : null;
+
+          if (row.kind === "album") {
+            const out = row.dir === "out";
+            return (
+              <React.Fragment key={key}>
+                {daySep}
+                <div className={"msg " + (out ? "out" : "in")}>
+                  <div className="bubble" style={{ padding: 3 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
+                      {row.items.slice(0, 4).map((m, idx) => (
+                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" style={{ position: "relative", display: "block" }}>
+                          <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, display: "block" }} />
+                          {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
+                        </a>
+                      ))}
+                    </div>
+                    <div className="bubble-meta">{relTime(row.created_at, lang)}{out && <Tick state={row.items[row.items.length - 1].state} />}</div>
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          }
+
+          const m = row.m;
           const out = m.direction === "out";
           const author = out && m.author_id ? agentMap.get(m.author_id) : null;
-          const prev = i > 0 ? messages[i - 1] : null;
-          const showDay = !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
           return (
-            <React.Fragment key={m.id}>
-            {showDay && <div className="day-sep"><span>{dayLabel(m.created_at, lang)}</span></div>}
+            <React.Fragment key={key}>
+            {daySep}
             <div className={"msg " + (out ? "out" : "in")}>
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
