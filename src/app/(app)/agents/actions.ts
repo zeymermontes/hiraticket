@@ -40,6 +40,32 @@ export async function setAgentArea(businessId: string, userId: string, areaId: s
   revalidatePath("/agents");
 }
 
+/** Resend the invitation email to an agent (admins only). */
+export async function resendInvite(businessId: string, userId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!(await assertAdmin(businessId))) return { ok: false, error: "forbidden" };
+  const admin = createAdminClient();
+  const { data } = await admin.auth.admin.getUserById(userId);
+  const email = data?.user?.email;
+  if (!email) return { ok: false, error: "no email" };
+  const { error } = await admin.auth.admin.inviteUserByEmail(email);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** Remove an agent from the business (admins only; can't remove yourself or the last admin). */
+export async function deactivateAgent(businessId: string, userId: string): Promise<{ ok: boolean; error?: string }> {
+  const adminId = await assertAdmin(businessId);
+  if (!adminId) return { ok: false, error: "forbidden" };
+  if (userId === adminId) return { ok: false, error: "self" };
+  const admin = createAdminClient();
+  const { data: admins } = await admin.from("business_members").select("user_id").eq("business_id", businessId).eq("role", "admin");
+  const target = await admin.from("business_members").select("role").eq("business_id", businessId).eq("user_id", userId).maybeSingle();
+  if (target.data?.role === "admin" && (admins ?? []).length <= 1) return { ok: false, error: "last-admin" };
+  await admin.from("business_members").delete().eq("business_id", businessId).eq("user_id", userId);
+  revalidatePath("/agents");
+  return { ok: true };
+}
+
 export async function inviteAgent(
   businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {

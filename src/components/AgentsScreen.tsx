@@ -7,7 +7,7 @@ import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { DetailedAgent } from "@/lib/agents";
 import type { Area } from "@/lib/business";
-import { setAgentRole, setAgentName, setAgentArea, inviteAgent } from "@/app/(app)/agents/actions";
+import { setAgentRole, setAgentName, setAgentArea, inviteAgent, resendInvite, deactivateAgent } from "@/app/(app)/agents/actions";
 
 const ROLE_COLOR = { admin: "brand", agent: "blue", viewer: "slate" } as const;
 const ROLE_LABEL = {
@@ -53,6 +53,7 @@ export function AgentsScreen({
               <th>{lang === "es" ? "Área" : "Area"}</th>
               <th>{lang === "es" ? "Chats abiertos" : "Open chats"}</th>
               <th>{lang === "es" ? "Pedidos abiertos" : "Open orders"}</th>
+              {isAdmin && <th style={{ width: 40 }}></th>}
             </tr>
           </thead>
           <tbody>
@@ -89,6 +90,7 @@ export function AgentsScreen({
                 </td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{a.openChats}</span></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{a.openOrders}</span></td>
+                {isAdmin && <td><AgentMenu businessId={businessId} agentId={a.id} agentName={a.name} /></td>}
               </tr>
             ))}
           </tbody>
@@ -97,6 +99,27 @@ export function AgentsScreen({
 
       {showInvite && <InviteModal businessId={businessId} areas={areas} onClose={() => setShowInvite(false)} />}
     </div>
+  );
+}
+
+function AgentMenu({ businessId, agentId, agentName }: { businessId: string; agentId: string; agentName: string }) {
+  const { lang } = useApp();
+  const router = useRouter();
+  const [, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button className="iconbtn sm" onClick={() => setOpen((o) => !o)}><Icon name="dots" size={16} /></button>
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
+          <div className="menu" style={{ position: "absolute", top: "100%", right: 0, width: 200, zIndex: 50 }}>
+            <button className="menu-item" onClick={() => { setOpen(false); start(async () => { const r = await resendInvite(businessId, agentId); alert(r.ok ? (lang === "es" ? "Invitación reenviada." : "Invite resent.") : (r.error ?? "error")); }); }}><Icon name="mail" size={15} />{lang === "es" ? "Reenviar invitación" : "Resend invite"}</button>
+            <button className="menu-item danger" onClick={() => { setOpen(false); if (confirm(lang === "es" ? `¿Desactivar a ${agentName}?` : `Deactivate ${agentName}?`)) start(async () => { const r = await deactivateAgent(businessId, agentId); if (!r.ok) alert(r.error === "last-admin" ? (lang === "es" ? "No puedes quitar al último admin." : "Can't remove the last admin.") : r.error === "self" ? (lang === "es" ? "No puedes quitarte a ti mismo." : "Can't remove yourself.") : r.error ?? "error"); else router.refresh(); }); }}><Icon name="trash" size={15} />{lang === "es" ? "Desactivar" : "Deactivate"}</button>
+          </div>
+        </>
+      )}
+    </span>
   );
 }
 
