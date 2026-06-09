@@ -30,16 +30,14 @@ export default async function AppLayout({
     );
   }
 
-  const shellUser: ShellUser = {
-    email: user.email ?? "",
-    name:
-      (user.user_metadata?.full_name as string) ||
-      (user.email ? user.email.split("@")[0] : "Agente"),
-  };
+  // Display name from the profile (matches @mention tokens + agent list), with fallbacks.
+  const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+  const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
+  const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName };
 
   const [chatBadges, notifications, sessions, stages] = await Promise.all([
     getChatBadges(business.id, user.id),
-    getNotifications(business.id),
+    getNotifications(business.id, user.id, myName),
     getSessions(business.id),
     getStages(business.id),
   ]);
@@ -54,6 +52,7 @@ export default async function AppLayout({
   return (
     <Shell
       user={shellUser}
+      businessId={business.id}
       badges={{ chat: chatBadges.mine, orders: openOrders }}
       secondaryBadges={{ chat: chatBadges.unassigned }}
       notifications={notifications}

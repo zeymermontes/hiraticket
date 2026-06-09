@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
+import { ToastProvider } from "@/components/Toast";
+import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -34,11 +36,13 @@ function Bell({ notifications }: { notifications: Notif[] }) {
             <div className="menu-label">{lang === "es" ? "Notificaciones" : "Notifications"}</div>
             {notifications.length === 0 && <div className="muted t-sm" style={{ padding: "8px 10px" }}>{lang === "es" ? "Sin novedades" : "Nothing new"}</div>}
             {notifications.map((no) => (
-              <Link key={no.id} href={`/chat?c=${no.id}`} className="menu-item" style={{ alignItems: "flex-start" }} onClick={() => setOpen(false)}>
-                <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>
+              <Link key={no.id} href={no.href} className="menu-item" style={{ alignItems: "flex-start" }} onClick={() => setOpen(false)}>
+                {no.kind === "mention"
+                  ? <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="at" size={15} /></span>
+                  : <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>}
                 <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontWeight: 600, whiteSpace: "normal" }}>{(lang === "es" ? "Nuevo mensaje de " : "New message from ") + no.name}</span>
-                  <span className="t-xs muted">{relShort(no.at)}{no.unread > 1 ? ` · ${no.unread}` : ""}</span>
+                  <span style={{ display: "block", fontWeight: 600, whiteSpace: "normal" }}>{no.text ?? ((lang === "es" ? "Nuevo mensaje de " : "New message from ") + no.name)}</span>
+                  <span className="t-xs muted">{relShort(no.at)}{no.kind === "chat" && no.unread > 1 ? ` · ${no.unread}` : ""}</span>
                 </span>
               </Link>
             ))}
@@ -77,6 +81,7 @@ const ADMIN: NavItem[] = [
 ];
 
 export interface ShellUser {
+  id: string;
   name: string;
   email: string;
 }
@@ -181,6 +186,7 @@ function TopBar({ notifications, connected }: { notifications: Notif[]; connecte
 
 export function Shell({
   user,
+  businessId,
   badges = {},
   secondaryBadges = {},
   notifications = [],
@@ -189,6 +195,7 @@ export function Shell({
   children,
 }: {
   user: ShellUser;
+  businessId: string;
   badges?: Record<string, number | null>;
   secondaryBadges?: Record<string, number | null>;
   notifications?: Notif[];
@@ -198,13 +205,16 @@ export function Shell({
 }) {
   return (
     <AppProvider>
-      <div className="app">
-        <NavRail badges={badges} secondaryBadges={secondaryBadges} objectName={objectName} user={user} />
-        <div className="main">
-          <TopBar notifications={notifications} connected={connected} />
-          {children}
+      <ToastProvider>
+        <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} />
+        <div className="app">
+          <NavRail badges={badges} secondaryBadges={secondaryBadges} objectName={objectName} user={user} />
+          <div className="main">
+            <TopBar notifications={notifications} connected={connected} />
+            {children}
+          </div>
         </div>
-      </div>
+      </ToastProvider>
     </AppProvider>
   );
 }

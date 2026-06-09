@@ -1,5 +1,24 @@
 /* App-level helpers layered on top of the design system (tokens/ui/views). */
 .hide-narrow { display: inline; }
+
+/* Toasts (bottom-right) */
+.toaster { position: fixed; right: 18px; bottom: 18px; z-index: 4000; display: flex; flex-direction: column; gap: 10px; align-items: flex-end; pointer-events: none; }
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; width: 320px; max-width: calc(100vw - 36px);
+  padding: 11px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+  box-shadow: var(--sh-lg); animation: toast-in .22s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.toast-click { cursor: pointer; }
+.toast-click:hover { border-color: var(--border-strong); }
+.toast-ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex: none; background: var(--surface-2); color: var(--text-muted); }
+.toast-info .toast-ic { background: var(--blue-bg, #e8effb); color: var(--blue, #2563eb); }
+.toast-success .toast-ic { background: var(--green-bg, #e7f6ec); color: var(--green, #16a34a); }
+.toast-warn .toast-ic { background: var(--amber-bg, #fdf3e3); color: var(--amber, #d97706); }
+.toast-mention .toast-ic { background: var(--brand-50, #fef6da); color: var(--brand-700, #9a7b00); }
+.toast-body { min-width: 0; flex: 1; }
+.toast-title { font-weight: 700; font-size: 12.5px; }
+.toast-msg { font-size: 12.5px; color: var(--text-muted); line-height: 1.35; }
 @media (max-width: 1080px) { .hide-narrow { display: none; } }
 @media (max-width: 880px) {
   .login-grid { grid-template-columns: 1fr !important; }
