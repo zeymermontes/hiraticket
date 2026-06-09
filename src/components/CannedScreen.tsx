@@ -17,6 +17,24 @@ const VARIABLES: { key: string; es: string; en: string }[] = [
   { key: "business", es: "Negocio", en: "Business" },
 ];
 
+const CATEGORIES: { key: string; es: string; en: string }[] = [
+  { key: "greetings", es: "Saludos", en: "Greetings" },
+  { key: "quote", es: "Cotización", en: "Quote" },
+  { key: "shipping", es: "Envío", en: "Shipping" },
+  { key: "payment", es: "Pago", en: "Payment" },
+  { key: "closing", es: "Cierre", en: "Closing" },
+  { key: "General", es: "General", en: "General" },
+];
+const catLabel = (k: string, lang: string) => CATEGORIES.find((c) => c.key === k)?.[lang as "es" | "en"] ?? k;
+
+/** Render a template body with {{vars}} highlighted as chips. */
+function TemplatePreview({ body }: { body: string }) {
+  const parts = body.split(/(\{\{\s*\w+\s*\}\})/g);
+  return <>{parts.map((p, i) => /^\{\{/.test(p)
+    ? <span key={i} className="mono" style={{ padding: "0 5px", borderRadius: 5, background: "var(--brand-50)", color: "var(--brand-700)", fontSize: 12, fontWeight: 600 }}>{p}</span>
+    : <span key={i}>{p}</span>)}</>;
+}
+
 /** Textarea where typing "@" autocompletes {{variables}}. */
 function VariableTextarea({
   value, onChange, onCommit, placeholder, rows = 3,
@@ -120,8 +138,7 @@ function CannedRow({ item }: { item: CannedMessage }) {
     <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 12 }}>
       <div className="row gap-2">
         <strong>{item.title}</strong>
-        {item.category && <Pill color="violet">{item.category}</Pill>}
-        {item.shortcut && <span className="mono t-xs muted">{item.shortcut}</span>}
+        {item.shortcut && <Pill color="slate"><span className="mono">{item.shortcut}</span></Pill>}
         <span className="grow" />
         <button className="iconbtn sm" onClick={() => start(async () => { await deleteCanned(item.id); router.refresh(); })}><Icon name="trash" size={15} /></button>
       </div>
@@ -158,25 +175,45 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
       </div>
 
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
-        <section className="ws-block">
-          <div className="ws-block-head"><Icon name="canned" size={16} /><h4>{lang === "es" ? "Mensajes guardados" : "Saved messages"}</h4></div>
-          <div className="ws-block-body col gap-2">
-            {items.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin plantillas." : "No templates."}</div>}
-            {items.map((c) => <CannedRow key={c.id} item={c} />)}
-          </div>
-        </section>
+        <div className="col gap-3">
+          {/* variables reference */}
+          <section className="ws-block">
+            <div className="ws-block-head"><Icon name="sparkles" size={16} /><h4 className="grow">{lang === "es" ? "Variables disponibles" : "Available variables"}</h4><span className="t-xs muted">{lang === "es" ? "se llenan solas al insertar" : "auto-filled on insert"}</span></div>
+            <div className="ws-block-body row gap-2" style={{ flexWrap: "wrap" }}>
+              {VARIABLES.map((v) => <span key={v.key} className="mono" title={v[lang]} style={{ padding: "3px 8px", borderRadius: 6, background: "var(--brand-50)", color: "var(--brand-700)", border: "1px solid var(--brand-300)", fontSize: 12, fontWeight: 600 }}>{`{{${v.key}}}`}</span>)}
+            </div>
+          </section>
+
+          {/* saved, grouped by category */}
+          {items.length === 0 && <section className="ws-block"><div className="ws-block-body"><div className="muted t-sm">{lang === "es" ? "Sin plantillas." : "No templates."}</div></div></section>}
+          {[...new Set(items.map((i) => i.category || "General"))].map((cat) => (
+            <section className="ws-block" key={cat}>
+              <div className="ws-block-head"><Icon name="canned" size={16} /><h4 className="grow">{catLabel(cat, lang)}</h4><span className="badge badge-soft">{items.filter((i) => (i.category || "General") === cat).length}</span></div>
+              <div className="ws-block-body col gap-2">
+                {items.filter((i) => (i.category || "General") === cat).map((c) => <CannedRow key={c.id} item={c} />)}
+              </div>
+            </section>
+          ))}
+        </div>
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Nueva plantilla" : "New template"}</h4></div>
           <div className="ws-block-body col gap-2">
-            <input className="inp-inline" placeholder={lang === "es" ? "Título" : "Title"} value={title} onChange={(e) => setTitle(e.target.value)} />
             <div className="row gap-2">
-              <input className="inp-inline grow" placeholder={lang === "es" ? "Categoría" : "Category"} value={category} onChange={(e) => setCategory(e.target.value)} />
-              <input className="inp-inline" style={{ width: 100 }} placeholder="/atajo" value={shortcut} onChange={(e) => setShortcut(e.target.value)} />
+              <input className="inp-inline grow" placeholder={lang === "es" ? "Título" : "Title"} value={title} onChange={(e) => setTitle(e.target.value)} />
+              <input className="inp-inline" style={{ width: 96 }} placeholder="/atajo" value={shortcut} onChange={(e) => setShortcut(e.target.value)} />
             </div>
+            <select className="select" style={{ width: "100%" }} value={category} onChange={(e) => setCategory(e.target.value)}>
+              {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c[lang]}</option>)}
+            </select>
             <VariableTextarea value={body} onChange={setBody} rows={4}
               placeholder={lang === "es" ? "Cuerpo… escribe @ para insertar variables" : "Body… type @ to insert variables"} />
-            <div className="t-xs muted">{lang === "es" ? "Escribe @ para insertar variables como {{name}}." : "Type @ to insert variables like {{name}}."}</div>
+            {body.trim() && (
+              <div>
+                <label className="lbl">{lang === "es" ? "Vista previa" : "Preview"}</label>
+                <div style={{ padding: 10, borderRadius: 10, background: "var(--surface-2)", fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}><TemplatePreview body={body} /></div>
+              </div>
+            )}
             <button className="btn btn-primary btn-block" disabled={pending || !title.trim() || !body.trim()} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"}</button>
           </div>
         </section>
