@@ -52,6 +52,7 @@ type Manager struct {
 	mu        sync.Mutex
 	clients   map[string]*whatsmeow.Client // sessionID -> client
 	byBiz     map[string]*whatsmeow.Client // businessID -> client
+	sessBiz   map[string]string            // sessionID -> businessID
 }
 
 func main() {
@@ -80,6 +81,7 @@ func main() {
 		db: db, container: container, log: logger,
 		clients: map[string]*whatsmeow.Client{},
 		byBiz:   map[string]*whatsmeow.Client{},
+		sessBiz: map[string]string{},
 	}
 
 	logger.Infof("worker booting")
@@ -92,6 +94,7 @@ func main() {
 
 func (m *Manager) pollSessions(ctx context.Context) {
 	for {
+		alive := map[string]bool{}
 		rows, err := m.db.QueryContext(ctx,
 			`SELECT id, business_id, status, connect_method, phone, device_jid
 			   FROM whatsapp_sessions
@@ -100,6 +103,7 @@ func (m *Manager) pollSessions(ctx context.Context) {
 			for rows.Next() {
 				var s session
 				if rows.Scan(&s.ID, &s.BusinessID, &s.Status, &s.Method, &s.Phone, &s.DeviceJID) == nil {
+					alive[s.ID] = true
 					m.mu.Lock()
 					_, running := m.clients[s.ID]
 					m.mu.Unlock()
@@ -109,8 +113,43 @@ func (m *Manager) pollSessions(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			m.reap(ctx, alive)
 		}
 		time.Sleep(4 * time.Second)
+	}
+}
+
+// reap closes clients whose session is no longer active: a deleted row -> log out
+// (unlink the device from the phone); a 'disconnected' row -> just close the socket
+// (keep the device so it can reconnect without a new QR).
+func (m *Manager) reap(ctx context.Context, alive map[string]bool) {
+	type item struct {
+		id, biz string
+		cli     *whatsmeow.Client
+	}
+	m.mu.Lock()
+	var stale []item
+	for id, cli := range m.clients {
+		if !alive[id] {
+			stale = append(stale, item{id, m.sessBiz[id], cli})
+		}
+	}
+	m.mu.Unlock()
+
+	for _, it := range stale {
+		var cnt int
+		_ = m.db.QueryRowContext(ctx, `SELECT count(*) FROM whatsapp_sessions WHERE id=$1`, it.id).Scan(&cnt)
+		if cnt == 0 {
+			if it.cli.IsLoggedIn() {
+				_ = it.cli.Logout(ctx)
+			}
+			it.cli.Disconnect()
+			m.log.Infof("removed %s (logged out)", it.id)
+		} else {
+			it.cli.Disconnect()
+			m.log.Infof("disconnected %s", it.id)
+		}
+		m.drop(it.id, it.biz)
 	}
 }
 
@@ -164,6 +203,7 @@ func (m *Manager) start(ctx context.Context, s session) {
 	client := whatsmeow.NewClient(device, m.log)
 	m.mu.Lock()
 	m.clients[s.ID] = client
+	m.sessBiz[s.ID] = s.BusinessID
 	m.mu.Unlock()
 
 	client.AddEventHandler(func(evt interface{}) { m.handleEvent(ctx, s, client, evt) })
@@ -342,6 +382,7 @@ func (m *Manager) fail(ctx context.Context, s session) {
 func (m *Manager) drop(sessionID, businessID string) {
 	m.mu.Lock()
 	delete(m.clients, sessionID)
+	delete(m.sessBiz, sessionID)
 	if m.byBiz[businessID] != nil {
 		delete(m.byBiz, businessID)
 	}

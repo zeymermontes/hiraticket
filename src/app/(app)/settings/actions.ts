@@ -29,6 +29,13 @@ export async function addSession(businessId: string, label: string): Promise<voi
   revalidatePath("/settings");
 }
 
+/** Remove a number. The worker logs out the linked device on its next poll. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("whatsapp_sessions").delete().eq("id", sessionId);
+  revalidatePath("/settings");
+}
+
 /** Choose QR vs pairing-code (and the phone number for pairing). */
 export async function setConnectMethod(
   sessionId: string, method: "qr" | "pairing", phone?: string,

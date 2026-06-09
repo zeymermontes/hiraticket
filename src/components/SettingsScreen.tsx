@@ -1,12 +1,13 @@
 "use client";
 import React, { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { WaSession } from "@/lib/whatsapp";
-import { connectSession, disconnectSession, addSession, setConnectMethod } from "@/app/(app)/settings/actions";
+import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
 
 const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
   connected: { color: "green", es: "Conectado", en: "Connected" },
@@ -84,6 +85,10 @@ function SessionCard({ session }: { session: WaSession }) {
             <Icon name="qr" size={14} />{lang === "es" ? "Conectar" : "Connect"}
           </button>
         )}
+        <button className="iconbtn sm" title={lang === "es" ? "Eliminar número" : "Delete number"}
+          onClick={() => { if (confirm(lang === "es" ? "¿Eliminar este número?" : "Delete this number?")) run(() => deleteSession(session.id)); }}>
+          <Icon name="trash" size={15} />
+        </button>
       </div>
     </div>
   );
@@ -101,6 +106,18 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
     const iv = setInterval(() => router.refresh(), 3500);
     return () => clearInterval(iv);
   }, [watching, router]);
+
+  // Live status: reflect connect/QR/connected/disconnected the moment the worker writes it.
+  useEffect(() => {
+    const supabase = createClient();
+    let t: ReturnType<typeof setTimeout>;
+    const bump = () => { clearTimeout(t); t = setTimeout(() => router.refresh(), 200); };
+    const ch = supabase
+      .channel(`wa-${businessId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_sessions", filter: `business_id=eq.${businessId}` }, bump)
+      .subscribe();
+    return () => { clearTimeout(t); supabase.removeChannel(ch); };
+  }, [businessId, router]);
 
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
