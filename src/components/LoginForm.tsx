@@ -17,6 +17,16 @@ function Inner() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [remember, setRemember] = useState(true);
+
+  async function forgot() {
+    if (!email) { setErr(lang === "es" ? "Escribe tu correo primero." : "Enter your email first."); return; }
+    setErr(null);
+    const supabase = createClient();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/auth/callback` });
+    if (error) setErr(error.message);
+    else setInfo(lang === "es" ? "Te enviamos un link para restablecer tu contraseña." : "We sent you a password reset link.");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +68,7 @@ function Inner() {
           <div className="rail-logo" style={{ margin: 0 }}>H</div>
           <div>
             <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-.02em" }} className="display">Hiraticket</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>Chats &amp; pedidos en un lugar</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>by Hirata · Impresión Digital</div>
           </div>
         </div>
         <div style={{ marginTop: "auto", position: "relative" }}>
@@ -116,6 +126,15 @@ function Inner() {
               <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} autoComplete={mode === "signin" ? "current-password" : "new-password"} required minLength={6} />
             </div>
           </div>
+
+          {mode === "signin" && (
+            <div className="row gap-2" style={{ alignItems: "center" }}>
+              <button type="button" className={"switch" + (remember ? " on" : "")} onClick={() => setRemember((r) => !r)} aria-label="remember" />
+              <span className="t-sm">{lang === "es" ? "Recordarme" : "Remember me"}</span>
+              <span className="grow" />
+              <button type="button" onClick={forgot} style={{ background: "none", border: "none", color: "var(--brand-700)", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>{lang === "es" ? "¿Olvidaste tu contraseña?" : "Forgot password?"}</button>
+            </div>
+          )}
 
           {err && <div className="t-sm" style={{ color: "var(--red)" }}>{err}</div>}
           {info && <div className="t-sm" style={{ color: "var(--green)" }}>{info}</div>}
