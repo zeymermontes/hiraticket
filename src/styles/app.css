@@ -72,6 +72,13 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Reorderable center-column blocks */
+.ws-grip { cursor: grab; color: var(--text-muted); opacity: .45; display: inline-flex; align-items: center; margin-right: 2px; }
+.ws-grip:hover { opacity: 1; }
+.ws-grip:active { cursor: grabbing; }
+.ws-reorder { transition: opacity .15s ease, box-shadow .15s ease; }
+.ws-reorder.ws-dragging { opacity: .45; box-shadow: 0 0 0 2px var(--brand) inset; }
+
 /* Orders table density toggle + compact segmented control. */
 .seg.seg-sm button { height: 28px; padding: 0 9px; }
 .tablewrap.dense .tbl td, .tablewrap.dense .tbl th { padding-top: 5px; padding-bottom: 5px; }

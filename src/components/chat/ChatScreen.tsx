@@ -777,7 +777,29 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   const [showXfer, setShowXfer] = useState(false);
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
+  const actionsBtn = useRef<HTMLButtonElement>(null);
+  const [actionsRect, setActionsRect] = useState<DOMRect | null>(null);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+
+  // Reorderable center-column blocks (orders / notes / activity), persisted.
+  const [blockOrder, setBlockOrder] = useState<string[]>(["orders", "notes", "activity"]);
+  const [dragId, setDragId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("ht_wsOrder");
+      if (s) { const arr = JSON.parse(s); if (Array.isArray(arr) && arr.length === 3 && ["orders", "notes", "activity"].every((k) => arr.includes(k))) setBlockOrder(arr); }
+    } catch {}
+  }, []);
+  function dropBlock(target: string) {
+    if (!dragId || dragId === target) { setDragId(null); return; }
+    setBlockOrder((prev) => {
+      const arr = prev.filter((x) => x !== dragId);
+      arr.splice(arr.indexOf(target), 0, dragId);
+      try { localStorage.setItem("ht_wsOrder", JSON.stringify(arr)); } catch {}
+      return arr;
+    });
+    setDragId(null);
+  }
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
 
@@ -799,6 +821,72 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
     start(async () => { await deleteConv(detail.id); router.push("/chat"); router.refresh(); });
   }
 
+  const grip = (id: string) => (
+    <span className="ws-grip" draggable onDragStart={(e) => { setDragId(id); e.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDragId(null)} title={lang === "es" ? "Arrastra para reordenar" : "Drag to reorder"}><Icon name="grip" size={14} /></span>
+  );
+
+  const blockContent: Record<string, React.ReactNode> = {
+    orders: (
+      <>
+        <div className="ws-block-head">{grip("orders")}<Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pedidos" : "Orders"} <span className="muted">· {detail.orders.length}</span></h4>
+          <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
+        </div>
+        <div className="ws-block-body col gap-2">
+          {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{lang === "es" ? "Sin pedidos." : "No orders."}</div> :
+            detail.orders.map((o) => (
+              <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
+                <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
+                {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
+                <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></div>
+              </button>
+            ))}
+        </div>
+      </>
+    ),
+    notes: (
+      <>
+        <div className="ws-block-head">{grip("notes")}<Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
+        <div className="ws-block-body">
+          <div style={{ marginBottom: 8 }}>
+            <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
+          </div>
+          {note.trim() && <button className="btn btn-sm btn-primary" style={{ marginBottom: 10 }} disabled={pending} onClick={postNote}><Icon name="send" size={14} />{lang === "es" ? "Publicar" : "Post"}</button>}
+          {detail.notes.length === 0 ? <div className="muted t-sm">{lang === "es" ? "Aún no hay notas." : "No notes yet."}</div> :
+            detail.notes.map((n) => {
+              const au = n.author_id ? agentMap.get(n.author_id) : null;
+              return (
+                <div className="note" key={n.id}>
+                  <Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={28} />
+                  <div className="note-body note-yellow">
+                    <div className="note-head"><span className="note-author">{au?.name ?? "Agente"}</span><span className="note-time">{relTime(n.created_at, lang)}</span></div>
+                    <div className="note-text">{n.body}</div>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </>
+    ),
+    activity: (
+      <>
+        <div className="ws-block-head">{grip("activity")}
+          <button style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left", padding: 0 }} onClick={() => setActOpen((v) => !v)}>
+            <Icon name="clock" size={16} /><h4 className="grow">{lang === "es" ? "Actividad" : "Activity"}</h4>
+            <span style={{ transform: actOpen ? "rotate(180deg)" : "none", transition: "transform .2s", display: "flex", color: "var(--text-muted)" }}><Icon name="chevd" size={16} /></span>
+          </button>
+        </div>
+        {actOpen && (
+          <div className="ws-block-body"><div className="timeline">
+            {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
+              detail.events.map((e) => (
+                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
+              ))}
+          </div></div>
+        )}
+      </>
+    ),
+  };
+
   return (
     <div className="chatcol ctx" style={{ position: "relative" }}>
       <div className="ws scroll">
@@ -816,6 +904,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
               <div className="row gap-2" style={{ marginTop: 3 }}><Icon name="whatsapp" size={14} /><span className="mono t-sm muted nowrap">{detail.contact?.phone}</span></div>
             </div>
             <div className="row gap-1">
+              <button ref={actionsBtn} className={"iconbtn sm" + (actionsRect ? " active" : "")} title={lang === "es" ? "Acciones" : "Actions"} onClick={() => setActionsRect(actionsRect ? null : actionsBtn.current?.getBoundingClientRect() ?? null)}><Icon name="bolt" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={onOpen360}><Icon name="eye" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
@@ -833,81 +922,12 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
           <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={onOpen360}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>
         </div>
 
-        {/* orders */}
-        <div className="ws-block">
-          <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pedidos" : "Orders"} <span className="muted">· {detail.orders.length}</span></h4>
-            <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
+        {blockOrder.map((id) => (
+          <div key={id} className={"ws-block ws-reorder" + (dragId === id ? " ws-dragging" : "")}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={() => dropBlock(id)}>
+            {blockContent[id]}
           </div>
-          <div className="ws-block-body col gap-2">
-            {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{lang === "es" ? "Sin pedidos." : "No orders."}</div> :
-              detail.orders.map((o) => (
-                <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
-                  <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
-                  {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
-                  <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></div>
-                </button>
-              ))}
-          </div>
-        </div>
-
-        {/* actions */}
-        <div className="ws-block">
-          <div className="ws-block-head"><Icon name="sliders" size={16} /><h4>{lang === "es" ? "Acciones" : "Actions"}</h4></div>
-          <div className="ws-block-body">
-            <div className="actions-grid">
-              <StatusControl detail={detail} />
-              <SnoozeControl detail={detail} />
-              <button className="act" onClick={() => setShowXfer(true)}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
-              <button ref={tagBtn} className="act" disabled={!detail.contact} onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
-              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
-                <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
-              </button>
-              {detail.status === "resolved"
-                ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); router.refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); router.refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
-            </div>
-          </div>
-        </div>
-
-        {/* notes */}
-        <div className="ws-block">
-          <div className="ws-block-head"><Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Internal notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
-          <div className="ws-block-body">
-            <div style={{ marginBottom: 8 }}>
-              <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
-            </div>
-            {note.trim() && <button className="btn btn-sm btn-primary" style={{ marginBottom: 10 }} disabled={pending} onClick={postNote}><Icon name="send" size={14} />{lang === "es" ? "Publicar" : "Post"}</button>}
-            {detail.notes.length === 0 ? <div className="muted t-sm">{lang === "es" ? "Aún no hay notas." : "No notes yet."}</div> :
-              detail.notes.map((n) => {
-                const au = n.author_id ? agentMap.get(n.author_id) : null;
-                return (
-                  <div className="note" key={n.id}>
-                    <Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={28} />
-                    <div className="note-body note-yellow">
-                      <div className="note-head"><span className="note-author">{au?.name ?? "Agente"}</span><span className="note-time">{relTime(n.created_at, lang)}</span></div>
-                      <div className="note-text">{n.body}</div>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-
-        {/* activity */}
-        <div className="ws-block">
-          <button className="ws-block-head" style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left" }} onClick={() => setActOpen((v) => !v)}>
-            <Icon name="clock" size={16} /><h4 className="grow">{lang === "es" ? "Actividad" : "Activity"}</h4>
-            <span style={{ transform: actOpen ? "rotate(180deg)" : "none", transition: "transform .2s", display: "flex", color: "var(--text-muted)" }}><Icon name="chevd" size={16} /></span>
-          </button>
-          {actOpen && (
-            <div className="ws-block-body"><div className="timeline">
-              {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
-                detail.events.map((e) => (
-                  <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
-                ))}
-            </div></div>
-          )}
-        </div>
+        ))}
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {showXfer && (
@@ -919,6 +939,26 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
           onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); router.refresh(); })}
           onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); router.refresh(); })}
           onClose={() => setTagRect(null)} />
+      )}
+      {actionsRect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 180 }} onClick={() => setActionsRect(null)} />
+          <div className="menu" style={{ position: "fixed", top: actionsRect.bottom + 6, right: Math.max(8, window.innerWidth - actionsRect.right), width: 248, zIndex: 181, padding: 10 }}>
+            <div className="menu-label">{lang === "es" ? "Acciones" : "Actions"}</div>
+            <div className="actions-grid">
+              <StatusControl detail={detail} />
+              <SnoozeControl detail={detail} />
+              <button className="act" onClick={() => { setActionsRect(null); setShowXfer(true); }}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
+              <button ref={tagBtn} className="act" disabled={!detail.contact} onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
+              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
+                <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
+              </button>
+              {detail.status === "resolved"
+                ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); router.refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); router.refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+            </div>
+          </div>
+        </>
       )}
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
