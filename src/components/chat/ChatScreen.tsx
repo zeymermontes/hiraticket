@@ -10,7 +10,7 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import {
-  sendMessage, sendMediaMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
+  sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead,
 } from "@/app/(app)/chat/actions";
 
@@ -36,6 +36,31 @@ function Tick({ state }: { state: string | null }) {
   if (state === "delivered") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="checks" size={15} /></span>;
   if (state === "sent") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="check" size={13} /></span>;
   return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
+}
+
+function QuotedBlock({ m }: { m: ChatMessage }) {
+  const label = m.deleted ? "…" : (m.body || (m.type !== "text" ? "📎 " + m.type : ""));
+  return <div className="truncate" style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240 }}>{label}</div>;
+}
+
+function MsgMenu({ m, out, onReply, onEdit, onDelete }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void }) {
+  const { lang } = useApp();
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="msg-menu" style={{ position: "absolute", top: 2, right: 4 }}>
+      <button className="iconbtn" style={{ width: 22, height: 22, opacity: 0.55 }} onClick={() => setOpen((o) => !o)}><Icon name="dots" size={15} /></button>
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
+          <div className="menu" style={{ position: "absolute", top: "100%", right: 0, width: 160, zIndex: 50 }}>
+            <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
+            {out && m.type === "text" && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
+            {out && <button className="menu-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
+          </div>
+        </>
+      )}
+    </span>
+  );
 }
 
 function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boolean {
@@ -282,19 +307,31 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
     }
   }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
 
-  useEffect(() => { setExtra([]); }, [detail.id, detail.messages.length]);
+  useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
   useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
 
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
   const messages = [...detail.messages, ...extra];
+  const msgMap = useMemo(() => new Map(detail.messages.map((mm) => [mm.id, mm])), [detail.messages]);
+
+  function startEdit(mm: ChatMessage) { setEditing(mm); setReplyTo(null); setText(mm.body ?? ""); }
+  function startReply(mm: ChatMessage) { setReplyTo(mm); setEditing(null); }
 
   function doSend() {
     const body = text.trim();
     if (!body) return;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null }]);
-    setText("");
-    start(async () => { await sendMessage(detail.id, body); router.refresh(); });
+    if (editing) {
+      const id = editing.id; setEditing(null); setText("");
+      start(async () => { await editMessage(id, body); router.refresh(); });
+      return;
+    }
+    const rt = replyTo?.id;
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false }]);
+    setText(""); setReplyTo(null);
+    start(async () => { await sendMessage(detail.id, body, rt); router.refresh(); });
   }
 
   if (!connected) {
@@ -344,11 +381,22 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
           const author = out && m.author_id ? agentMap.get(m.author_id) : null;
           return (
             <div className={"msg " + (out ? "out" : "in")} key={m.id}>
-              <div className="bubble">
+              <div className="bubble" style={{ position: "relative" }}>
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
-                {m.type !== "text" && m.media_url && <MediaBlock m={m} />}
-                {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
+                {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
+                {m.deleted ? (
+                  <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
+                ) : (
+                  <>
+                    {m.type !== "text" && m.media_url && <MediaBlock m={m} />}
+                    {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
+                  </>
+                )}
                 <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                {!m.deleted && !m.id.startsWith("tmp") && (
+                  <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
+                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
+                )}
               </div>
             </div>
           );
@@ -356,6 +404,13 @@ function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, bus
       </div>
 
       <div className="composer">
+        {(replyTo || editing) && (
+          <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6 }}>
+            <Icon name={editing ? "edit" : "swap"} size={14} />
+            <span className="t-xs muted grow truncate">{(editing ? (lang === "es" ? "Editando: " : "Editing: ") : (lang === "es" ? "Respondiendo: " : "Replying: "))}{(editing || replyTo)?.body || (editing || replyTo)?.type}</span>
+            <button className="iconbtn sm" onClick={() => { setEditing(null); setReplyTo(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
+          </div>
+        )}
         <div className="composer-box">
           <div className="composer-input">
             <textarea className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje…" : "Type a message…"} value={text}

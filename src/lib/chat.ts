@@ -31,6 +31,8 @@ export interface ChatMessage {
   media_url: string | null;
   media_mime: string | null;
   media_name: string | null;
+  reply_to: string | null;
+  deleted: boolean;
 }
 
 export interface ConvNote {
@@ -146,7 +148,7 @@ export async function getConversationDetail(
     await Promise.all([
       supabase
         .from("messages")
-        .select("id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name")
+        .select("id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted")
         .eq("conversation_id", convId)
         .order("created_at", { ascending: true }),
       supabase

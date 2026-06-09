@@ -62,6 +62,7 @@ export const ICONS: Record<string, IconFn> = {
   file: () => <>{P("M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z")}{P("M14 3v5h5")}</>,
   paperclip: () => <>{P("M20 11.5 12.5 19a4 4 0 0 1-5.7-5.7l7.6-7.6a2.7 2.7 0 0 1 3.8 3.8L10.6 17a1.3 1.3 0 0 1-1.9-1.9l6.7-6.7")}</>,
   flag: () => <>{P("M6 21V4h11l-2 4 2 4H6")}</>,
+  dots: () => <><circle cx="6" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="18" cy="12" r="1.4" fill="currentColor" /></>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

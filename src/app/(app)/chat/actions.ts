@@ -18,7 +18,7 @@ async function businessOf(convId: string): Promise<string | null> {
   return (data?.business_id as string) ?? null;
 }
 
-export async function sendMessage(convId: string, text: string): Promise<void> {
+export async function sendMessage(convId: string, text: string, replyTo?: string): Promise<void> {
   const body = text.trim();
   if (!body) return;
   const { supabase, userId } = await ctx();
@@ -34,12 +34,29 @@ export async function sendMessage(convId: string, text: string): Promise<void> {
     author_id: userId,
     // 'queued' → the WhatsApp worker picks it up and sends it, then flips to 'sent'.
     state: "queued",
+    reply_to: replyTo ?? null,
   });
   await supabase
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", convId);
 
+  revalidatePath("/chat");
+}
+
+/** Edit an outbound message (worker re-sends an edit to WhatsApp). */
+export async function editMessage(messageId: string, body: string): Promise<void> {
+  const text = body.trim();
+  if (!text) return;
+  const { supabase } = await ctx();
+  await supabase.from("messages").update({ body: text, pending_op: "edit" }).eq("id", messageId).eq("direction", "out");
+  revalidatePath("/chat");
+}
+
+/** Delete an outbound message for everyone (worker revokes it). */
+export async function deleteMessage(messageId: string): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("messages").update({ pending_op: "delete" }).eq("id", messageId).eq("direction", "out");
   revalidatePath("/chat");
 }
 
