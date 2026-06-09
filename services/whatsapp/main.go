@@ -277,8 +277,27 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 
 // ---------- inbound / outbound ----------
 
+// partnerPhone returns the conversation partner's real phone (+digits). WhatsApp
+// now uses @lid addressing, so the phone lives in the alternate JID — prefer the
+// s.whatsapp.net address; fall back to whatever Chat carries.
+func partnerPhone(info types.MessageInfo) string {
+	var cands []types.JID
+	if info.IsFromMe {
+		cands = []types.JID{info.RecipientAlt, info.Chat}
+	} else {
+		cands = []types.JID{info.SenderAlt, info.Chat}
+	}
+	for _, j := range cands {
+		if j.Server == types.DefaultUserServer && j.User != "" {
+			return "+" + j.User
+		}
+	}
+	return "+" + info.Chat.User
+}
+
 func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Message) {
-	if v.Info.IsFromMe || v.Info.IsGroup {
+	// Only 1:1 chats (skip groups, status@broadcast, newsletters).
+	if v.Info.IsGroup || v.Info.Chat.Server == "broadcast" || v.Info.Chat.Server == "newsletter" {
 		return
 	}
 	text := v.Message.GetConversation()
@@ -288,19 +307,36 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Messa
 	if text == "" {
 		return
 	}
-	phone := "+" + v.Info.Sender.User
-	name := v.Info.PushName
-	if name == "" {
-		name = phone
+
+	// Dedupe by WhatsApp message id (so the echo of an app-sent message, and
+	// reconnect re-deliveries, don't create duplicates).
+	waID := v.Info.ID
+	var exists bool
+	_ = m.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM messages WHERE business_id=$1 AND wa_id=$2)`, s.BusinessID, waID).Scan(&exists)
+	if exists {
+		return
+	}
+
+	// The conversation partner is the other side of the chat (Info.Chat),
+	// whether the message is inbound or one you sent from your phone.
+	partner := partnerPhone(v.Info)
+	dir, state := "in", "delivered"
+	if v.Info.IsFromMe {
+		dir, state = "out", "sent"
+	}
+	name := partner
+	if !v.Info.IsFromMe && v.Info.PushName != "" {
+		name = v.Info.PushName
 	}
 
 	var contactID string
 	err := m.db.QueryRowContext(ctx,
-		`SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, phone).Scan(&contactID)
+		`SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, partner).Scan(&contactID)
 	if err == sql.ErrNoRows {
 		if err = m.db.QueryRowContext(ctx,
 			`INSERT INTO contacts (business_id, name, phone) VALUES ($1,$2,$3) RETURNING id`,
-			s.BusinessID, name, phone).Scan(&contactID); err != nil {
+			s.BusinessID, name, partner).Scan(&contactID); err != nil {
 			m.log.Errorf("contact insert: %v", err)
 			return
 		}
@@ -326,9 +362,14 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, v *events.Messa
 		return
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state)
-		VALUES ($1,$2,'in','text',$3,'delivered')`, s.BusinessID, convID, text)
-	m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now() WHERE id=$2`, unread+1, convID)
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id)
+		VALUES ($1,$2,$3,'text',$4,$5,$6)`, s.BusinessID, convID, dir, text, state, waID)
+	if dir == "in" {
+		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now() WHERE id=$2`, unread+1, convID)
+	} else {
+		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
+	}
+	m.log.Infof("saved %s msg from/to %s", dir, partner)
 }
 
 func (m *Manager) sendOutbound(ctx context.Context, id, biz, conv, body string) {
@@ -358,12 +399,14 @@ func (m *Manager) sendOutbound(ctx context.Context, id, biz, conv, body string) 
 	}
 
 	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
-	if _, err := client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(body)}); err != nil {
+	resp, err := client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(body)})
+	if err != nil {
 		m.log.Errorf("send %s: %v", id, err)
 		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, id)
 		return
 	}
-	m.exec(ctx, `UPDATE messages SET state='sent' WHERE id=$1`, id)
+	// Record the WA id so the fromMe echo of this message is deduped.
+	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2 WHERE id=$1`, id, resp.ID)
 }
 
 // ---------- helpers ----------
