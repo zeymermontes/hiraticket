@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type OrderRow, type PillColor, priorityColor, formatMoney } from "@/lib/types";
+import { type OrderRow, type PillColor, priorityColor, formatMoney, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
@@ -16,11 +16,6 @@ import { createOrder, assignOrder, addOrderNote } from "@/app/(app)/orders/actio
 import { moveOrderArea } from "@/app/(app)/actions";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at";
-
-const PRIO_LABEL: Record<string, { es: string; en: string }> = {
-  low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
-  high: { es: "Alta", en: "High" }, urgent: { es: "Urgente", en: "Urgent" },
-};
 
 function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
   return <Pill color={priorityColor(p as never)}><Icon name="flag" size={11} />{PRIO_LABEL[p]?.[lang] ?? p}</Pill>;

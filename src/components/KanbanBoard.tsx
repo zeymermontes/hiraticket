@@ -4,16 +4,11 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type PillColor, priorityColor } from "@/lib/types";
+import { type PillColor, priorityColor, PRIORITY_LABEL as PRIO } from "@/lib/types";
 import type { KanbanOrder } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-
-const PRIO: Record<string, { es: string; en: string }> = {
-  low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
-  high: { es: "Alta", en: "High" }, urgent: { es: "Urgente", en: "Urgent" },
-};
 
 export function KanbanBoard({
   orders, stages, areas, agents,

@@ -36,6 +36,13 @@ export function priorityColor(p: OrderRow["priority"]): PillColor {
   return PRIORITY_COLOR[p] ?? "slate";
 }
 
+export const PRIORITY_LABEL: Record<string, { es: string; en: string }> = {
+  low: { es: "Baja", en: "Low" },
+  normal: { es: "Normal", en: "Normal" },
+  high: { es: "Alta", en: "High" },
+  urgent: { es: "Urgente", en: "Urgent" },
+};
+
 export function formatMoney(n: number): string {
   return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(n);
 }

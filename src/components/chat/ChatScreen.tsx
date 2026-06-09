@@ -10,9 +10,10 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
+import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag,
 } from "@/app/(app)/chat/actions";
 
 function LocationBlock({ m }: { m: ChatMessage }) {
@@ -613,6 +614,7 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const [actOpen, setActOpen] = useState(true);
   const [show360, setShow360] = useState(false);
+  const [showXfer, setShowXfer] = useState(false);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
@@ -692,6 +694,8 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
             <div className="actions-grid">
               <StatusControl detail={detail} />
               <SnoozeControl detail={detail} />
+              <button className="act" onClick={() => setShowXfer(true)}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
+              <button className="act" disabled={pending || !detail.contact} onClick={() => { const tg = prompt(lang === "es" ? "Etiqueta:" : "Tag:"); if (tg?.trim() && detail.contact) start(async () => { await addContactTag(detail.contact!.id, tg); router.refresh(); }); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
               <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
@@ -744,6 +748,10 @@ function Workspace({ detail, agents, areas, onResizeStart }: { detail: ConvDetai
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {show360 && <CustomerOverlay detail={detail} agents={agents} onClose={() => setShow360(false)} />}
+      {showXfer && (
+        <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
+          onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); router.refresh(); }} />
+      )}
     </div>
   );
 }

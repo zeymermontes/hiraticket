@@ -203,6 +203,17 @@ export async function renameContact(contactId: string, name: string): Promise<vo
   revalidatePath("/chat");
 }
 
+/** Add a tag to a contact (deduplicated). */
+export async function addContactTag(contactId: string, tag: string): Promise<void> {
+  const clean = tag.trim();
+  if (!clean) return;
+  const { supabase } = await ctx();
+  const { data: c } = await supabase.from("contacts").select("tags").eq("id", contactId).maybeSingle();
+  const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), clean]));
+  await supabase.from("contacts").update({ tags }).eq("id", contactId);
+  revalidatePath("/chat");
+}
+
 /** Ask the worker to (re)fetch the contact's WhatsApp name + profile photo. */
 export async function requestContactInfo(contactId: string): Promise<void> {
   const { supabase } = await ctx();
