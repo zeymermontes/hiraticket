@@ -10,6 +10,7 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
+import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
@@ -367,17 +368,40 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [cannedOpen, setCannedOpen] = useState(false);
-  const [canned, setCanned] = useState<{ id: string; title: string; body: string }[]>([]);
+  const [canned, setCanned] = useState<{ id: string; title: string; body: string; shortcut: string | null }[]>([]);
   const emojiBtn = useRef<HTMLButtonElement>(null);
   const cannedBtn = useRef<HTMLButtonElement>(null);
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
   const [cannedRect, setCannedRect] = useState<DOMRect | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [slash, setSlash] = useState<{ q: string; at: number } | null>(null);
+  const [slashSel, setSlashSel] = useState(0);
+  const [slashRect, setSlashRect] = useState<DOMRect | null>(null);
 
   async function loadCanned() {
     if (canned.length) return;
     const supabase = createClient();
-    const { data } = await supabase.from("canned_messages").select("id, title, body").eq("business_id", businessId).order("title");
-    setCanned((data ?? []) as { id: string; title: string; body: string }[]);
+    const { data } = await supabase.from("canned_messages").select("id, title, body, shortcut").eq("business_id", businessId).order("title");
+    setCanned((data ?? []) as { id: string; title: string; body: string; shortcut: string | null }[]);
+  }
+  // Load templates once so the "/" shortcut works without opening the picker.
+  useEffect(() => { loadCanned(); /* eslint-disable-next-line */ }, []);
+
+  const slashMatches = slash
+    ? canned.filter((c) => { const sc = (c.shortcut ?? "").replace(/^\//, "").toLowerCase(); const q = slash.q.toLowerCase(); return sc.includes(q) || c.title.toLowerCase().includes(q); }).slice(0, 6)
+    : [];
+  function detectSlash(v: string, caret: number) {
+    const before = v.slice(0, caret);
+    const m = before.match(/(?:^|\s)\/(\w*)$/);
+    if (m) { setSlash({ q: m[1], at: caret - m[1].length - 1 }); setSlashSel(0); if (taRef.current) setSlashRect(taRef.current.getBoundingClientRect()); } else setSlash(null);
+  }
+  function applySlash(c: { body: string }) {
+    const el = taRef.current; if (!el || !slash) return;
+    const caret = el.selectionStart;
+    const filled = fillVars(c.body);
+    const next = text.slice(0, slash.at) + filled + text.slice(caret);
+    setText(next); setSlash(null);
+    requestAnimationFrame(() => { el.focus(); const p = slash.at + filled.length; el.setSelectionRange(p, p); });
   }
   function fillVars(body: string) {
     const o = detail.orders[0];
@@ -387,7 +411,6 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       .replace(/\{\{\s*order_number\s*\}\}/gi, o?.code ?? "")
       .replace(/\{\{\s*total\s*\}\}/gi, o ? `$${o.total.toLocaleString("es-MX")}` : "");
   }
-  const EMOJIS = ["😀", "😅", "🙏", "👍", "🙌", "🎉", "❤️", "🔥", "✅", "👀", "😍", "😂", "🤝", "💪", "📦", "💳", "📍", "⏰", "✨", "🙆"];
 
   useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
   useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
@@ -502,11 +525,35 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         <div className="composer-box">
           <div className="composer-input">
-            <textarea className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje…" : "Type a message…"} value={text}
-              onChange={(e) => setText(e.target.value)}
+            <textarea ref={taRef} className="bare" rows={1} placeholder={lang === "es" ? "Escribe un mensaje… ( / para plantillas)" : "Type a message… ( / for templates)"} value={text}
+              onChange={(e) => { setText(e.target.value); detectSlash(e.target.value, e.target.selectionStart); }}
               onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); stageFiles(files); } }}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } }} />
+              onBlur={() => setTimeout(() => setSlash(null), 150)}
+              onKeyDown={(e) => {
+                if (slash && slashMatches.length) {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((s) => (s + 1) % slashMatches.length); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((s) => (s - 1 + slashMatches.length) % slashMatches.length); return; }
+                  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applySlash(slashMatches[slashSel]); return; }
+                  if (e.key === "Escape") { setSlash(null); return; }
+                }
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
+              }} />
           </div>
+          {slash && slashMatches.length > 0 && slashRect && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setSlash(null)} />
+              <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - slashRect.top + 6, left: slashRect.left, width: Math.min(360, Math.max(260, slashRect.width)), maxHeight: 280, zIndex: 201 }}>
+                <div className="menu-label">{lang === "es" ? "Plantillas (/)" : "Templates (/)"}</div>
+                {slashMatches.map((c, i) => (
+                  <button key={c.id} type="button" className={"menu-item" + (i === slashSel ? " on" : "")} style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px", ...(i === slashSel ? { background: "var(--surface-2)" } : {}) }}
+                    onMouseEnter={() => setSlashSel(i)} onMouseDown={(e) => { e.preventDefault(); applySlash(c); }}>
+                    <div className="row gap-2"><span style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</span>{c.shortcut && <span className="mono t-xs muted">{c.shortcut}</span>}</div>
+                    <div className="muted t-xs truncate">{c.body}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="composer-actions">
             <input ref={fileRef} type="file" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
@@ -516,9 +563,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               {emojiOpen && emojiRect && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setEmojiOpen(false)} />
-                  <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - emojiRect.top + 6, left: emojiRect.left, width: 232, padding: 8, display: "grid", gridTemplateColumns: "repeat(8,1fr)", gap: 2, zIndex: 201 }}>
-                    {EMOJIS.map((e) => <button key={e} className="iconbtn" style={{ fontSize: 18 }} onClick={() => { setText((v) => v + e); setEmojiOpen(false); }}>{e}</button>)}
-                  </div>
+                  <EmojiPicker rect={emojiRect} onPick={(e) => setText((v) => v + e)} />
                 </>
               )}
             </span>

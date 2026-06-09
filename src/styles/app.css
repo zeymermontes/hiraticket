@@ -50,6 +50,9 @@
 [data-theme="dark"] .msg-menu-btn { background: rgba(255, 255, 255, .12); }
 [data-theme="dark"] .msg-menu-btn:hover { background: rgba(255, 255, 255, .2); }
 
+/* Ensure the chat grid columns (list / context / thread) scroll independently. */
+.chat { grid-template-rows: minmax(0, 1fr); }
+
 /* Orders table density toggle + compact segmented control. */
 .seg.seg-sm button { height: 28px; padding: 0 9px; }
 .tablewrap.dense .tbl td, .tablewrap.dense .tbl th { padding-top: 5px; padding-bottom: 5px; }
