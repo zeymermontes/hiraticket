@@ -54,6 +54,8 @@
 .seg.seg-sm button { height: 28px; padding: 0 9px; }
 .tablewrap.dense .tbl td, .tablewrap.dense .tbl th { padding-top: 5px; padding-bottom: 5px; }
 
+.tbl tr.sel-row td { background: var(--brand-50); }
+
 /* App-wide compact density (Settings). */
 [data-density="compact"] .tbl td, [data-density="compact"] .tbl th { padding-top: 6px; padding-bottom: 6px; }
 [data-density="compact"] .conv { padding-top: 7px; padding-bottom: 7px; }

@@ -10,7 +10,9 @@ import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
 import type { ConvDetail } from "@/lib/chat";
 import { OrderDrawer } from "@/components/OrderDrawer";
-import { createOrder } from "@/app/(app)/orders/actions";
+import { TransferModal } from "@/components/TransferModal";
+import { createOrder, assignOrder, addOrderNote } from "@/app/(app)/orders/actions";
+import { moveOrderArea } from "@/app/(app)/actions";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at";
 
@@ -51,7 +53,10 @@ export function OrdersTable({
   const [prioF, setPrioF] = useState("");
   const [dense, setDense] = useState(false);
   const [page, setPage] = useState(0);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [showXfer, setShowXfer] = useState(false);
   const PER = 25;
+  const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   useEffect(() => { if (autoOpen) setShowNew(true); }, [autoOpen]);
   useEffect(() => { setPage(0); }, [q, stageF, areaF, assigneeF, prioF]);
@@ -147,10 +152,20 @@ export function OrdersTable({
         </button>
       </div>
 
+      {sel.size > 0 && (
+        <div className="row gap-2" style={{ margin: "0 24px 10px", padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--brand)", borderRadius: 10, alignItems: "center" }}>
+          <strong>{sel.size}</strong><span className="t-sm">{lang === "es" ? "seleccionados" : "selected"}</span>
+          <span className="grow" />
+          <button className="btn btn-sm btn-outline" onClick={() => setShowXfer(true)}><Icon name="swap" size={14} />{lang === "es" ? "Transferir" : "Transfer"}</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => setSel(new Set())}>{lang === "es" ? "Limpiar" : "Clear"}</button>
+        </div>
+      )}
+
       <div className={"tablewrap scroll" + (dense ? " dense" : "")}>
         <table className="tbl">
           <thead>
             <tr>
+              <th style={{ width: 32 }}><input type="checkbox" checked={view.length > 0 && view.every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(view.map((o) => o.id)) : new Set())} /></th>
               <Sort k="code">{t("col_order")}</Sort>
               <th>{t("col_customer")}</th>
               <th>{t("col_status")}</th>
@@ -168,7 +183,8 @@ export function OrdersTable({
               const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null;
               const item0 = o.items?.[0]?.name;
               return (
-              <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/orders?order=${o.id}`, { scroll: false })}>
+              <tr key={o.id} style={{ cursor: "pointer" }} className={sel.has(o.id) ? "sel-row" : ""} onClick={() => router.push(`/orders?order=${o.id}`, { scroll: false })}>
+                <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} /></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{o.code}</span></td>
                 <td>
                   <div className="cust">
@@ -189,7 +205,7 @@ export function OrdersTable({
             })}
             {view.length === 0 && (
               <tr>
-                <td colSpan={10} className="muted" style={{ textAlign: "center", padding: 40 }}>
+                <td colSpan={11} className="muted" style={{ textAlign: "center", padding: 40 }}>
                   {t("empty_orders")}
                 </td>
               </tr>
@@ -215,6 +231,24 @@ export function OrdersTable({
           stages={stages}
           defaultContact={defaultContact}
           onClose={() => setShowNew(false)}
+        />
+      )}
+
+      {showXfer && (
+        <TransferModal
+          title={lang === "es" ? `Transferir ${sel.size} pedido(s)` : `Transfer ${sel.size} order(s)`}
+          agents={agents}
+          areas={areas}
+          onClose={() => setShowXfer(false)}
+          onConfirm={async (dest, note) => {
+            for (const id of sel) {
+              if (dest.type === "agent") await assignOrder(id, dest.id);
+              else await moveOrderArea(id, dest.id);
+              if (note) await addOrderNote(id, note);
+            }
+            setSel(new Set());
+            router.refresh();
+          }}
         />
       )}
 
