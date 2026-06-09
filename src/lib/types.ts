@@ -36,6 +36,14 @@ export function priorityColor(p: OrderRow["priority"]): PillColor {
   return PRIORITY_COLOR[p] ?? "slate";
 }
 
+const TAG_COLORS: PillColor[] = ["brand", "blue", "violet", "teal", "green", "amber", "red", "slate"];
+/** Deterministic color for a tag name (so the same tag is always the same color). */
+export function tagColor(name: string): PillColor {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return TAG_COLORS[h % TAG_COLORS.length];
+}
+
 export const PRIORITY_LABEL: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" },
   normal: { es: "Normal", en: "Normal" },

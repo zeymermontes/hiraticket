@@ -1,10 +1,11 @@
 "use client";
-import React, { useState, useEffect, useTransition } from "react";
+import React, { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type PillColor, priorityColor, formatMoney } from "@/lib/types";
+import { type PillColor, priorityColor, formatMoney, tagColor } from "@/lib/types";
+import { TagPicker } from "@/components/TagPicker";
 import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
@@ -31,6 +32,8 @@ export function OrderDrawer({
   const [note, setNote] = useState("");
   const [xfer, setXfer] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const tagBtn = useRef<HTMLButtonElement>(null);
+  const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const [chatW, setChatW] = useState(380);
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
@@ -98,8 +101,8 @@ export function OrderDrawer({
               {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
             </div>
             <div className="row gap-2" style={{ flexWrap: "wrap", marginTop: 8 }}>
-              {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={10} />{tg}</Pill>)}
-              <button className="btn btn-sm btn-outline" disabled={pending} onClick={() => { const tg = prompt(lang === "es" ? "Nueva etiqueta:" : "New tag:"); if (tg?.trim()) run(() => addOrderTag(detail.id, tg)); }}><Icon name="tag" size={13} />{lang === "es" ? "Etiqueta" : "Tag"}</button>
+              {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
+              <button ref={tagBtn} className="btn btn-sm btn-outline" onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" size={13} />{lang === "es" ? "Etiqueta" : "Tag"}</button>
             </div>
             {detail.conversation_id && (
               <button className={"btn btn-sm btn-block " + (chatOpen ? "btn-primary" : "btn-outline")} style={{ marginTop: 12 }} onClick={() => setChatOpen((v) => !v)}>
@@ -189,6 +192,11 @@ export function OrderDrawer({
           <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />
           <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
         </div>
+      )}
+      {tagRect && (
+        <TagPicker businessId={businessId} current={detail.contact?.tags ?? []} rect={tagRect}
+          onPick={(t) => run(() => addOrderTag(detail.id, t))}
+          onClose={() => setTagRect(null)} />
       )}
     </>
   );

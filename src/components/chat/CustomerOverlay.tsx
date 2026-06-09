@@ -3,7 +3,7 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
-import { type PillColor, priorityColor, PRIORITY_LABEL } from "@/lib/types";
+import { type PillColor, priorityColor, PRIORITY_LABEL, tagColor } from "@/lib/types";
 import type { ConvDetail, Agent } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import type { OrderDetail } from "@/lib/orders";
@@ -40,7 +40,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, businessId, con
           <div className="row gap-2"><span style={{ fontWeight: 800, fontSize: 17 }} className="truncate">{c?.name}</span><span className="pill pill-green" style={{ height: 20 }}><Icon name="whatsapp" size={12} />WhatsApp</span></div>
           <div className="t-sm muted mono">{c?.phone}</div>
         </div>
-        <div className="row gap-2" style={{ flexWrap: "wrap" }}>{(c?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={11} />{tg}</Pill>)}{detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}</div>
+        <div className="row gap-2" style={{ flexWrap: "wrap" }}>{(c?.tags ?? []).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={11} />{tg}</Pill>)}{detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}</div>
       </div>
 
       <div className="cust360-body scroll">

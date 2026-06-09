@@ -12,6 +12,8 @@ import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { MentionTextarea } from "@/components/MentionTextarea";
+import { TagPicker } from "@/components/TagPicker";
+import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
@@ -308,7 +310,7 @@ export function ChatScreen({
 
       {detail ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} businessId={businessId} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
@@ -718,7 +720,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, businessId, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; businessId: string; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -727,6 +729,8 @@ function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const [actOpen, setActOpen] = useState(true);
   const [showXfer, setShowXfer] = useState(false);
+  const tagBtn = useRef<HTMLButtonElement>(null);
+  const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   useEffect(() => { setNameVal(detail.contact?.name ?? ""); setEditingName(false); }, [detail.contact?.id, detail.contact?.name]);
@@ -773,7 +777,7 @@ function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail
             </div>
           </div>
           <div className="row gap-2" style={{ flexWrap: "wrap" }}>
-            {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={10} />{tg}</Pill>)}
+            {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
             {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
           </div>
           <div className="col gap-1" style={{ paddingTop: 4 }}>
@@ -808,7 +812,7 @@ function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail
               <StatusControl detail={detail} />
               <SnoozeControl detail={detail} />
               <button className="act" onClick={() => setShowXfer(true)}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
-              <button className="act" disabled={pending || !detail.contact} onClick={() => { const tg = prompt(lang === "es" ? "Etiqueta:" : "Tag:"); if (tg?.trim() && detail.contact) start(async () => { await addContactTag(detail.contact!.id, tg); router.refresh(); }); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
+              <button ref={tagBtn} className="act" disabled={!detail.contact} onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
               <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
@@ -863,6 +867,11 @@ function Workspace({ detail, agents, areas, onResizeStart, onOpen360 }: { detail
       {showXfer && (
         <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
           onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); router.refresh(); }} />
+      )}
+      {tagRect && detail.contact && (
+        <TagPicker businessId={businessId} current={detail.contact.tags ?? []} rect={tagRect}
+          onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); router.refresh(); })}
+          onClose={() => setTagRect(null)} />
       )}
     </div>
   );
