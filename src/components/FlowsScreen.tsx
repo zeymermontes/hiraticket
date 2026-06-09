@@ -13,6 +13,9 @@ const TRIGGERS: Record<string, { es: string; en: string }> = {
   conversation_status: { es: "Una conversación cambia de estado", en: "A conversation changes status" },
   conversation_new: { es: "Inicia un chat nuevo", en: "A new chat starts" },
 };
+const TRIGGER_ICON: Record<string, string> = {
+  order_stage: "orders", conversation_status: "chat", conversation_new: "bell",
+};
 
 const CONV_STATUS: Record<string, { es: string; en: string }> = {
   open: { es: "Abierto", en: "Open" },
@@ -47,11 +50,12 @@ function FlowCard({ w, areas, stages }: { w: Automation; areas: Area[]; stages: 
       <div className="grow" style={{ minWidth: 0 }}>
         <div className="row gap-2">
           <strong className="truncate">{w.name}</strong>
+          <Pill color={w.enabled ? "green" : "slate"} dot>{w.enabled ? (lang === "es" ? "Activo" : "Active") : (lang === "es" ? "Pausado" : "Paused")}</Pill>
           <span className="grow" />
           <span className="t-xs muted"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>{w.runs.toLocaleString("es-MX")}</span> {lang === "es" ? "ejecuciones" : "runs"}</span>
         </div>
         <div className="flow-line">
-          <span className="flow-node when"><Icon name="bolt" size={14} />{lang === "es" ? "Cuando" : "When"} {(TRIGGERS[w.trigger_type]?.[lang] ?? w.trigger_type).toLowerCase()}</span>
+          <span className="flow-node when"><Icon name={TRIGGER_ICON[w.trigger_type] ?? "bolt"} size={14} />{lang === "es" ? "Cuando" : "When"} {(TRIGGERS[w.trigger_type]?.[lang] ?? w.trigger_type).toLowerCase()}</span>
           {triggerVal && <span className="pill pill-slate">{triggerVal}</span>}
           <span className="flow-arrow"><Icon name="arrowr" size={16} /></span>
           <span className="flow-node then"><Icon name={act.icon} size={14} />{act[lang]}</span>
@@ -108,7 +112,9 @@ export function FlowsScreen({
 
   return (
     <div className="page">
-      <div className="phead"><h1>{lang === "es" ? "Flujos" : "Flows"}</h1><Pill color="slate" large>{automations.length}</Pill></div>
+      <div className="phead"><h1>{lang === "es" ? "Flujos" : "Flows"}</h1><Pill color="slate" large>{automations.length}</Pill>
+        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Automatiza respuestas y transferencias" : "Automate replies and transfers"}</span>
+      </div>
 
       <div className="toolbar">
         <div className="field field-sm" style={{ width: 260 }}>
@@ -117,10 +123,21 @@ export function FlowsScreen({
         </div>
       </div>
 
+      <div className="row gap-3" style={{ padding: "0 24px 12px", flexWrap: "wrap" }}>
+        <div className="ws-block" style={{ flex: 1, minWidth: 200 }}><div className="ws-block-body row gap-3" style={{ alignItems: "center" }}><span className="t-ic" style={{ width: 38, height: 38, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="bolt" size={18} /></span><div><div className="mono" style={{ fontWeight: 800, fontSize: 22 }}>{automations.filter((w) => w.enabled).length}</div><div className="t-xs muted">{lang === "es" ? "Flujos activos" : "Enabled flows"}</div></div></div></div>
+        <div className="ws-block" style={{ flex: 1, minWidth: 200 }}><div className="ws-block-body row gap-3" style={{ alignItems: "center" }}><span className="t-ic" style={{ width: 38, height: 38, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={18} /></span><div><div className="mono" style={{ fontWeight: 800, fontSize: 22 }}>{automations.reduce((s, w) => s + (w.runs || 0), 0).toLocaleString("es-MX")}</div><div className="t-xs muted">{lang === "es" ? "Mensajes automatizados" : "Messages automated"}</div></div></div></div>
+      </div>
+
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-2">
-          {filtered.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin flujos." : "No flows."}</div>}
-          {filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} />)}
+          {filtered.length === 0 ? (
+            <div className="empty" style={{ padding: "48px 24px" }}>
+              <div className="empty-art"><Icon name="bolt" /></div>
+              <h3>{lang === "es" ? "Sin flujos todavía" : "No flows yet"}</h3>
+              <p className="muted t-sm">{lang === "es" ? "Crea tu primer flujo para automatizar respuestas y transferencias." : "Create your first flow to automate replies and transfers."}</p>
+            </div>
+          ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} />)}
+          {filtered.length > 0 && <div className="t-xs muted" style={{ padding: "8px 4px" }}>{lang === "es" ? "Pruébalo: avanza un pedido a “Listo” y se envía la plantilla automáticamente." : "Try it: advance an order to “Ready” and the template is sent automatically."}</div>}
         </div>
 
         <section className="ws-block">
