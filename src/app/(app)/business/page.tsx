@@ -22,6 +22,8 @@ export default async function BusinessPage() {
       stages={stages}
       areas={areas}
       agents={agents}
+      vertical={business.vertical ?? null}
+      objectSingular={business.object_singular ?? "Pedido"}
     />
   );
 }

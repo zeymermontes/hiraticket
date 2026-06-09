@@ -7,8 +7,9 @@ import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
+import { VERTICALS } from "@/lib/verticals";
 import {
-  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage,
+  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, updateBusinessProfile,
 } from "@/app/(app)/business/actions";
 
 const COLORS: PillColor[] = ["slate", "blue", "violet", "teal", "green", "amber", "red", "brand"];
@@ -32,13 +33,15 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular,
 }: {
   businessId: string;
   businessName: string;
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
+  vertical: string | null;
+  objectSingular: string;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -46,15 +49,39 @@ export function BusinessConfig({
   const [newStage, setNewStage] = useState("");
   const [newArea, setNewArea] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
+  const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
+  const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
 
   return (
     <div className="page">
       <div className="phead">
         <h1>{lang === "es" ? "Negocio" : "Business"}</h1>
         <Pill color="slate" large>{businessName}</Pill>
+        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Configura tu vertical, etapas y áreas" : "Configure your vertical, stages and areas"}</span>
       </div>
 
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+        {/* Vertical + object name */}
+        <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+          <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Tipo de negocio" : "Business type"}</h4></div>
+          <div className="ws-block-body col gap-3">
+            <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+              {VERTICALS.map((v) => (
+                <button key={v.id} onClick={() => run(() => updateBusinessProfile(businessId, { vertical: v.id, object_singular: v.object[lang] }))}
+                  style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                    background: vertical === v.id ? "var(--brand-50)" : "var(--surface)", border: "1px solid " + (vertical === v.id ? "var(--brand)" : "var(--border)") }}>
+                  <Icon name={v.icon} size={18} /><span style={{ fontWeight: 600, fontSize: 13 }}>{v.name[lang]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="row gap-2" style={{ alignItems: "center", maxWidth: 420 }}>
+              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "¿Cómo le llamas al objeto?" : "What do you call the object?"}</label>
+              <input className="inp-inline grow" defaultValue={objectSingular} placeholder={lang === "es" ? "Pedido" : "Order"}
+                onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== objectSingular) run(() => updateBusinessProfile(businessId, { object_singular: v })); }} />
+            </div>
+          </div>
+        </section>
+
         {/* Stages */}
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4></div>
@@ -68,8 +95,8 @@ export function BusinessConfig({
               </div>
             ))}
             <div className="row gap-2">
-              <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva etapa…" : "New stage…"} value={newStage} onChange={(e) => setNewStage(e.target.value)} />
-              <button className="btn btn-sm btn-primary" disabled={!newStage.trim()} onClick={() => { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); }}><Icon name="plus" size={14} /></button>
+              <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva etapa…" : "New stage…"} value={newStage} onChange={(e) => setNewStage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addStage(); }} />
+              <button className="btn btn-sm btn-primary" disabled={!newStage.trim()} onClick={addStage}><Icon name="plus" size={14} />{lang === "es" ? "Agregar etapa" : "Add stage"}</button>
             </div>
           </div>
         </section>
@@ -92,8 +119,8 @@ export function BusinessConfig({
               </div>
             ))}
             <div className="row gap-2">
-              <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva área…" : "New area…"} value={newArea} onChange={(e) => setNewArea(e.target.value)} />
-              <button className="btn btn-sm btn-primary" disabled={!newArea.trim()} onClick={() => { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); }}><Icon name="plus" size={14} /></button>
+              <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva área…" : "New area…"} value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addArea(); }} />
+              <button className="btn btn-sm btn-primary" disabled={!newArea.trim()} onClick={addArea}><Icon name="plus" size={14} />{lang === "es" ? "Agregar área" : "Add area"}</button>
             </div>
           </div>
         </section>
