@@ -477,7 +477,12 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		m.handleProtocol(ctx, s, pm)
 		return
 	}
-	if msg.GetReactionMessage() != nil {
+	if rm := msg.GetReactionMessage(); rm != nil {
+		by := "contact"
+		if v.Info.IsFromMe {
+			by = "agent"
+		}
+		m.applyReaction(ctx, s.BusinessID, rm.GetKey().GetID(), rm.GetText(), by)
 		return
 	}
 
@@ -824,29 +829,29 @@ func attachContext(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 func (m *Manager) pollOps(ctx context.Context) {
 	for {
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body, wa_id, pending_op
+			`SELECT id, business_id, conversation_id, body, wa_id, pending_op, COALESCE(react_emoji,''), direction
 			   FROM messages WHERE pending_op IS NOT NULL AND wa_id IS NOT NULL LIMIT 30`)
 		if err == nil {
-			type op struct{ id, biz, conv, body, waID, op string }
+			type op struct{ id, biz, conv, body, waID, op, react, dir string }
 			var ops []op
 			for rows.Next() {
 				var o op
 				var body sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op) == nil {
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op, &o.react, &o.dir) == nil {
 					o.body = body.String
 					ops = append(ops, o)
 				}
 			}
 			rows.Close()
 			for _, o := range ops {
-				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op)
+				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op, o.react, o.dir)
 			}
 		}
 		time.Sleep(2 * time.Second)
 	}
 }
 
-func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op string) {
+func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op, react, dir string) {
 	m.mu.Lock()
 	client := m.byBiz[biz]
 	m.mu.Unlock()
@@ -881,9 +886,51 @@ func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op s
 			return
 		}
 		m.exec(ctx, `UPDATE messages SET deleted=true, body='', pending_op=NULL WHERE id=$1`, id)
+	case "react":
+		// The reaction targets a message; its author is us (out) or the contact (in).
+		var sender types.JID
+		if dir == "out" {
+			if client.Store.ID != nil {
+				sender = *client.Store.ID
+			}
+		} else {
+			sender = chatJID
+		}
+		reaction := client.BuildReaction(chatJID, sender, types.MessageID(waID), react) // react=="" removes
+		if _, err := client.SendMessage(ctx, chatJID, reaction); err != nil {
+			m.log.Errorf("react %s: %v", id, err)
+			return
+		}
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, react_emoji=NULL WHERE id=$1`, id)
 	default:
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
 	}
+}
+
+// applyReaction sets or removes a single reaction (by 'contact' or 'agent') on the target
+// message identified by its WhatsApp id.
+func (m *Manager) applyReaction(ctx context.Context, biz, targetWaID, emoji, by string) {
+	if targetWaID == "" {
+		return
+	}
+	var raw []byte
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT reactions FROM messages WHERE business_id=$1 AND wa_id=$2`, biz, targetWaID).Scan(&raw); err != nil {
+		return
+	}
+	var arr []map[string]string
+	_ = json.Unmarshal(raw, &arr)
+	out := make([]map[string]string, 0, len(arr)+1)
+	for _, r := range arr {
+		if r["by"] != by {
+			out = append(out, r)
+		}
+	}
+	if emoji != "" {
+		out = append(out, map[string]string{"emoji": emoji, "by": by})
+	}
+	b, _ := json.Marshal(out)
+	m.exec(ctx, `UPDATE messages SET reactions=$3 WHERE business_id=$1 AND wa_id=$2`, biz, targetWaID, string(b))
 }
 
 // ---------- helpers ----------
