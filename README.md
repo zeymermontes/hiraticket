@@ -11,27 +11,38 @@ audit trail. Multi-tenant SaaS.
   `src/styles/`.
 - **Background:** [`RESEARCH.md`](RESEARCH.md) · [`DESIGN_PROMPT.md`](DESIGN_PROMPT.md)
 
-## Two surfaces
+The app is a **native Next.js + Supabase** build (the original design prototype lives in
+[`prototype/`](prototype/) as reference only — it is no longer served).
 
-1. **The full app — every prototype feature, live** at `/app/Hiraticket.html`, served behind
-   the Supabase login. This is where users land after signing in: Chat (3-column workspace +
-   Customer 360), Orders table + drawer, Kanban drag board, Flujos automations, Catálogo,
-   Agenda, Campañas, Reportes, Negocio (vertical switching), Agentes, Plantillas, Settings —
-   all bilingual ES/EN with light/dark. (Currently the design prototype, served as static
-   assets; sign-out breaks out to Supabase `/logout`.)
-2. **The native Next + Supabase port** (`/orders`, `/chat`, …) — the production rebuild that
-   replaces the prototype view-by-view with real Postgres-backed data.
+## Features (all Supabase-backed)
 
-## Native port — what's built so far
+| Area | What works |
+|------|-----------|
+| **Auth** | Supabase email/password + sign-up, session middleware, route gating, `/logout` |
+| **Multi-tenant** | Businesses + members (admin/agent/viewer), RLS scoping every table; onboarding creates a business + seeds demo data |
+| **Chat** | 3-column workspace on live data — send (queued for the WhatsApp worker), accept, status, resolve, internal notes, transfer to agent/area, activity log |
+| **Orders** | Table with search + sort, live data |
+| **Kanban** | Drag cards to change stage or area (persisted) |
+| **Business** | Areas + stages CRUD (rename, color, delete) and default-agent routing per area |
+| **Agents** | List, role changes, email invite (Supabase admin invite) |
+| **Templates** | Canned messages CRUD with `{{variables}}` |
+| **Flows** | Automations list, enable/pause, create (trigger → send template) |
+| **Catalog / Agenda / Campaigns / Reports** | Products & services, appointments, broadcast campaigns, and live order analytics |
+| **Settings** | WhatsApp connection (QR + live status), appearance, account |
+| **Platform** (super-admin) | Gated console at `/platform`: tenants, plans, MRR; bootstrap-claim the first admin |
+| **WhatsApp worker** | `services/whatsapp` — whatsapp-web.js bridge (QR, inbound→DB, outbound←DB); deployed as a Render worker |
 
-| Area | Status |
-|------|--------|
-| Supabase auth (email/password + sign-up), session middleware, route gating | ✅ |
-| Multi-tenant Postgres schema + RLS (businesses, members, orders, chats, areas, stages, notes, events, automations…) | ✅ |
-| Onboarding (create business + seed demo sticker-shop data) | ✅ |
-| App shell (nav rail + top bar, ES/EN, light/dark) | ✅ |
-| **Orders** view — live data from Supabase, search + sort | ✅ |
-| Chat (3-column workspace), Kanban (drag), and admin views | ⏳ porting from the live prototype |
+## 1. Supabase setup
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. Run the migrations (SQL editor, **in order**) — paste each file:
+   - `supabase/migrations/0001_init.sql`
+   - `supabase/migrations/0002_seed_demo.sql`
+   - `supabase/migrations/0003_saas.sql`
+   - `supabase/migrations/0004_catalog_agenda_campaigns.sql`
+   (Or with the CLI: `supabase db push`.)
+   Then enable **Realtime** on `whatsapp_sessions` and `messages` (Database → Replication)
+   so the WhatsApp worker reacts live.
 
 ## 1. Supabase setup
 
@@ -52,8 +63,9 @@ npm install
 npm run dev                     # http://localhost:3000
 ```
 
-Sign up → you'll land on **Orders** with a "Create your business" card → create one and it
-seeds demo orders you can search and sort.
+Sign up → you'll land on **Chat** with a "Create your business" card → create one and it
+seeds a demo sticker shop (orders, conversations, areas, stages, catalog, agenda) you can use
+across every view.
 
 ## 3. Deploy to Render
 

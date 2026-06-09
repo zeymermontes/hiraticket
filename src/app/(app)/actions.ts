@@ -62,6 +62,9 @@ export async function createDemoBusiness(formData: FormData): Promise<void> {
   });
   if (seedErr) throw new Error(seedErr.message);
 
+  // Catalog / agenda / campaigns demo data (separate migration).
+  await supabase.rpc("seed_demo_extra", { p_business: businessId });
+
   revalidatePath("/orders");
   revalidatePath("/chat");
   revalidatePath("/kanban");
