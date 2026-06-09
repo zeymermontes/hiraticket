@@ -81,9 +81,10 @@ export interface ShellUser {
   email: string;
 }
 
-function NavRail({ badges }: { badges: Record<string, number | null> }) {
+function NavRail({ badges, objectName, user }: { badges: Record<string, number | null>; objectName: string; user: ShellUser }) {
   const pathname = usePathname();
-  const { t } = useApp();
+  const { lang, t } = useApp();
+  const [profOpen, setProfOpen] = useState(false);
 
   const renderItem = (it: NavItem) => {
     const on = pathname === it.href || pathname.startsWith(it.href + "/");
@@ -91,7 +92,7 @@ function NavRail({ badges }: { badges: Record<string, number | null> }) {
     return (
       <Link key={it.id} href={it.href} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
-        <span className="rl">{t(it.labelKey)}</span>
+        <span className="rl">{it.id === "orders" ? objectName : t(it.labelKey)}</span>
         {badge != null && badge > 0 && (
           <span className={"badge" + (it.red ? " badge-red" : "")}>{badge}</span>
         )}
@@ -105,27 +106,47 @@ function NavRail({ badges }: { badges: Record<string, number | null> }) {
       <div className="rail-nav">{PRIMARY.map(renderItem)}</div>
       <div className="rail-sep" />
       <div className="rail-nav">{ADMIN.map(renderItem)}</div>
+      <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
+        <button className="rail-item" style={{ width: "100%" }} onClick={() => setProfOpen((o) => !o)}>
+          <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={28} presence="online" />
+          <span className="rl truncate">{user.name}</span>
+        </button>
+        {profOpen && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setProfOpen(false)} />
+            <div className="menu" style={{ position: "absolute", bottom: "calc(100% + 4px)", left: 8, width: 220, zIndex: 50 }}>
+              <div style={{ padding: "8px 12px" }}><div style={{ fontWeight: 700 }} className="truncate">{user.name}</div><div className="t-xs muted truncate">{user.email}</div></div>
+              <div className="menu-sep" />
+              <Link className="menu-item" href="/settings" onClick={() => setProfOpen(false)}><Icon name="settings" size={15} />{t("nav_settings")}</Link>
+              <Link className="menu-item" href="/" onClick={() => setProfOpen(false)}><Icon name="store" size={15} />{lang === "es" ? "Sitio público" : "Public site"}</Link>
+              <div className="menu-sep" />
+              <form action="/auth/signout" method="post"><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
+            </div>
+          </>
+        )}
+      </div>
     </nav>
   );
 }
 
-function TopBar({ user, notifications }: { user: ShellUser; notifications: Notif[] }) {
+function TopBar({ notifications, connected }: { notifications: Notif[]; connected: boolean }) {
   const { lang, setLang, theme, setTheme, t } = useApp();
+  const [search, setSearch] = useState("");
   return (
     <header className="topbar">
       <div className="topbar-search">
         <div className="field field-filled">
           <Icon name="search" />
-          <input placeholder={t("search_ph")} />
+          <input placeholder={t("search_ph")} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
       <span className="grow" />
 
-      <button className="conn-chip ok" title="WhatsApp" type="button">
+      <Link className={"conn-chip " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings">
         <span className="conn-dot" />
-        <Icon name="whatsapp" size={15} />
-        <span>{t("connected")}</span>
-      </button>
+        <Icon name={connected ? "whatsapp" : "wifioff"} size={15} />
+        <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
+      </Link>
 
       <div className="seg" style={{ height: 34 }}>
         <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
@@ -142,12 +163,6 @@ function TopBar({ user, notifications }: { user: ShellUser; notifications: Notif
 
       <Bell notifications={notifications} />
 
-      <form action="/auth/signout" method="post" style={{ display: "flex" }}>
-        <button className="iconbtn" type="submit" aria-label={t("sign_out")} title={user.email}>
-          <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={34} />
-        </button>
-      </form>
-
       <Link className="btn btn-primary" href="/orders?new=1">
         <Icon name="plus" /> <span className="hide-narrow">{t("new_order")}</span>
       </Link>
@@ -159,19 +174,23 @@ export function Shell({
   user,
   badges = {},
   notifications = [],
+  connected = false,
+  objectName = "Pedidos",
   children,
 }: {
   user: ShellUser;
   badges?: Record<string, number | null>;
   notifications?: Notif[];
+  connected?: boolean;
+  objectName?: string;
   children: React.ReactNode;
 }) {
   return (
     <AppProvider>
       <div className="app">
-        <NavRail badges={badges} />
+        <NavRail badges={badges} objectName={objectName} user={user} />
         <div className="main">
-          <TopBar user={user} notifications={notifications} />
+          <TopBar notifications={notifications} connected={connected} />
           {children}
         </div>
       </div>
