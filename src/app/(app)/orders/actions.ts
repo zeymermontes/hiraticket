@@ -2,6 +2,21 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
+/** Add an internal note to an order. */
+export async function addOrderNote(orderId: string, body: string): Promise<void> {
+  const text = body.trim();
+  if (!text) return;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
+  if (!order) return;
+  await supabase.from("notes").insert({
+    business_id: order.business_id, parent_type: "order", parent_id: orderId,
+    author_id: user?.id ?? null, body: text,
+  });
+  revalidatePath("/orders");
+}
+
 interface NewOrder {
   contactName: string;
   item: string;

@@ -6,21 +6,28 @@ import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type OrderRow, type PillColor, priorityColor, formatMoney } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
+import type { Agent } from "@/lib/chat";
+import type { OrderDetail } from "@/lib/orders";
+import { OrderDrawer } from "@/components/OrderDrawer";
 import { createOrder } from "@/app/(app)/orders/actions";
 
 type SortKey = "code" | "total" | "updated_at";
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, autoOpen,
+  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen,
 }: {
   rows: OrderRow[];
   objectName: string;
   businessId: string;
   areas: Area[];
   stages: Stage[];
+  agents: Agent[];
+  openOrder: OrderDetail | null;
   autoOpen?: boolean;
 }) {
   const { t, lang } = useApp();
+  const router = useRouter();
+  const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
@@ -96,14 +103,19 @@ export function OrdersTable({
               <th>{t("col_customer")}</th>
               <th>{t("col_status")}</th>
               <th>{t("col_area")}</th>
+              <th>{lang === "es" ? "Agente" : "Agent"}</th>
               <th>{lang === "es" ? "Prioridad" : "Priority"}</th>
+              <th>{lang === "es" ? "Artículos" : "Items"}</th>
               <Sort k="total">{t("col_total")}</Sort>
               <Sort k="updated_at">{t("col_updated")}</Sort>
             </tr>
           </thead>
           <tbody>
-            {view.map((o) => (
-              <tr key={o.id}>
+            {view.map((o) => {
+              const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null;
+              const item0 = o.items?.[0]?.name;
+              return (
+              <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/orders?order=${o.id}`, { scroll: false })}>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{o.code}</span></td>
                 <td>
                   <div className="cust">
@@ -113,14 +125,17 @@ export function OrdersTable({
                 </td>
                 <td>{o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{o.area ? <Pill color={o.area.color as PillColor}>{o.area.name}</Pill> : <span className="muted t-sm">—</span>}</td>
+                <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><Pill color={priorityColor(o.priority)}><Icon name="dot" size={10} />{o.priority}</Pill></td>
+                <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>
                 <td className="muted t-sm">{relDate(o.updated_at)}</td>
               </tr>
-            ))}
+              );
+            })}
             {view.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted" style={{ textAlign: "center", padding: 40 }}>
+                <td colSpan={9} className="muted" style={{ textAlign: "center", padding: 40 }}>
                   {t("empty_orders")}
                 </td>
               </tr>
@@ -135,6 +150,16 @@ export function OrdersTable({
           areas={areas}
           stages={stages}
           onClose={() => setShowNew(false)}
+        />
+      )}
+
+      {openOrder && (
+        <OrderDrawer
+          detail={openOrder}
+          stages={stages}
+          areas={areas}
+          agents={agents}
+          onClose={() => router.push("/orders", { scroll: false })}
         />
       )}
     </div>

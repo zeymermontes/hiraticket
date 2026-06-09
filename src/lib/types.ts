@@ -16,9 +16,12 @@ export interface OrderRow {
   pay_status: "pending" | "partial" | "paid";
   total: number;
   updated_at: string;
+  created_at: string;
+  assignee_id: string | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   contact: { name: string } | null;
+  items: { name: string }[];
 }
 
 const PRIORITY_COLOR: Record<OrderRow["priority"], PillColor> = {

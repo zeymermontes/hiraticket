@@ -18,7 +18,7 @@ export async function getOrders(businessId: string): Promise<OrderRow[]> {
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "id, code, priority, pay_status, total, updated_at, stage:stages(name,color), area:areas(name,color), contact:contacts(name)",
+      "id, code, priority, pay_status, total, updated_at, created_at, assignee_id, stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)",
     )
     .eq("business_id", businessId)
     .order("updated_at", { ascending: false });
