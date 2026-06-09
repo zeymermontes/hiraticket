@@ -25,7 +25,7 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
 
-  # WhatsApp worker (Baileys — WebSocket, no browser). Keeps per-session auth on a disk.
+  # WhatsApp worker (whatsmeow, Go). Sessions persist in Postgres — no disk needed.
   - type: worker
     name: hiraticket-whatsapp
     runtime: docker
@@ -35,14 +35,8 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    disk:
-      name: wa-auth
-      mountPath: /data
-      sizeGB: 1
     envVars:
-      - key: WA_DATA_PATH
-        value: /data/baileys
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      # Supabase direct Postgres connection string (Settings -> Database),
+      # e.g. postgresql://postgres:PASSWORD@db.<ref>.supabase.co:5432/postgres?sslmode=require
+      - key: DATABASE_URL
         sync: false

@@ -1,11 +1,11 @@
-# WhatsApp worker (Baileys) — no browser needed, so a plain slim Node image.
-FROM node:20-bookworm-slim
+# WhatsApp worker (whatsmeow, Go) — static binary in a distroless image.
+FROM golang:1.25-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /worker .
 
-WORKDIR /app
-
-COPY package.json ./
-RUN npm install --omit=dev
-
-COPY index.js ./
-
-CMD ["node", "index.js"]
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /worker /worker
+ENTRYPOINT ["/worker"]

@@ -1,48 +1,51 @@
-# WhatsApp worker (Baileys)
+# WhatsApp worker (whatsmeow, Go)
 
 Multi-tenant worker that connects each business's own WhatsApp number and bridges it
-to Supabase. Uses **[Baileys](https://github.com/whiskeysockets/Baileys)** — a WebSocket
-client for WhatsApp Web multi-device, **no browser/Chromium** — the same engine the
-Whaticket SaaS forks use. ~30–50 MB RAM per number, so one worker holds many tenants.
+to the app's Postgres. Built on **[whatsmeow](https://github.com/tulir/whatsmeow)** — a Go
+WebSocket client for WhatsApp Web multi-device (no browser), known for being very stable
+(it powers the mautrix-whatsapp bridge in production).
 
-> ⚠️ Unofficial (WhatsApp Web linked-device). Same ban risk as any linked device. For
-> very large scale, the official WhatsApp Cloud API is the alternative.
+> ⚠️ Unofficial (WhatsApp Web linked device) — same ban risk as any linked device.
+
+## Why whatsmeow
+- **Stable & efficient** (Go), low memory per number.
+- **Sessions live in Postgres** (whatsmeow's `sqlstore`, in `whatsmeow_*` tables) — **no
+  disk**. The worker is stateless, so it restarts/scales cleanly and reconnects numbers
+  automatically.
 
 ## What it does
-- Watches `whatsapp_sessions` (Realtime + 20s poll). When the app sets a session to
-  `connecting`, it opens a Baileys socket with **per-session auth state** on disk
-  (`useMultiFileAuthState` under `WA_DATA_PATH/<sessionId>`).
-- **QR method** → publishes the QR string to `whatsapp_sessions.qr`.
-- **Pairing-code method** → requests an 8-char code → `whatsapp_sessions.pairing_code`
-  (set `connect_method='pairing'` and a `phone`).
-- On connect → status `connected`, stores the number. Auto-reconnects unless logged out.
+- Polls `whatsapp_sessions`. When the app sets a session to `connecting`, it opens a
+  whatsmeow client:
+  - **QR** → publishes the QR string to `whatsapp_sessions.qr`.
+  - **Pairing** (`connect_method='pairing'` + `phone`) → publishes an 8-char code to
+    `whatsapp_sessions.pairing_code`.
+- On connect → status `connected`, stores the number and the device JID (`device_jid`).
 - **Inbound** messages → upserts the contact, finds/creates an open conversation, inserts
-  the message, bumps unread. **Outbound**: when the app inserts `direction='out'`,
-  `state='queued'`, the worker sends it and flips it to `sent`.
-
-Each business gets its own socket + auth folder, all data scoped by `business_id` (RLS).
+  the message, bumps unread (scoped by `business_id`).
+- **Outbound**: polls `messages` with `direction='out'` + `state='queued'`, claims each
+  (`state='sending'`), sends it, then flips to `sent` (or `failed`).
 
 ## Env
 | var | value |
 |-----|-------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | service-role key (bypasses RLS — worker only) |
-| `WA_DATA_PATH` | per-session auth dir (a mounted disk, e.g. `/data/baileys`) |
+| `DATABASE_URL` | Supabase **direct** Postgres connection string (port 5432), `sslmode=require` |
 
-## Run locally
+The worker connects directly to Postgres (trusted, bypasses RLS) and shares that DB with
+whatsmeow's session store. Use the **direct connection** (not the transaction pooler).
+
+## Run locally (Go 1.25+)
 ```bash
 cd services/whatsapp
-npm install
-SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... WA_DATA_PATH=./.baileys node index.js
+go mod download
+DATABASE_URL='postgresql://postgres:PASSWORD@db.<ref>.supabase.co:5432/postgres?sslmode=require' go run .
 ```
 Then in the app → **Settings → WhatsApp → Connect** (QR or pairing code).
 
 ## Deploy (Render)
-Defined in the root `render.yaml` as a `worker` (Docker, slim Node image, 1 GB disk).
-Set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, and enable **Realtime** on the
-`whatsapp_sessions` and `messages` tables (Supabase → Database → Replication).
+Defined in the root `render.yaml` as a `worker` (Docker, distroless static image, **no
+disk**). Set `DATABASE_URL` in the dashboard. whatsmeow creates its own tables on first run.
 
-## Scaling to many tenants
-One worker handles dozens of numbers. To go further, run multiple worker instances and
-**shard sessions** (e.g. only start a session if `hash(session.id) % N === WORKER_INDEX`)
-so each number is owned by exactly one worker.
+## Scaling
+One worker handles many numbers. To run multiple workers, **shard sessions** (e.g. only
+start a session if `hash(session.id) % N == WORKER_INDEX`) so each number is owned by
+exactly one worker.

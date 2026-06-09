@@ -30,18 +30,18 @@ The app is a **native Next.js + Supabase** build (the original design prototype 
 | **Catalog / Agenda / Campaigns / Reports** | Products & services, appointments, broadcast campaigns, and live order analytics |
 | **Settings** | WhatsApp connection (QR + live status), appearance, account |
 | **Platform** (super-admin) | Gated console at `/platform`: tenants, plans, MRR; bootstrap-claim the first admin |
-| **WhatsApp worker** | `services/whatsapp` — whatsapp-web.js bridge (QR, inbound→DB, outbound←DB); deployed as a Render worker |
+| **WhatsApp worker** | `services/whatsapp` — **whatsmeow** (Go) bridge: QR or pairing code, sessions stored in Postgres, inbound→DB, outbound←DB; deployed as a Render worker |
 
 ## 1. Supabase setup
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Run the migrations (SQL editor, **in order**) — paste each `supabase/migrations/*.sql`
-   file (`0001` … `0006`), or use the CLI: `supabase db push`.
-   Then enable **Realtime** on `whatsapp_sessions` and `messages` (Database → Replication)
-   so the WhatsApp worker reacts live.
+   file (`0001` … `0007`), or use the CLI: `supabase db push`.
    *(`0002`/`0004` define optional demo-data seeders that are **not** run automatically — the
    app starts with no sample data; call `seed_demo_data(business_id)` manually if you want a
    demo tenant.)*
+   The WhatsApp worker connects **directly to Postgres** and polls, so no Realtime config is
+   needed — just give it the `DATABASE_URL` (see `services/whatsapp`).
 
 ## 1. Supabase setup
 
