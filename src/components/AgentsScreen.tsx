@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -10,6 +10,7 @@ import type { Area } from "@/lib/business";
 import { setAgentRole, setAgentName, setAgentArea, inviteAgent, resendInvite, deactivateAgent } from "@/app/(app)/agents/actions";
 
 const ROLE_COLOR = { admin: "brand", agent: "blue", viewer: "slate" } as const;
+const ROLE_ICON = { admin: "shield", agent: "user", viewer: "eye" } as const;
 const ROLE_LABEL = {
   admin: { es: "Admin", en: "Admin" },
   agent: { es: "Agente", en: "Agent" },
@@ -30,10 +31,8 @@ export function AgentsScreen({
   isAdmin: boolean;
 }) {
   const { lang } = useApp();
-  const router = useRouter();
-  const [, start] = useTransition();
   const [showInvite, setShowInvite] = useState(false);
-  const run = (fn: () => Promise<unknown>) => start(async () => { await fn(); router.refresh(); });
+  const [editAgent, setEditAgent] = useState<DetailedAgent | null>(null);
 
   return (
     <div className="page">
@@ -45,15 +44,16 @@ export function AgentsScreen({
       </div>
 
       <div className="tablewrap scroll">
-        <table className="tbl">
+        <table className="tbl" style={{ minWidth: 840 }}>
           <thead>
             <tr>
               <th>{lang === "es" ? "Agente" : "Agent"}</th>
               <th>{lang === "es" ? "Rol" : "Role"}</th>
               <th>{lang === "es" ? "Área" : "Area"}</th>
+              <th>{lang === "es" ? "Estado" : "Status"}</th>
               <th>{lang === "es" ? "Chats abiertos" : "Open chats"}</th>
               <th>{lang === "es" ? "Pedidos abiertos" : "Open orders"}</th>
-              {isAdmin && <th style={{ width: 40 }}></th>}
+              {isAdmin && <th style={{ width: 60 }}></th>}
             </tr>
           </thead>
           <tbody>
@@ -62,35 +62,18 @@ export function AgentsScreen({
                 <td>
                   <div className="cust" style={{ gap: 10 }}>
                     <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={34} presence="online" />
-                    <div style={{ minWidth: 0 }}>
-                      {isAdmin ? (
-                        <input className="inp-inline" style={{ height: 28, fontWeight: 600 }} defaultValue={a.name}
-                          onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) run(() => setAgentName(businessId, a.id, v)); }} />
-                      ) : <div style={{ fontWeight: 600 }} className="truncate">{a.name}</div>}
+                    <div style={{ minWidth: 0, lineHeight: 1.3 }}>
+                      <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{a.name}</div>
                       {a.email && <div className="t-xs muted truncate">{a.email}</div>}
                     </div>
                   </div>
                 </td>
-                <td>
-                  {isAdmin ? (
-                    <select className="select select-sm" defaultValue={a.role} onChange={(e) => run(() => setAgentRole(businessId, a.id, e.target.value as DetailedAgent["role"]))}>
-                      <option value="admin">Admin</option>
-                      <option value="agent">{ROLE_LABEL.agent[lang]}</option>
-                      <option value="viewer">{ROLE_LABEL.viewer[lang]}</option>
-                    </select>
-                  ) : <Pill color={ROLE_COLOR[a.role]}><Icon name="shield" size={11} />{ROLE_LABEL[a.role][lang]}</Pill>}
-                </td>
-                <td>
-                  {isAdmin ? (
-                    <select className="select select-sm" defaultValue={a.area?.id ?? ""} onChange={(e) => run(() => setAgentArea(businessId, a.id, e.target.value || null))}>
-                      <option value="">—</option>
-                      {areas.map((ar) => <option key={ar.id} value={ar.id}>{ar.name}</option>)}
-                    </select>
-                  ) : a.area ? <Pill color={a.area.color as PillColor}>{a.area.name}</Pill> : <span className="muted t-sm">—</span>}
-                </td>
+                <td><Pill color={ROLE_COLOR[a.role]}><Icon name={ROLE_ICON[a.role]} size={12} />{ROLE_LABEL[a.role][lang]}</Pill></td>
+                <td>{a.area ? <Pill color={a.area.color as PillColor}>{a.area.name}</Pill> : <span className="muted t-sm">—</span>}</td>
+                <td><span className="row gap-2"><span style={{ width: 9, height: 9, borderRadius: 9, background: "var(--green)", display: "inline-block" }} /><span className="t-sm">{lang === "es" ? "En línea" : "Online"}</span></span></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{a.openChats}</span></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{a.openOrders}</span></td>
-                {isAdmin && <td><AgentMenu businessId={businessId} agentId={a.id} agentName={a.name} /></td>}
+                {isAdmin && <td><AgentMenu businessId={businessId} agentId={a.id} agentName={a.name} onEdit={() => setEditAgent(a)} /></td>}
               </tr>
             ))}
           </tbody>
@@ -98,28 +81,93 @@ export function AgentsScreen({
       </div>
 
       {showInvite && <InviteModal businessId={businessId} areas={areas} onClose={() => setShowInvite(false)} />}
+      {editAgent && <EditAgentModal businessId={businessId} agent={editAgent} areas={areas} onClose={() => setEditAgent(null)} />}
     </div>
   );
 }
 
-function AgentMenu({ businessId, agentId, agentName }: { businessId: string; agentId: string; agentName: string }) {
+function AgentMenu({ businessId, agentId, agentName, onEdit }: { businessId: string; agentId: string; agentName: string; onEdit: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const toggle = () => { if (!open && btn.current) setRect(btn.current.getBoundingClientRect()); setOpen((o) => !o); };
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button className="iconbtn sm" onClick={() => setOpen((o) => !o)}><Icon name="dots" size={16} /></button>
-      {open && (
+    <span style={{ display: "inline-flex" }}>
+      <button ref={btn} className="iconbtn sm" onClick={toggle}><Icon name="dots" size={16} /></button>
+      {open && rect && (
         <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ position: "absolute", top: "100%", right: 0, width: 200, zIndex: 50 }}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setOpen(false)} />
+          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, right: window.innerWidth - rect.right, width: 210, zIndex: 201 }}>
+            <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar permisos" : "Edit permissions"}</button>
             <button className="menu-item" onClick={() => { setOpen(false); start(async () => { const r = await resendInvite(businessId, agentId); alert(r.ok ? (lang === "es" ? "Invitación reenviada." : "Invite resent.") : (r.error ?? "error")); }); }}><Icon name="mail" size={15} />{lang === "es" ? "Reenviar invitación" : "Resend invite"}</button>
             <button className="menu-item danger" onClick={() => { setOpen(false); if (confirm(lang === "es" ? `¿Desactivar a ${agentName}?` : `Deactivate ${agentName}?`)) start(async () => { const r = await deactivateAgent(businessId, agentId); if (!r.ok) alert(r.error === "last-admin" ? (lang === "es" ? "No puedes quitar al último admin." : "Can't remove the last admin.") : r.error === "self" ? (lang === "es" ? "No puedes quitarte a ti mismo." : "Can't remove yourself.") : r.error ?? "error"); else router.refresh(); }); }}><Icon name="trash" size={15} />{lang === "es" ? "Desactivar" : "Deactivate"}</button>
           </div>
         </>
       )}
     </span>
+  );
+}
+
+function EditAgentModal({ businessId, agent, areas, onClose }: { businessId: string; agent: DetailedAgent; areas: Area[]; onClose: () => void }) {
+  const { lang } = useApp();
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [name, setName] = useState(agent.name);
+  const [role, setRole] = useState<DetailedAgent["role"]>(agent.role);
+  const [areaId, setAreaId] = useState(agent.area?.id ?? "");
+
+  function save() {
+    start(async () => {
+      if (name.trim() && name.trim() !== agent.name) await setAgentName(businessId, agent.id, name.trim());
+      if (role !== agent.role) await setAgentRole(businessId, agent.id, role);
+      const newArea = role === "viewer" ? null : (areaId || null);
+      if (newArea !== (agent.area?.id ?? null)) await setAgentArea(businessId, agent.id, newArea);
+      router.refresh();
+      onClose();
+    });
+  }
+
+  return (
+    <div className="modal-wrap">
+      <div className="scrim" onClick={onClose} />
+      <div className="modal">
+        <div className="modal-head"><Avatar name={agent.name} initials={deriveInitials(agent.name)} color={agent.color} size={36} /><h3 className="grow">{lang === "es" ? "Editar agente" : "Edit agent"}</h3><button className="iconbtn" onClick={onClose}><Icon name="x" /></button></div>
+        <div className="modal-body col gap-3">
+          <div>
+            <label className="lbl">{lang === "es" ? "Nombre" : "Name"}</label>
+            <input className="inp-inline" style={{ width: "100%" }} value={name} onChange={(e) => setName(e.target.value)} />
+            {agent.email && <div className="t-xs muted" style={{ marginTop: 4 }}>{agent.email}</div>}
+          </div>
+          <div>
+            <label className="lbl">{lang === "es" ? "Rol" : "Role"}</label>
+            <div className="col gap-2">
+              {(["admin", "agent", "viewer"] as const).map((r) => (
+                <button key={r} onClick={() => setRole(r)} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: 12, borderRadius: 10, textAlign: "left", cursor: "pointer", background: role === r ? "var(--brand-50)" : "var(--surface)", border: "1px solid " + (role === r ? "var(--brand)" : "var(--border)") }}>
+                  <Icon name={ROLE_ICON[r]} size={16} />
+                  <span><span style={{ fontWeight: 700, display: "block" }}>{ROLE_LABEL[r][lang]}</span><span className="t-xs muted">{ROLE_DESC[r][lang]}</span></span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {role !== "viewer" && (
+            <div>
+              <label className="lbl">{lang === "es" ? "Área" : "Area"}</label>
+              <select className="select" style={{ width: "100%" }} value={areaId} onChange={(e) => setAreaId(e.target.value)}>
+                <option value="">{lang === "es" ? "Sin área" : "No area"}</option>
+                {areas.map((ar) => <option key={ar.id} value={ar.id}>{ar.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+          <button className="btn btn-primary" disabled={pending || !name.trim()} onClick={save}><Icon name="check" size={15} />{lang === "es" ? "Guardar" : "Save"}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
