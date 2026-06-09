@@ -168,15 +168,14 @@ export function ChatScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.id]);
 
-  // Remember the last opened chat; reopen it when the agent returns to /chat with nothing selected.
-  useEffect(() => { if (detail) { try { localStorage.setItem("ht_lastChat", detail.id); } catch {} } }, [detail?.id]);
+  // Remember the last chat the agent actually opened (cookie → the server page reopens it
+  // when returning to /chat without an explicit ?c). Only persist when the chat was opened
+  // via the URL, so the most-recent default doesn't overwrite it.
   useEffect(() => {
-    if (selectedId) return;
-    let last: string | null = null;
-    try { last = localStorage.getItem("ht_lastChat"); } catch {}
-    if (last && list.some((c) => c.id === last)) router.replace(`/chat?c=${last}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (detail && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("c") === detail.id) {
+      document.cookie = `ht_lastChat=${detail.id}; path=/; max-age=2592000; SameSite=Lax`;
+    }
+  }, [detail?.id]);
 
   // Center column: show/hide + drag-resize (persisted).
   const [ctxVisible, setCtxVisible] = useState(true);
