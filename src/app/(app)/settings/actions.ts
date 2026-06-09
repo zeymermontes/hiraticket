@@ -28,3 +28,15 @@ export async function addSession(businessId: string, label: string): Promise<voi
     .insert({ business_id: businessId, label: label.trim() || "Número", status: "disconnected" });
   revalidatePath("/settings");
 }
+
+/** Choose QR vs pairing-code (and the phone number for pairing). */
+export async function setConnectMethod(
+  sessionId: string, method: "qr" | "pairing", phone?: string,
+): Promise<void> {
+  const supabase = await createClient();
+  await supabase
+    .from("whatsapp_sessions")
+    .update({ connect_method: method, phone: method === "pairing" ? (phone?.trim() || null) : undefined })
+    .eq("id", sessionId);
+  revalidatePath("/settings");
+}

@@ -1,11 +1,7 @@
-# WhatsApp Web worker — uses Puppeteer's image (ships Chrome + deps).
-FROM ghcr.io/puppeteer/puppeteer:23.6.0
+# WhatsApp worker (Baileys) — no browser needed, so a plain slim Node image.
+FROM node:20-bookworm-slim
 
 WORKDIR /app
-
-# whatsapp-web.js drives the Chrome that ships in this base image.
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 COPY package.json ./
 RUN npm install --omit=dev
