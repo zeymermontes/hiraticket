@@ -844,3 +844,27 @@ create policy "media public read" on storage.objects
 drop policy if exists "media auth upload" on storage.objects;
 create policy "media auth upload" on storage.objects
   for insert to authenticated with check (bucket_id = 'media');
+
+-- ===== 0014_message_ops.sql =====
+
+-- ============================================================
+-- Hiraticket — reply / edit / delete for WhatsApp messages.
+--   reply_to   : the message this one quotes
+--   pending_op : 'edit' | 'delete' — picked up by the worker, then cleared
+--   deleted    : true after a successful revoke (deleted for everyone)
+-- ============================================================
+
+alter table public.messages add column if not exists reply_to uuid references public.messages (id) on delete set null;
+alter table public.messages add column if not exists pending_op text;
+alter table public.messages add column if not exists deleted boolean not null default false;
+
+-- ===== 0015_message_extras.sql =====
+
+-- ============================================================
+-- Hiraticket — message extras: forwarded/edited flags + structured meta
+-- (location coords, contact vCard, etc.) for richer rendering.
+-- ============================================================
+
+alter table public.messages add column if not exists forwarded boolean not null default false;
+alter table public.messages add column if not exists edited boolean not null default false;
+alter table public.messages add column if not exists meta jsonb;

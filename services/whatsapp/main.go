@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -469,13 +470,23 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		return
 	}
 
-	// Text + media detection.
 	msg := v.Message
+
+	// Inbound edit/revoke (and reactions) — handled separately, not stored as new rows.
+	if pm := msg.GetProtocolMessage(); pm != nil {
+		m.handleProtocol(ctx, s, pm)
+		return
+	}
+	if msg.GetReactionMessage() != nil {
+		return
+	}
+
+	// Text + media detection.
 	text := msg.GetConversation()
 	if text == "" {
 		text = msg.GetExtendedTextMessage().GetText()
 	}
-	mtype, mmime, mname := "text", "", ""
+	mtype, mmime, mname, meta := "text", "", "", ""
 	switch {
 	case msg.GetImageMessage() != nil:
 		mtype, mmime, text = "image", msg.GetImageMessage().GetMimetype(), firstNonEmpty(msg.GetImageMessage().GetCaption(), text)
@@ -488,7 +499,26 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	case msg.GetDocumentMessage() != nil:
 		mtype, mmime, mname = "document", msg.GetDocumentMessage().GetMimetype(), msg.GetDocumentMessage().GetFileName()
 		text = firstNonEmpty(msg.GetDocumentMessage().GetCaption(), text)
+	case msg.GetLocationMessage() != nil:
+		loc := msg.GetLocationMessage()
+		mtype = "location"
+		text = firstNonEmpty(loc.GetName(), loc.GetAddress(), "Ubicación")
+		meta = jsonStr(map[string]interface{}{"lat": loc.GetDegreesLatitude(), "lng": loc.GetDegreesLongitude(), "name": loc.GetName(), "address": loc.GetAddress()})
+	case msg.GetLiveLocationMessage() != nil:
+		ll := msg.GetLiveLocationMessage()
+		mtype = "location"
+		text = "Ubicación en vivo"
+		meta = jsonStr(map[string]interface{}{"lat": ll.GetDegreesLatitude(), "lng": ll.GetDegreesLongitude(), "live": true})
+	case msg.GetContactMessage() != nil:
+		cm := msg.GetContactMessage()
+		mtype = "contact"
+		text = cm.GetDisplayName()
+		meta = jsonStr(map[string]interface{}{"name": cm.GetDisplayName(), "vcard": cm.GetVcard()})
 	}
+
+	ci := getContextInfo(msg)
+	forwarded := ci != nil && (ci.GetIsForwarded() || ci.GetForwardingScore() > 0)
+
 	if mtype == "text" && text == "" {
 		return // unsupported / empty
 	}
@@ -566,9 +596,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		body = mname
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname))
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta))
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
@@ -583,6 +613,59 @@ func nullIf(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+func jsonStr(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// getContextInfo returns the message's ContextInfo (for forwarded/quoted detection).
+func getContextInfo(m *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case m.GetExtendedTextMessage() != nil:
+		return m.GetExtendedTextMessage().GetContextInfo()
+	case m.GetImageMessage() != nil:
+		return m.GetImageMessage().GetContextInfo()
+	case m.GetVideoMessage() != nil:
+		return m.GetVideoMessage().GetContextInfo()
+	case m.GetAudioMessage() != nil:
+		return m.GetAudioMessage().GetContextInfo()
+	case m.GetDocumentMessage() != nil:
+		return m.GetDocumentMessage().GetContextInfo()
+	case m.GetStickerMessage() != nil:
+		return m.GetStickerMessage().GetContextInfo()
+	case m.GetLocationMessage() != nil:
+		return m.GetLocationMessage().GetContextInfo()
+	case m.GetContactMessage() != nil:
+		return m.GetContactMessage().GetContextInfo()
+	}
+	return nil
+}
+
+// handleProtocol applies an inbound edit or revoke to the referenced message.
+func (m *Manager) handleProtocol(ctx context.Context, s session, pm *waE2E.ProtocolMessage) {
+	key := pm.GetKey()
+	if key == nil || key.GetID() == "" {
+		return
+	}
+	target := key.GetID()
+	switch pm.GetType() {
+	case waE2E.ProtocolMessage_REVOKE:
+		m.exec(ctx, `UPDATE messages SET deleted=true, body='' WHERE business_id=$1 AND wa_id=$2`, s.BusinessID, target)
+		m.log.Infof("inbound revoke %s", target)
+	case waE2E.ProtocolMessage_MESSAGE_EDIT:
+		em := pm.GetEditedMessage()
+		txt := em.GetConversation()
+		if txt == "" {
+			txt = em.GetExtendedTextMessage().GetText()
+		}
+		m.exec(ctx, `UPDATE messages SET body=$3, edited=true WHERE business_id=$1 AND wa_id=$2`, s.BusinessID, target, txt)
+		m.log.Infof("inbound edit %s", target)
+	}
 }
 
 type outMsg struct {
@@ -786,7 +869,7 @@ func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op s
 			m.log.Errorf("edit %s: %v", id, err)
 			return
 		}
-		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, edited=true WHERE id=$1`, id)
 	case "delete":
 		var own types.JID
 		if client.Store.ID != nil {

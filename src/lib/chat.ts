@@ -33,6 +33,9 @@ export interface ChatMessage {
   media_name: string | null;
   reply_to: string | null;
   deleted: boolean;
+  forwarded: boolean;
+  edited: boolean;
+  meta: Record<string, unknown> | null;
 }
 
 export interface ConvNote {
@@ -144,13 +147,12 @@ export async function getConversationDetail(
     .maybeSingle();
   if (!conv) return null;
 
-  const [{ data: messages }, { data: notes }, { data: events }, { data: orders }] =
+  const FULL = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta";
+  const BASE = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
+
+  const [msgRes, { data: notes }, { data: events }, { data: orders }] =
     await Promise.all([
-      supabase
-        .from("messages")
-        .select("id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted")
-        .eq("conversation_id", convId)
-        .order("created_at", { ascending: true }),
+      supabase.from("messages").select(FULL).eq("conversation_id", convId).order("created_at", { ascending: true }),
       supabase
         .from("notes")
         .select("id, body, author_id, created_at")
@@ -171,6 +173,13 @@ export async function getConversationDetail(
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [] as unknown[] }),
     ]);
+
+  // Resilient to a not-yet-applied 0015 migration (forwarded/edited/meta).
+  let messages = msgRes.data as ChatMessage[] | null;
+  if (msgRes.error) {
+    const base = await supabase.from("messages").select(BASE).eq("conversation_id", convId).order("created_at", { ascending: true });
+    messages = ((base.data ?? []) as Record<string, unknown>[]).map((m) => ({ ...m, forwarded: false, edited: false, meta: null })) as unknown as ChatMessage[];
+  }
 
   return {
     id: conv.id,

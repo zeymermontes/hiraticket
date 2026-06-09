@@ -14,6 +14,32 @@ import {
   deleteConv, renameContact, requestContactInfo, markConvRead,
 } from "@/app/(app)/chat/actions";
 
+function LocationBlock({ m }: { m: ChatMessage }) {
+  const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
+  if (meta.lat == null || meta.lng == null) return <div className="row gap-1"><Icon name="pin" size={13} />{m.body || "Ubicación"}</div>;
+  const g = `https://www.google.com/maps?q=${meta.lat},${meta.lng}`;
+  const img = `https://staticmap.openstreetmap.de/staticmap.php?center=${meta.lat},${meta.lng}&zoom=15&size=240x120&markers=${meta.lat},${meta.lng},red-pushpin`;
+  return (
+    <a href={g} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none", display: "block" }}>
+      <img src={img} alt="mapa" style={{ width: 240, height: 120, borderRadius: 8, display: "block", objectFit: "cover", background: "var(--surface-2)" }} />
+      <div className="row gap-1" style={{ marginTop: 4 }}><Icon name="pin" size={13} /><span style={{ fontWeight: 600 }}>{meta.name || meta.address || "Ubicación"}</span></div>
+      {meta.address && meta.name && <div className="t-xs muted">{meta.address}</div>}
+    </a>
+  );
+}
+
+function ContactBlock({ m }: { m: ChatMessage }) {
+  const meta = (m.meta ?? {}) as { name?: string; vcard?: string };
+  const name = meta.name || m.body || "Contacto";
+  const phone = meta.vcard ? (meta.vcard.match(/TEL[^:]*:([+\d\s()-]+)/)?.[1]?.trim() ?? "") : "";
+  return (
+    <div className="row gap-2" style={{ padding: "2px 0" }}>
+      <span style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="user" size={17} /></span>
+      <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }} className="truncate">{name}</div>{phone && <div className="t-xs muted mono">{phone}</div>}</div>
+    </div>
+  );
+}
+
 function MediaBlock({ m }: { m: ChatMessage }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
@@ -329,7 +355,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       return;
     }
     const rt = replyTo?.id;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false }]);
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null }]);
     setText(""); setReplyTo(null);
     start(async () => { await sendMessage(detail.id, body, rt); router.refresh(); });
   }
@@ -385,16 +411,19 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <div className={"msg " + (out ? "out" : "in")} key={m.id}>
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
+                {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
                 {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
                 {m.deleted ? (
                   <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
-                ) : (
-                  <>
-                    {m.type !== "text" && m.media_url && <MediaBlock m={m} />}
-                    {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
-                  </>
-                )}
-                <div className="bubble-meta">{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                ) : m.type === "location" ? <LocationBlock m={m} />
+                  : m.type === "contact" ? <ContactBlock m={m} />
+                    : (
+                      <>
+                        {m.media_url && <MediaBlock m={m} />}
+                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
+                      </>
+                    )}
+                <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
                     onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
