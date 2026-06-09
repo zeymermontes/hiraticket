@@ -17,6 +17,46 @@ export async function addOrderNote(orderId: string, body: string): Promise<void>
   revalidatePath("/orders");
 }
 
+/** Send a payment link to the order's chat. */
+export async function chargeOrder(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id").eq("id", orderId).maybeSingle();
+  if (!order?.conversation_id) return;
+  const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
+  const first = ((contact?.name as string) ?? "").split(" ")[0];
+  const body = `Hola ${first} 👋 aquí está tu link de pago para el pedido ${order.code} por $${Number(order.total).toLocaleString("es-MX")} MXN: pay.hiraticket.com/${String(order.code).toLowerCase()} 💳`;
+  await supabase.from("messages").insert({
+    business_id: order.business_id, conversation_id: order.conversation_id,
+    direction: "out", type: "text", body, author_id: user?.id ?? null, state: "queued",
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+  revalidatePath("/chat");
+  revalidatePath("/orders");
+}
+
+/** Mark an order as paid. */
+export async function markPaid(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("orders").update({ pay_status: "paid" }).eq("id", orderId);
+  revalidatePath("/orders");
+}
+
+/** Assign an order to an agent. */
+export async function assignOrder(orderId: string, agentId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
+  await supabase.from("orders").update({ assignee_id: agentId }).eq("id", orderId);
+  if (order) {
+    await supabase.from("events").insert({
+      business_id: order.business_id, parent_type: "order", parent_id: orderId,
+      actor_id: user?.id ?? null, kind: "swap", text: "Asignado",
+    });
+  }
+  revalidatePath("/orders");
+}
+
 interface NewOrder {
   contactName: string;
   item: string;
