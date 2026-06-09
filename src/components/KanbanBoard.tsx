@@ -5,23 +5,25 @@ import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type PillColor, priorityColor, PRIORITY_LABEL as PRIO } from "@/lib/types";
-import type { KanbanOrder } from "@/lib/kanban";
+import type { KanbanOrder, KanbanItem } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
 import { OrderDrawer } from "@/components/OrderDrawer";
-import { loadOrderDetail } from "@/app/(app)/orders/actions";
+import { loadOrderDetail, setItemStage } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 
 export function KanbanBoard({
-  orders, stages, areas, agents, businessId, connected,
+  orders, items = [], stages, areas, agents, businessId, connected, productStages = false,
 }: {
   orders: KanbanOrder[];
+  items?: KanbanItem[];
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
   businessId: string;
   connected: boolean;
+  productStages?: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -30,6 +32,7 @@ export function KanbanBoard({
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [, startLoad] = useTransition();
   const openDrawer = (id: string) => { setLoadingId(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingId(null); }); };
+  const [view, setView] = useState<"orders" | "products">("orders");
   const [group, setGroup] = useState<"status" | "area">("status");
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
@@ -38,7 +41,9 @@ export function KanbanBoard({
   const [over, setOver] = useState<string | null>(null);
   const agentMap = new Map(agents.map((a) => [a.id, a]));
 
-  const columns = group === "status"
+  const products = productStages && view === "products";
+  const effGroup = products ? "status" : group;
+  const columns = effGroup === "status"
     ? stages.map((s) => ({ id: s.id, label: s.name, color: s.color }))
     : areas.map((a) => ({ id: a.id, label: a.name, color: a.color }));
 
@@ -49,7 +54,14 @@ export function KanbanBoard({
     return true;
   });
   const colOrders = (colId: string) =>
-    pool.filter((o) => (group === "status" ? o.stage_id : o.area_id) === colId);
+    pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
+
+  const itemPool = items.filter((it) => {
+    if (q && !(it.order_code + " " + it.name + " " + (it.contact?.name ?? "")).toLowerCase().includes(q.toLowerCase())) return false;
+    if (assigneeF && it.assignee_id !== assigneeF) return false;
+    return true;
+  });
+  const colItems = (colId: string) => itemPool.filter((it) => it.stage_id === colId);
 
   function onDrop(colId: string) {
     const id = drag;
@@ -57,7 +69,8 @@ export function KanbanBoard({
     setOver(null);
     if (!id) return;
     start(async () => {
-      if (group === "status") await moveOrderStage(id, colId);
+      if (products) await setItemStage(id, colId);
+      else if (effGroup === "status") await moveOrderStage(id, colId);
       else await moveOrderArea(id, colId);
       router.refresh();
     });
@@ -68,11 +81,19 @@ export function KanbanBoard({
       <div className="phead">
         <h1>Kanban</h1>
         <span className="grow" />
-        <span className="t-sm muted" style={{ fontWeight: 600 }}>{lang === "es" ? "Agrupar por" : "Group by"}</span>
-        <div className="seg">
-          <button className={group === "status" ? "on" : ""} onClick={() => setGroup("status")}><Icon name="kanban" size={14} />{lang === "es" ? "Etapa" : "Stage"}</button>
-          <button className={group === "area" ? "on" : ""} onClick={() => setGroup("area")}><Icon name="layers" size={14} />{lang === "es" ? "Área" : "Area"}</button>
-        </div>
+        {productStages && (
+          <div className="seg" style={{ marginRight: 8 }}>
+            <button className={view === "orders" ? "on" : ""} onClick={() => setView("orders")}><Icon name="orders" size={14} />{lang === "es" ? "Pedidos" : "Orders"}</button>
+            <button className={view === "products" ? "on" : ""} onClick={() => setView("products")}><Icon name="layers" size={14} />{lang === "es" ? "Productos" : "Products"}</button>
+          </div>
+        )}
+        {!products && <>
+          <span className="t-sm muted" style={{ fontWeight: 600 }}>{lang === "es" ? "Agrupar por" : "Group by"}</span>
+          <div className="seg">
+            <button className={group === "status" ? "on" : ""} onClick={() => setGroup("status")}><Icon name="kanban" size={14} />{lang === "es" ? "Etapa" : "Stage"}</button>
+            <button className={group === "area" ? "on" : ""} onClick={() => setGroup("area")}><Icon name="layers" size={14} />{lang === "es" ? "Área" : "Area"}</button>
+          </div>
+        </>}
       </div>
 
       <div className="toolbar" style={{ paddingBottom: 12 }}>
@@ -94,6 +115,7 @@ export function KanbanBoard({
         <div className="board-inner">
           {columns.map((col) => {
             const list = colOrders(col.id);
+            const itemList = products ? colItems(col.id) : [];
             return (
               <div key={col.id} className={"kcol" + (over === col.id ? " drop" : "")}
                 onDragOver={(e) => { e.preventDefault(); setOver(col.id); }}
@@ -104,11 +126,36 @@ export function KanbanBoard({
                     <span className="dot" style={{ width: 9, height: 9, borderRadius: 9, background: `var(--${col.color})`, display: "inline-block", flex: "none" }} />
                     <span className="truncate">{col.label}</span>
                   </span>
-                  <span className="badge badge-soft">{list.length}</span>
+                  <span className="badge badge-soft">{products ? itemList.length : list.length}</span>
                   <span className="grow" />
                 </div>
                 <div className="kcol-list scroll">
-                  {list.map((o) => (
+                  {products && itemList.map((it) => {
+                    const ag = it.assignee_id ? agentMap.get(it.assignee_id) : null;
+                    return (
+                      <div key={it.id} className={"kcard" + (drag === it.id ? " dragging" : "")} draggable
+                        onDragStart={() => setDrag(it.id)} onDragEnd={() => { setDrag(null); setOver(null); }}>
+                        <div className="row gap-2">
+                          <span className="mono t-xs" style={{ fontWeight: 700, color: "var(--text-muted)" }}>{it.order_code}</span>
+                          {it.priority && it.priority !== "normal" && <Pill color={priorityColor(it.priority as never)}><Icon name="flag" size={10} />{PRIO[it.priority]?.[lang] ?? it.priority}</Pill>}
+                        </div>
+                        <div className="truncate" style={{ fontWeight: 600, fontSize: 13, marginTop: 6 }}>{it.name}{it.qty > 1 ? <span className="muted"> ×{it.qty}</span> : null}</div>
+                        <div className="row gap-2" style={{ marginTop: 6 }}>
+                          <Avatar name={it.contact?.name} initials={deriveInitials(it.contact?.name ?? "?")} size={20} />
+                          <span className="t-xs muted truncate">{it.contact?.name ?? "—"}</span>
+                        </div>
+                        <div className="kcard-foot">
+                          {ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null}
+                          <span className="grow" />
+                          <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === it.order_id}
+                            onClick={(e) => { e.stopPropagation(); openDrawer(it.order_id); }} onPointerDown={(e) => e.stopPropagation()}>
+                            {loadingId === it.order_id ? "…" : (lang === "es" ? "Abrir" : "Open")}<Icon name="arrowr" size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!products && list.map((o) => (
                     <div key={o.id} className={"kcard" + (drag === o.id ? " dragging" : "")} draggable
                       onDragStart={() => setDrag(o.id)} onDragEnd={() => { setDrag(null); setOver(null); }}>
                       <div className="row gap-2">
@@ -134,7 +181,7 @@ export function KanbanBoard({
                       </div>
                     </div>
                   ))}
-                  {list.length === 0 && <div className="center" style={{ padding: "20px 0", color: "var(--text-faint)", fontSize: 12 }}>{lang === "es" ? "Vacío" : "Empty"}</div>}
+                  {(products ? itemList.length : list.length) === 0 && <div className="center" style={{ padding: "20px 0", color: "var(--text-faint)", fontSize: 12 }}>{lang === "es" ? "Vacío" : "Empty"}</div>}
                 </div>
               </div>
             );
