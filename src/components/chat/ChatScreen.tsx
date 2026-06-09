@@ -10,6 +10,9 @@ import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
+import { OrderDrawer } from "@/components/OrderDrawer";
+import { loadOrderDetail } from "@/app/(app)/orders/actions";
+import type { OrderDetail } from "@/lib/orders";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { TagPicker } from "@/components/TagPicker";
@@ -164,6 +167,16 @@ export function ChatScreen({
     if (detail && detail.unread > 0) markConvRead(detail.id).then(() => router.refresh());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.id]);
+
+  // Remember the last opened chat; reopen it when the agent returns to /chat with nothing selected.
+  useEffect(() => { if (detail) { try { localStorage.setItem("ht_lastChat", detail.id); } catch {} } }, [detail?.id]);
+  useEffect(() => {
+    if (selectedId) return;
+    let last: string | null = null;
+    try { last = localStorage.getItem("ht_lastChat"); } catch {}
+    if (last && list.some((c) => c.id === last)) router.replace(`/chat?c=${last}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Center column: show/hide + drag-resize (persisted).
   const [ctxVisible, setCtxVisible] = useState(true);
@@ -327,7 +340,7 @@ export function ChatScreen({
 
       {detail ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} businessId={businessId} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
@@ -737,10 +750,14 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, businessId, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; businessId: string; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, stages, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
+  const [loadingOrder, setLoadingOrder] = useState<string | null>(null);
+  const [, startLoad] = useTransition();
+  const openOrderDrawer = (id: string) => { setLoadingOrder(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingOrder(null); }); };
   const [note, setNote] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
@@ -812,11 +829,11 @@ function Workspace({ detail, agents, areas, businessId, onResizeStart, onOpen360
           <div className="ws-block-body col gap-2">
             {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{lang === "es" ? "Sin pedidos." : "No orders."}</div> :
               detail.orders.map((o) => (
-                <Link key={o.id} href={`/orders?order=${o.id}`} className="ocard">
+                <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
                   <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
                   {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
                   <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></div>
-                </Link>
+                </button>
               ))}
           </div>
         </div>
@@ -890,6 +907,11 @@ function Workspace({ detail, agents, areas, businessId, onResizeStart, onOpen360
           onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); router.refresh(); })}
           onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); router.refresh(); })}
           onClose={() => setTagRect(null)} />
+      )}
+      {openOrder && (
+        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
+          convDetail={detail} connected={connected}
+          onClose={() => { setOpenOrder(null); router.refresh(); }} />
       )}
     </div>
   );
