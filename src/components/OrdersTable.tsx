@@ -284,15 +284,17 @@ function NewOrderModal({
   const [item, setItem] = useState("");
   const [qty, setQty] = useState("1");
   const [price, setPrice] = useState("");
+  const [priority, setPriority] = useState("normal");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
+  const subtotal = (Number(qty) || 0) * (Number(price) || 0);
 
   function submit() {
     if (!contactName.trim() || !item.trim()) return;
     start(async () => {
       await createOrder(businessId, {
         contactName, item, qty: Number(qty) || 1, price: Number(price) || 0,
-        areaId: areaId || null, stageId: stageId || null,
+        areaId: areaId || null, stageId: stageId || null, priority,
       });
       onClose();
       router.refresh();
@@ -324,6 +326,15 @@ function NewOrderModal({
             <div className="grow"><label className="lbl">{lang === "es" ? "Área" : "Area"}</label>
               <select className="select" style={{ width: "100%" }} value={areaId} onChange={(e) => setAreaId(e.target.value)}>{areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
             </div>
+            <div className="grow"><label className="lbl">{lang === "es" ? "Prioridad" : "Priority"}</label>
+              <select className="select" style={{ width: "100%" }} value={priority} onChange={(e) => setPriority(e.target.value)}>
+                {(["low", "normal", "high", "urgent"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
+            <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Subtotal" : "Subtotal"}</span>
+            <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal)}</span>
           </div>
         </div>
         <div className="modal-foot">

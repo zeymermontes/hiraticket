@@ -64,6 +64,7 @@ interface NewOrder {
   price: number;
   areaId: string | null;
   stageId: string | null;
+  priority?: string;
 }
 
 /** Create an order (and its contact if new) from the New Order modal. */
@@ -100,7 +101,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     stage_id: input.stageId,
     area_id: input.areaId,
     assignee_id: user?.id ?? null,
-    priority: "normal",
+    priority: input.priority ?? "normal",
     total,
   }).select("id").single();
 
