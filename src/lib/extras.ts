@@ -60,14 +60,18 @@ export async function getCampaigns(businessId: string): Promise<Campaign[]> {
 export interface ReportData {
   totalSales: number;
   orderCount: number;
+  resolvedConvs: number;
+  avgTicket: number;
+  salesTrend: { label: string; value: number }[];
   byStage: { name: string; color: string; count: number }[];
   byArea: { name: string; color: string; count: number }[];
-  byAgent: { name: string; color: string; count: number }[];
+  byAgent: { name: string; color: string; count: number; id: string }[];
 }
 export async function getReports(businessId: string): Promise<ReportData> {
   const supabase = await createClient();
-  const [{ data: orders }, stages, areas, agents] = await Promise.all([
-    supabase.from("orders").select("total, stage_id, area_id, assignee_id").eq("business_id", businessId),
+  const [{ data: orders }, { count: resolved }, stages, areas, agents] = await Promise.all([
+    supabase.from("orders").select("total, stage_id, area_id, assignee_id, created_at").eq("business_id", businessId),
+    supabase.from("conversations").select("id", { count: "exact", head: true }).eq("business_id", businessId).eq("status", "resolved"),
     getStages(businessId),
     getAreas(businessId),
     getAgents(businessId),
@@ -77,11 +81,24 @@ export async function getReports(businessId: string): Promise<ReportData> {
     items: T[], key: "stage_id" | "area_id",
   ) => items.map((it) => ({ name: it.name, color: it.color, count: rows.filter((o) => o[key] === it.id).length }));
 
+  // Last 7 days of sales.
+  const trend: { label: string; value: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const key = d.toDateString();
+    const value = rows.filter((o) => o.created_at && new Date(o.created_at as string).toDateString() === key).reduce((n, o) => n + Number(o.total ?? 0), 0);
+    trend.push({ label: d.toLocaleDateString("es-MX", { weekday: "short" }), value });
+  }
+
+  const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
   return {
-    totalSales: rows.reduce((n, o) => n + Number(o.total ?? 0), 0),
+    totalSales: total,
     orderCount: rows.length,
+    resolvedConvs: resolved ?? 0,
+    avgTicket: rows.length ? Math.round(total / rows.length) : 0,
+    salesTrend: trend,
     byStage: countBy(stages, "stage_id"),
     byArea: countBy(areas, "area_id"),
-    byAgent: agents.map((a) => ({ name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
+    byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
   };
 }
