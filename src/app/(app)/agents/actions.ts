@@ -32,8 +32,16 @@ export async function setAgentName(businessId: string, userId: string, name: str
   revalidatePath("/agents");
 }
 
+/** Assign an agent to an area (admins only). */
+export async function setAgentArea(businessId: string, userId: string, areaId: string | null): Promise<void> {
+  if (!(await assertAdmin(businessId))) return;
+  const admin = createAdminClient();
+  await admin.from("business_members").update({ area_id: areaId }).eq("business_id", businessId).eq("user_id", userId);
+  revalidatePath("/agents");
+}
+
 export async function inviteAgent(
-  businessId: string, email: string, role: "admin" | "agent" | "viewer",
+  businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(await assertAdmin(businessId))) return { ok: false, error: "forbidden" };
   const clean = email.trim().toLowerCase();
@@ -44,7 +52,7 @@ export async function inviteAgent(
   if (error || !data?.user) return { ok: false, error: error?.message ?? "invite failed" };
 
   await admin.from("business_members").upsert(
-    { business_id: businessId, user_id: data.user.id, role },
+    { business_id: businessId, user_id: data.user.id, role, area_id: areaId ?? null },
     { onConflict: "business_id,user_id" },
   );
   revalidatePath("/agents");
