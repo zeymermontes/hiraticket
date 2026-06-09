@@ -9,9 +9,10 @@ import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { Thread } from "@/components/chat/ChatScreen";
+import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag } from "@/app/(app)/orders/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -96,6 +97,10 @@ export function OrderDrawer({
               </div>
               {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
             </div>
+            <div className="row gap-2" style={{ flexWrap: "wrap", marginTop: 8 }}>
+              {(detail.contact?.tags ?? []).map((tg) => <Pill key={tg} color="brand"><Icon name="tag" size={10} />{tg}</Pill>)}
+              <button className="btn btn-sm btn-outline" disabled={pending} onClick={() => { const tg = prompt(lang === "es" ? "Nueva etiqueta:" : "New tag:"); if (tg?.trim()) run(() => addOrderTag(detail.id, tg)); }}><Icon name="tag" size={13} />{lang === "es" ? "Etiqueta" : "Tag"}</button>
+            </div>
             {detail.conversation_id && (
               <button className={"btn btn-sm btn-block " + (chatOpen ? "btn-primary" : "btn-outline")} style={{ marginTop: 12 }} onClick={() => setChatOpen((v) => !v)}>
                 <Icon name="whatsapp" size={14} />{lang === "es" ? "Abrir conversación" : "Open conversation"}<span className="grow" /><Icon name={chatOpen ? "x" : "arrowr"} size={14} />
@@ -106,7 +111,11 @@ export function OrderDrawer({
           {/* meta row */}
           <div className="row gap-3" style={{ flexWrap: "wrap" }}>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Agente" : "Agent"}</label>{assignee ? <div className="cust"><Avatar name={assignee.name} initials={deriveInitials(assignee.name)} color={assignee.color} size={24} /><span className="t-sm">{assignee.name}</span></div> : <span className="muted t-sm">—</span>}</div>
-            <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Prioridad" : "Priority"}</label><Pill color={priorityColor(detail.priority as never)}><Icon name="flag" size={11} />{PRIO[detail.priority]?.[lang] ?? detail.priority}</Pill></div>
+            <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Prioridad" : "Priority"}</label>
+              <select className="select select-sm" value={detail.priority} onChange={(e) => run(() => setOrderPriority(detail.id, e.target.value))}>
+                {(["low", "normal", "high", "urgent"] as const).map((p) => <option key={p} value={p}>{PRIO[p][lang]}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* line items */}
@@ -140,7 +149,7 @@ export function OrderDrawer({
           <div className="ws-block">
             <div className="ws-block-head"><Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
             <div style={{ padding: "12px 14px" }}>
-              <div className="field field-filled" style={{ height: "auto", alignItems: "flex-start", padding: "8px 10px" }}><textarea className="bare" rows={2} style={{ fontSize: 13, width: "100%" }} placeholder={lang === "es" ? "Agregar nota…" : "Add a note…"} value={note} onChange={(e) => setNote(e.target.value)} /></div>
+              <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
               {note.trim() && <button className="btn btn-sm btn-primary" style={{ marginTop: 8 }} disabled={pending} onClick={() => { run(() => addOrderNote(detail.id, note)); setNote(""); }}><Icon name="send" size={14} />{lang === "es" ? "Publicar" : "Post"}</button>}
               {detail.notes.length > 0 && <div style={{ marginTop: 10 }}>{detail.notes.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className="note-body note-yellow"><div className="note-head"><span className="note-author">{au?.name ?? "Agente"}</span><span className="note-time">{date(n.created_at)}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
             </div>

@@ -48,6 +48,27 @@ export async function markPaid(orderId: string): Promise<void> {
   revalidatePath("/orders");
 }
 
+/** Change an order's priority. */
+export async function setOrderPriority(orderId: string, priority: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("orders").update({ priority }).eq("id", orderId);
+  revalidatePath("/orders");
+  revalidatePath("/kanban");
+}
+
+/** Add a tag to an order's contact. */
+export async function addOrderTag(orderId: string, tag: string): Promise<void> {
+  const clean = tag.trim();
+  if (!clean) return;
+  const supabase = await createClient();
+  const { data: order } = await supabase.from("orders").select("contact_id").eq("id", orderId).maybeSingle();
+  if (!order?.contact_id) return;
+  const { data: c } = await supabase.from("contacts").select("tags").eq("id", order.contact_id).maybeSingle();
+  const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), clean]));
+  await supabase.from("contacts").update({ tags }).eq("id", order.contact_id);
+  revalidatePath("/orders");
+}
+
 /** Assign an order to an agent. */
 export async function assignOrder(orderId: string, agentId: string): Promise<void> {
   const supabase = await createClient();

@@ -16,7 +16,7 @@ export interface OrderDetail {
   area_id: string | null;
   assignee_id: string | null;
   conversation_id: string | null;
-  contact: { id: string; name: string; phone: string | null } | null;
+  contact: { id: string; name: string; phone: string | null; tags: string[] | null } | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   items: OrderItem[];
@@ -28,7 +28,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   const supabase = await createClient();
   const { data: order } = await supabase
     .from("orders")
-    .select("id, code, total, priority, pay_status, created_at, updated_at, stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone), stage:stages(name,color), area:areas(name,color)")
+    .select("id, code, total, priority, pay_status, created_at, updated_at, stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)")
     .eq("id", orderId)
     .maybeSingle();
   if (!order) return null;
