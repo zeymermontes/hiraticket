@@ -11,6 +11,19 @@ export async function getMyChatBadge(businessId: string): Promise<number> {
   return count ?? 0;
 }
 
+/** Chat nav badges: `mine` = your assigned chats with unread; `unassigned` = new chats nobody
+ *  has picked up yet (not resolved). */
+export async function getChatBadges(businessId: string, userId: string): Promise<{ mine: number; unassigned: number }> {
+  const supabase = await createClient();
+  const [mine, unassigned] = await Promise.all([
+    supabase.from("conversations").select("id", { count: "exact", head: true })
+      .eq("business_id", businessId).eq("assignee_id", userId).gt("unread", 0).neq("status", "resolved"),
+    supabase.from("conversations").select("id", { count: "exact", head: true })
+      .eq("business_id", businessId).is("assignee_id", null).neq("status", "resolved"),
+  ]);
+  return { mine: mine.count ?? 0, unassigned: unassigned.count ?? 0 };
+}
+
 export interface Notif {
   id: string;
   name: string;

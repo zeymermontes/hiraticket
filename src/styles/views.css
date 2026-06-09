@@ -28,6 +28,9 @@
 .rail-item.on { color: var(--on-brand); background: var(--brand); }
 .rail-item.on:hover { background: var(--brand); }
 .rail-item .badge { position: absolute; top: 3px; right: 6px; }
+.rail-item .rail-badges { position: absolute; top: 2px; right: 4px; display: flex; gap: 2px; align-items: center; }
+.rail-item .rail-badges .badge { position: static; }
+.badge-new { background: var(--brand); color: var(--on-brand); }
 .rail-sep { width: 32px; height: 1px; background: rgba(255,255,255,.12); margin: 7px 0; }
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 

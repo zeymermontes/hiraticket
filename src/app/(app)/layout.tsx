@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
-import { getMyChatBadge, getNotifications } from "@/lib/notifications";
+import { getChatBadges, getNotifications } from "@/lib/notifications";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getStages } from "@/lib/business";
 import { Shell, type ShellUser } from "@/components/Shell";
@@ -37,8 +37,8 @@ export default async function AppLayout({
       (user.email ? user.email.split("@")[0] : "Agente"),
   };
 
-  const [chatBadge, notifications, sessions, stages] = await Promise.all([
-    getMyChatBadge(business.id),
+  const [chatBadges, notifications, sessions, stages] = await Promise.all([
+    getChatBadges(business.id, user.id),
     getNotifications(business.id),
     getSessions(business.id),
     getStages(business.id),
@@ -54,7 +54,8 @@ export default async function AppLayout({
   return (
     <Shell
       user={shellUser}
-      badges={{ chat: chatBadge, orders: openOrders }}
+      badges={{ chat: chatBadges.mine, orders: openOrders }}
+      secondaryBadges={{ chat: chatBadges.unassigned }}
       notifications={notifications}
       connected={isConnected(sessions)}
       objectName={objectName}

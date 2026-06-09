@@ -81,7 +81,7 @@ export interface ShellUser {
   email: string;
 }
 
-function NavRail({ badges, objectName, user }: { badges: Record<string, number | null>; objectName: string; user: ShellUser }) {
+function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser }) {
   const pathname = usePathname();
   const { lang, t } = useApp();
   const [profOpen, setProfOpen] = useState(false);
@@ -92,13 +92,19 @@ function NavRail({ badges, objectName, user }: { badges: Record<string, number |
   const renderItem = (it: NavItem) => {
     const on = pathname === it.href || pathname.startsWith(it.href + "/");
     const badge = badges[it.id] ?? it.badge ?? null;
+    const secondary = secondaryBadges[it.id] ?? null;
     return (
       <Link key={it.id} href={it.href} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
         <span className="rl">{it.id === "orders" ? objectName : t(it.labelKey)}</span>
-        {badge != null && badge > 0 && (
-          <span className={"badge" + (it.red ? " badge-red" : "")}>{badge}</span>
-        )}
+        <span className="rail-badges">
+          {badge != null && badge > 0 && (
+            <span className={"badge" + (it.red ? " badge-red" : "")} title={lang === "es" ? "Asignados a ti" : "Assigned to you"}>{badge}</span>
+          )}
+          {secondary != null && secondary > 0 && (
+            <span className="badge badge-new" title={lang === "es" ? "Nuevos sin asignar" : "New, unassigned"}>{secondary}</span>
+          )}
+        </span>
       </Link>
     );
   };
@@ -176,6 +182,7 @@ function TopBar({ notifications, connected }: { notifications: Notif[]; connecte
 export function Shell({
   user,
   badges = {},
+  secondaryBadges = {},
   notifications = [],
   connected = false,
   objectName = "Pedidos",
@@ -183,6 +190,7 @@ export function Shell({
 }: {
   user: ShellUser;
   badges?: Record<string, number | null>;
+  secondaryBadges?: Record<string, number | null>;
   notifications?: Notif[];
   connected?: boolean;
   objectName?: string;
@@ -191,7 +199,7 @@ export function Shell({
   return (
     <AppProvider>
       <div className="app">
-        <NavRail badges={badges} objectName={objectName} user={user} />
+        <NavRail badges={badges} secondaryBadges={secondaryBadges} objectName={objectName} user={user} />
         <div className="main">
           <TopBar notifications={notifications} connected={connected} />
           {children}
