@@ -44,10 +44,10 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
   revalidatePath("/chat");
 }
 
-/** Re-queue a failed outbound message so the worker tries to send it again. */
+/** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
 export async function retryMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();
-  await supabase.from("messages").update({ state: "queued" }).eq("id", messageId).eq("direction", "out").in("state", ["failed", "sending"]);
+  await supabase.from("messages").update({ state: "queued", send_attempts: 0, next_retry_at: null }).eq("id", messageId).eq("direction", "out").in("state", ["failed", "sending"]);
   revalidatePath("/chat");
 }
 

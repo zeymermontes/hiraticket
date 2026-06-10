@@ -96,6 +96,13 @@ end $$;`); err != nil {
 		logger.Warnf("rls harden whatsmeow tables: %v", err)
 	}
 
+	// Auto-retry bookkeeping columns (idempotent — works even if the migration wasn't run).
+	if _, err := db.ExecContext(ctx, `alter table messages
+		add column if not exists send_attempts int not null default 0,
+		add column if not exists next_retry_at timestamptz`); err != nil {
+		logger.Warnf("add retry columns: %v", err)
+	}
+
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
 	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'`); err != nil {
@@ -190,16 +197,16 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 		// Self-heal: requeue any 'sending' claim that hung (e.g. a send that never returned).
 		m.exec(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending' AND created_at < now() - interval '2 minutes'`)
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name, reply_to
+			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name, reply_to, send_attempts
 			   FROM messages
-			  WHERE direction='out' AND state='queued'
+			  WHERE direction='out' AND state='queued' AND (next_retry_at IS NULL OR next_retry_at <= now())
 			  ORDER BY created_at LIMIT 50`)
 		if err == nil {
 			var pending []outMsg
 			for rows.Next() {
 				var o outMsg
 				var body, murl, mmime, mname, replyTo sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo) == nil {
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &o.attempts) == nil {
 					o.body = body.String
 					o.murl = murl.String
 					o.mmime = mmime.String
@@ -721,6 +728,26 @@ func (m *Manager) handleProtocol(ctx context.Context, s session, pm *waE2E.Proto
 
 type outMsg struct {
 	id, biz, conv, body, mtype, murl, mmime, mname, replyTo string
+	attempts                                                int
+}
+
+const maxSendAttempts = 6
+
+// retryOrFail re-queues a transient send failure with exponential backoff, or marks it failed
+// once it has exhausted maxSendAttempts (then only a manual retry will resend it).
+func (m *Manager) retryOrFail(ctx context.Context, o outMsg, reason string) {
+	next := o.attempts + 1
+	if next >= maxSendAttempts {
+		m.log.Errorf("send %s failed (giving up after %d): %s", o.id, next, reason)
+		m.exec(ctx, `UPDATE messages SET state='failed', send_attempts=$2 WHERE id=$1`, o.id, next)
+		return
+	}
+	backoff := 3 << uint(o.attempts) // 3,6,12,24,48s
+	if backoff > 90 {
+		backoff = 90
+	}
+	m.log.Warnf("send %s failed (attempt %d, retry in %ds): %s", o.id, next, backoff, reason)
+	m.exec(ctx, `UPDATE messages SET state='queued', send_attempts=$2, next_retry_at=now() + ($3 || ' seconds')::interval WHERE id=$1`, o.id, next, backoff)
 }
 
 func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
@@ -752,8 +779,7 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 
 	waMsg, err := m.buildOutboundMessage(ctx, client, o)
 	if err != nil {
-		m.log.Errorf("build %s: %v", o.id, err)
-		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+		m.retryOrFail(ctx, o, "build: "+err.Error())
 		return
 	}
 	if o.replyTo != "" {
@@ -764,11 +790,10 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 
 	resp, err := client.SendMessage(ctx, jid, waMsg)
 	if err != nil {
-		m.log.Errorf("send %s: %v", o.id, err)
-		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+		m.retryOrFail(ctx, o, err.Error())
 		return
 	}
-	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2 WHERE id=$1`, o.id, resp.ID)
+	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2, send_attempts=0, next_retry_at=NULL WHERE id=$1`, o.id, resp.ID)
 }
 
 func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Client, o outMsg) (*waE2E.Message, error) {
