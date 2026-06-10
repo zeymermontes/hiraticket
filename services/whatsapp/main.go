@@ -344,6 +344,15 @@ func (m *Manager) pollHeartbeat(ctx context.Context) {
 						}
 						rows.Close()
 					}
+					// Self-heal: a 'failed' with send_attempts=0 was never actually attempted by us
+					// (e.g. a stale second worker / glitch marked it). Re-queue so the live session
+					// genuinely tries it. The atomic claim prevents any double-send.
+					if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', next_retry_at=NULL
+						WHERE direction='out' AND state='failed' AND send_attempts=0 AND created_at > now() - interval '10 minutes'`); err == nil {
+						if n, _ := res.RowsAffected(); n > 0 {
+							m.log.Infof("re-queued %d failed-with-0-attempts message(s) for a real send", n)
+						}
+					}
 				}
 			}
 		}
