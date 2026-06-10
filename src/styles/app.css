@@ -92,6 +92,17 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Photo gallery / lightbox */
+.lightbox { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.9); display: flex; align-items: center; justify-content: center; animation: lb-in .15s ease; }
+@keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
+.lb-img { max-width: 92vw; max-height: 90vh; object-fit: contain; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); }
+.lb-close { position: absolute; top: 16px; right: 18px; width: 40px; height: 40px; border: none; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.lb-close:hover { background: rgba(255,255,255,.28); }
+.lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 46px; border: none; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.lb-nav:hover { background: rgba(255,255,255,.28); }
+.lb-prev { left: 16px; } .lb-next { right: 16px; }
+.lb-count { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); color: #fff; background: rgba(0,0,0,.55); padding: 4px 13px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+
 /* Media with reserved space + loading skeleton (no layout shift / "pop"). */
 .media-frame { position: relative; display: block; border-radius: 10px; overflow: hidden; background: var(--surface-2); max-width: 100%; }
 .media-el { width: 100%; height: 100%; display: block; transition: opacity .2s ease; }
@@ -162,9 +173,9 @@
 [data-density="compact"] .ws-block-body { padding-top: 8px; padding-bottom: 8px; }
 
 /* Draggable left edge of the order chat panel (docks left of the order drawer). */
-.order-chat-resizer { position: absolute; top: 0; left: -4px; bottom: 0; width: 9px; cursor: col-resize; z-index: 10; touch-action: none; }
-.order-chat-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--border); transition: background .12s, width .12s; }
-.order-chat-resizer:hover::after { background: var(--brand); width: 2px; }
+.order-chat-resizer { position: absolute; top: 0; left: -8px; bottom: 0; width: 16px; cursor: col-resize; z-index: 20; touch-action: none; }
+.order-chat-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 8px; width: 2px; background: var(--border); transition: background .12s, width .12s; }
+.order-chat-resizer:hover::after, .order-chat-resizer:active::after { background: var(--brand); width: 3px; }
 
 /* Draggable divider on the right edge of the chat center column. */
 .col-resizer {

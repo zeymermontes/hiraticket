@@ -58,18 +58,25 @@ export function OrderDrawer({
   }, []);
   function startResize(e: React.PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget as HTMLElement;
+    // Capture the pointer so dragging keeps working over the chat thread (which scrolls/re-renders).
+    try { el.setPointerCapture(e.pointerId); } catch {}
     const onMove = (ev: PointerEvent) => {
       const w = Math.max(320, Math.min(window.innerWidth - (DRAWER_W + 40), (window.innerWidth - DRAWER_W) - ev.clientX));
       setChatW(w);
     };
     const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      try { el.releasePointerCapture(e.pointerId); } catch {}
       document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
     document.body.style.cursor = "col-resize";
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    document.body.style.userSelect = "none";
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
   }
   useEffect(() => { try { localStorage.setItem("hira.orderChatW", String(chatW)); } catch {} }, [chatW]);
 

@@ -147,22 +147,44 @@ function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH
   return { width: defW, height: defH };
 }
 
-function MediaImage({ m, url }: { m: ChatMessage; url: string }) {
+function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?: (url: string) => void }) {
   const [loaded, setLoaded] = useState(false);
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
   return (
-    <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={box}>
+    <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={{ ...box, cursor: "zoom-in" }}
+      onClick={(e) => { if (onImage) { e.preventDefault(); onImage(url); } }}>
       {!loaded && <span className="media-skeleton" />}
       <img src={url} alt="" onLoad={() => setLoaded(true)} className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
     </a>
   );
 }
 
-function MediaBlock({ m }: { m: ChatMessage }) {
+/** Full-screen photo viewer with prev/next (keyboard + buttons). */
+function Lightbox({ urls, index, onClose }: { urls: string[]; index: number; onClose: () => void }) {
+  const [i, setI] = useState(index);
+  const prev = useCallback(() => setI((x) => (x - 1 + urls.length) % urls.length), [urls.length]);
+  const next = useCallback(() => setI((x) => (x + 1) % urls.length), [urls.length]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); else if (e.key === "ArrowLeft") prev(); else if (e.key === "ArrowRight") next(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prev, next, onClose]);
+  return (
+    <div className="lightbox" onClick={onClose}>
+      <button className="lb-close" onClick={onClose} aria-label="close"><Icon name="x" size={22} /></button>
+      {urls.length > 1 && <button className="lb-nav lb-prev" onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="prev"><span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="chevd" size={26} /></span></button>}
+      <img src={urls[i]} alt="" className="lb-img" onClick={(e) => e.stopPropagation()} />
+      {urls.length > 1 && <button className="lb-nav lb-next" onClick={(e) => { e.stopPropagation(); next(); }} aria-label="next"><span style={{ display: "inline-flex", transform: "rotate(-90deg)" }}><Icon name="chevd" size={26} /></span></button>}
+      {urls.length > 1 && <div className="lb-count">{i + 1} / {urls.length}</div>}
+    </div>
+  );
+}
+
+function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (url: string) => void }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
-  if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} />;
+  if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;
   if (m.type === "video") {
     const box = mediaBox(m, 260, 320, 260, 180);
     return <div className="media-frame" style={box}><video src={url} controls className="media-el" style={{ objectFit: "cover" }} /></div>;
@@ -745,6 +767,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
   const messages = [...msgs, ...extra];
   const msgMap = useMemo(() => new Map(msgs.map((mm) => [mm.id, mm])), [msgs]);
+  // Photo gallery (lightbox) over every image/sticker in the loaded thread.
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const imageUrls = useMemo(() => msgs.filter((mm) => (mm.type === "image" || mm.type === "sticker") && mm.media_url && !mm.deleted).map((mm) => mm.media_url!), [msgs]);
+  const openLightbox = useCallback((url: string) => { const idx = imageUrls.indexOf(url); setLightbox(idx >= 0 ? idx : 0); }, [imageUrls]);
 
   // Group consecutive plain images (same sender) into a WhatsApp-style album.
   type Row = { kind: "album"; dir: string; items: ChatMessage[]; created_at: string } | { kind: "msg"; m: ChatMessage };
@@ -846,7 +872,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   <div className="bubble" style={{ padding: 3 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                       {row.items.slice(0, 4).map((m, idx) => (
-                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden" }}>
+                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { if (m.media_url) { e.preventDefault(); openLightbox(m.media_url); } }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
                           <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
                           {m.state === "failed" && (
@@ -891,7 +917,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   : m.type === "contact" ? <ContactBlock m={m} />
                     : (
                       <>
-                        {m.media_url && <MediaBlock m={m} />}
+                        {m.media_url && <MediaBlock m={m} onImage={openLightbox} />}
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} />}
                       </>
@@ -1029,6 +1055,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           <EmojiPicker rect={reactTarget.rect} onPick={(e) => { const id = reactTarget.id; setReactTarget(null); start(async () => { await reactToMessage(id, e); refresh(); }); }} />
         </>
       )}
+      {lightbox !== null && imageUrls.length > 0 && <Lightbox urls={imageUrls} index={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
