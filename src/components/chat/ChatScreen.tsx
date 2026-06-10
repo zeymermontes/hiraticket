@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -23,7 +23,17 @@ import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
 } from "@/app/(app)/chat/actions";
-import { liveList, liveMessages, liveConvHeader } from "@/app/(app)/chat/live-actions";
+import { liveList, liveMessages, liveConvHeader, liveDetail } from "@/app/(app)/chat/live-actions";
+
+/** Targeted refresh for chat mutations — refetches the open conversation + list instead of the
+ *  whole route. Provided by ChatScreen; falls back to refresh() outside it (e.g. the
+ *  order-drawer's floating Thread). */
+const ChatRefreshContext = createContext<(() => void) | null>(null);
+function useChatRefresh() {
+  const ctx = useContext(ChatRefreshContext);
+  const router = useRouter();
+  return ctx ?? (() => router.refresh());
+}
 
 function LocationBlock({ m }: { m: ChatMessage }) {
   const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
@@ -160,6 +170,14 @@ export function ChatScreen({
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
 
+  // Targeted refresh used by click handlers instead of refresh(): refetches the open
+  // conversation (incl. notes/orders, which aren't realtime-published) + the list — not the route.
+  const softRefresh = useCallback(() => {
+    const id = detailIdRef.current;
+    if (id) liveDetail(id).then((d) => { if (d) setDetail((c) => (c && c.id === d.id ? d : c)); }).catch(() => {});
+    liveList(businessId).then(setList).catch(() => {});
+  }, [businessId]);
+
   // Live updates via targeted refetches (no full route refresh — only what changed).
   useEffect(() => {
     const supabase = createClient();
@@ -294,6 +312,7 @@ export function ChatScreen({
   }, [list, tab, areaF, showArchived, meId]);
 
   return (
+    <ChatRefreshContext.Provider value={softRefresh}>
     <div
       className="chat"
       style={{
@@ -395,13 +414,14 @@ export function ChatScreen({
         </div>
       )}
     </div>
+    </ChatRefreshContext.Provider>
   );
 }
 
 /* ---------- Thread (right column) ---------- */
 export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean }) {
   const { lang } = useApp();
-  const router = useRouter();
+  const refresh = useChatRefresh();
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
   const [extra, setExtra] = useState<ChatMessage[]>([]);
@@ -432,7 +452,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
       }
       setStaged([]); setCaption("");
-      router.refresh();
+      refresh();
     } finally {
       setSending(false);
     }
@@ -534,13 +554,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     if (!body) return;
     if (editing) {
       const id = editing.id; setEditing(null); setText("");
-      start(async () => { await editMessage(id, body); router.refresh(); });
+      start(async () => { await editMessage(id, body); refresh(); });
       return;
     }
     const rt = replyTo?.id;
     setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [] }]);
     setText(""); setReplyTo(null);
-    start(async () => { await sendMessage(detail.id, body, rt); router.refresh(); });
+    start(async () => { await sendMessage(detail.id, body, rt); refresh(); });
   }
 
   if (!connected) {
@@ -573,14 +593,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           </button>
         )}
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); router.refresh(); })}>
+          <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); refresh(); })}>
             <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
         <TransferControl detail={detail} agents={agents} areas={areas} />
         {detail.status !== "resolved" ? (
           <button className="iconbtn" title={lang === "es" ? "Resolver" : "Resolve"} style={{ color: "var(--green)" }} disabled={pending}
-            onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); router.refresh(); })}>
+            onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); })}>
             <Icon name="check" />
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
@@ -640,21 +660,21 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     )}
                 <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}
                   {out && m.state === "failed" && !m.id.startsWith("tmp") && (
-                    <button onClick={() => start(async () => { await retryMessage(m.id); router.refresh(); })} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
+                    <button onClick={() => start(async () => { await retryMessage(m.id); refresh(); })} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
                   )}
                   {relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
                 {!m.deleted && m.reactions?.length > 0 && (
                   <div className="msg-reacts">
                     {m.reactions.map((r, ri) => (
                       <button key={ri} className={"msg-react" + (r.by === "agent" ? " mine" : "")} title={r.by === "agent" ? (lang === "es" ? "Tu reacción" : "Your reaction") : (lang === "es" ? "Reacción del cliente" : "Customer reaction")}
-                        onClick={() => start(async () => { await reactToMessage(m.id, r.emoji); router.refresh(); })}>{r.emoji}</button>
+                        onClick={() => start(async () => { await reactToMessage(m.id, r.emoji); refresh(); })}>{r.emoji}</button>
                     ))}
                   </div>
                 )}
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
                     onReact={(rect) => setReactTarget({ id: m.id, rect })}
-                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); router.refresh(); }); }} />
+                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
                 )}
               </div>
             </div>
@@ -763,7 +783,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       {reactTarget && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setReactTarget(null)} />
-          <EmojiPicker rect={reactTarget.rect} onPick={(e) => { const id = reactTarget.id; setReactTarget(null); start(async () => { await reactToMessage(id, e); router.refresh(); }); }} />
+          <EmojiPicker rect={reactTarget.rect} onPick={(e) => { const id = reactTarget.id; setReactTarget(null); start(async () => { await reactToMessage(id, e); refresh(); }); }} />
         </>
       )}
     </div>
@@ -786,13 +806,13 @@ function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
 /* ---------- Transfer popover ---------- */
 function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents: Agent[]; areas: Area[] }) {
   const { lang } = useApp();
-  const router = useRouter();
+  const refresh = useChatRefresh();
   const { ref, open, rect, toggle, close } = usePopover();
   const [pending, start] = useTransition();
 
   function pick(mode: "agent" | "area", id: string) {
     close();
-    start(async () => { await transferConv(detail.id, mode, id); router.refresh(); });
+    start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
 
   return (
@@ -828,6 +848,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 function Workspace({ detail, agents, areas, stages, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang } = useApp();
   const router = useRouter();
+  const refresh = useChatRefresh();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [loadingOrder, setLoadingOrder] = useState<string | null>(null);
@@ -863,18 +884,18 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
     const body = note.trim();
     if (!body) return;
     setNote("");
-    start(async () => { await addConvNote(detail.id, body); router.refresh(); });
+    start(async () => { await addConvNote(detail.id, body); refresh(); });
   }
   function saveName() {
     setEditingName(false);
     const v = nameVal.trim();
     if (v && detail.contact && v !== detail.contact.name) {
-      start(async () => { await renameContact(detail.contact!.id, v); router.refresh(); });
+      start(async () => { await renameContact(detail.contact!.id, v); refresh(); });
     }
   }
   function removeChat() {
     if (!confirm(lang === "es" ? "¿Eliminar esta conversación y sus mensajes?" : "Delete this conversation and its messages?")) return;
-    start(async () => { await deleteConv(detail.id); router.push("/chat"); router.refresh(); });
+    start(async () => { await deleteConv(detail.id); router.push("/chat"); refresh(); });
   }
 
   const grip = (handle: { onPointerDown: (e: React.PointerEvent) => void }) => (
@@ -963,7 +984,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
               <button ref={actionsBtn} className={"iconbtn sm" + (actionsRect ? " active" : "")} title={lang === "es" ? "Acciones" : "Actions"} onClick={() => setActionsRect(actionsRect ? null : actionsBtn.current?.getBoundingClientRect() ?? null)}><Icon name="bolt" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={onOpen360}><Icon name="eye" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
-              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); router.refresh(); })}><Icon name="refresh" size={15} /></button>
+              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); refresh(); })}><Icon name="refresh" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
             </div>
           </div>
@@ -984,12 +1005,12 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {showXfer && (
         <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
-          onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); router.refresh(); }} />
+          onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); refresh(); }} />
       )}
       {tagRect && detail.contact && (
         <TagPicker businessId={businessId} current={detail.contact.tags ?? []} rect={tagRect}
-          onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); router.refresh(); })}
-          onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); router.refresh(); })}
+          onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); refresh(); })}
+          onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); refresh(); })}
           onClose={() => setTagRect(null)} />
       )}
       {actionsRect && (
@@ -1002,12 +1023,12 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
               <SnoozeControl detail={detail} />
               <button className="act" onClick={() => { setActionsRect(null); setShowXfer(true); }}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
               <button ref={tagBtn} className="act" disabled={!detail.contact} onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
-              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); router.refresh(); })}>
+              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); refresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
               {detail.status === "resolved"
-                ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); router.refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); router.refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
@@ -1015,7 +1036,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
           convDetail={detail} connected={connected}
-          onClose={() => { setOpenOrder(null); router.refresh(); }} />
+          onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
     </div>
   );
@@ -1023,7 +1044,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
 
 function StatusControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
-  const router = useRouter();
+  const refresh = useChatRefresh();
   const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   return (
@@ -1034,7 +1055,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 180, zIndex: 201 }}>
             {(["open", "pending", "resolved"] as const).map((s) => (
-              <button className="menu-item" key={s} onClick={() => { close(); start(async () => { await setConvStatus(detail.id, s); router.refresh(); }); }}>
+              <button className="menu-item" key={s} onClick={() => { close(); start(async () => { await setConvStatus(detail.id, s); refresh(); }); }}>
                 <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
               </button>
             ))}
@@ -1047,11 +1068,11 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
 
 function SnoozeControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
-  const router = useRouter();
+  const refresh = useChatRefresh();
   const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   const snoozed = detail.snoozed_until ? new Date(detail.snoozed_until).getTime() > Date.now() : false;
-  const apply = (iso: string | null) => { close(); start(async () => { await snoozeConv(detail.id, iso); router.refresh(); }); };
+  const apply = (iso: string | null) => { close(); start(async () => { await snoozeConv(detail.id, iso); refresh(); }); };
 
   return (
     <span style={{ display: "inline-flex" }}>
