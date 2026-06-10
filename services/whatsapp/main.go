@@ -22,9 +22,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -59,6 +61,7 @@ type Manager struct {
 	clients   map[string]*whatsmeow.Client // sessionID -> client
 	byBiz     map[string]*whatsmeow.Client // businessID -> client
 	sessBiz   map[string]string            // sessionID -> businessID
+	replaced  map[string]time.Time         // sessionID -> don't reconnect until (after StreamReplaced)
 	supaURL   string                       // Supabase URL (for media storage REST)
 	supaKey   string                       // service-role key
 }
@@ -111,11 +114,12 @@ end $$;`); err != nil {
 
 	m := &Manager{
 		db: db, container: container, log: logger,
-		clients: map[string]*whatsmeow.Client{},
-		byBiz:   map[string]*whatsmeow.Client{},
-		sessBiz: map[string]string{},
-		supaURL: strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
-		supaKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
+		clients:  map[string]*whatsmeow.Client{},
+		byBiz:    map[string]*whatsmeow.Client{},
+		sessBiz:  map[string]string{},
+		replaced: map[string]time.Time{},
+		supaURL:  strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
+		supaKey:  os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 	}
 	if m.supaURL == "" || m.supaKey == "" {
 		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
@@ -126,7 +130,18 @@ end $$;`); err != nil {
 	go m.pollOutbound(ctx)
 	go m.pollContacts(ctx)
 	go m.pollOps(ctx)
-	select {} // run forever
+
+	// Graceful shutdown: on SIGTERM (Render redeploy) disconnect all WhatsApp clients so this
+	// instance RELEASES the session immediately instead of fighting the new one for it.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	logger.Infof("shutting down — disconnecting clients")
+	m.mu.Lock()
+	for _, c := range m.clients {
+		c.Disconnect()
+	}
+	m.mu.Unlock()
 }
 
 // ---------- polling loops ----------
@@ -145,8 +160,9 @@ func (m *Manager) pollSessions(ctx context.Context) {
 					alive[s.ID] = true
 					m.mu.Lock()
 					_, running := m.clients[s.ID]
+					cooldown := time.Now().Before(m.replaced[s.ID])
 					m.mu.Unlock()
-					if !running {
+					if !running && !cooldown {
 						go m.start(ctx, s)
 					}
 				}
@@ -473,6 +489,7 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 			jid := client.Store.ID.String()
 			m.mu.Lock()
 			m.byBiz[s.BusinessID] = client
+			delete(m.replaced, s.ID) // connected cleanly — clear any replace cooldown
 			m.mu.Unlock()
 			m.exec(ctx, `UPDATE whatsapp_sessions
 				SET status='connected', qr=NULL, pairing_code=NULL, phone=$1, device_jid=$2, last_seen=now(), updated_at=now()
@@ -486,10 +503,13 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 	case *events.Disconnected:
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1 AND status='connected'`, s.ID)
 	case *events.StreamReplaced:
-		// Another connection took over this WhatsApp session — almost always a SECOND worker
-		// instance running with the same number. Step aside cleanly (stop sending here) instead
-		// of fighting for the socket, and make the reason obvious in the logs.
-		m.log.Warnf("session %s was REPLACED by another connection — is a second worker (local + Render?) using the same number? this instance will stop sending until restarted", s.ID)
+		// Another connection took over this WhatsApp session — usually the previous deploy's
+		// instance overlapping during a redeploy. Step aside and back off for a cooldown so we
+		// don't tight-loop reconnecting and fighting it; pollSessions skips us until it elapses.
+		m.log.Warnf("session %s was REPLACED by another connection — backing off 45s (deploy overlap, or a 2nd worker on the same number?)", s.ID)
+		m.mu.Lock()
+		m.replaced[s.ID] = time.Now().Add(45 * time.Second)
+		m.mu.Unlock()
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1`, s.ID)
 		m.drop(s.ID, s.BusinessID)
 		client.Disconnect()
