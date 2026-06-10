@@ -308,7 +308,7 @@ export function ChatScreen({
     const supabase = createClient();
     let tl: ReturnType<typeof setTimeout>, tm: ReturnType<typeof setTimeout>, th: ReturnType<typeof setTimeout>;
     const softList = () => { clearTimeout(tl); tl = setTimeout(() => { liveList(businessId).then(setList).catch(() => {}); }, 250); };
-    const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: ms } : c))).catch(() => {}); }, 120); };
+    const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {}); }, 120); };
     const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
     const ch = supabase
       .channel(`chat-${businessId}`)
@@ -325,6 +325,26 @@ export function ChatScreen({
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, () => { softHeader(); softList(); })
       .subscribe();
     return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); supabase.removeChannel(ch); };
+  }, [businessId]);
+
+  // Safety net: realtime can drop an event (token refresh, brief socket reconnect). Re-sync the
+  // open conversation + list periodically (only while the tab is visible) and whenever the tab
+  // regains focus, so nothing stays stale until you reopen the chat.
+  useEffect(() => {
+    const resync = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      const id = detailIdRef.current;
+      if (id) {
+        liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {});
+        liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {});
+      }
+      liveList(businessId).then(setList).catch(() => {});
+    };
+    const i = setInterval(resync, 5000);
+    const onFocus = () => resync();
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(i); document.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
   }, [businessId]);
 
   // Mark a conversation read when it's open and it has unread (incl. messages that arrive while open).
@@ -496,7 +516,7 @@ export function ChatScreen({
             filtered.map((c) => {
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
-                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={() => openConv(c)} className={"conv" + (c.id === selectedId ? " sel" : "") + (c.unread ? " unread" : "")}>
+                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={() => openConv(c)} className={"conv" + (c.id === (detail?.id ?? selectedId) ? " sel" : "") + (c.unread ? " unread" : "")}>
                   <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">
