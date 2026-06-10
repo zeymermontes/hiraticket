@@ -1090,11 +1090,14 @@ function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
 function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents: Agent[]; areas: Area[] }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
+  const patch = useChatPatch();
   const { ref, open, rect, toggle, close } = usePopover();
   const [pending, start] = useTransition();
 
   function pick(mode: "agent" | "area", id: string) {
     close();
+    if (mode === "agent") patch({ assignee_id: id });
+    else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area }); }
     start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
 
@@ -1291,12 +1294,16 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {showXfer && (
         <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
-          onConfirm={async (dest) => { await transferConv(detail.id, dest.type, dest.id); refresh(); }} />
+          onConfirm={async (dest) => {
+            if (dest.type === "agent") patch({ assignee_id: dest.id });
+            else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area }); }
+            await transferConv(detail.id, dest.type, dest.id); refresh();
+          }} />
       )}
       {tagRect && detail.contact && (
         <TagPicker businessId={businessId} current={detail.contact.tags ?? []} rect={tagRect}
-          onPick={(t) => start(async () => { await addContactTag(detail.contact!.id, t); refresh(); })}
-          onRemove={(t) => start(async () => { await removeContactTag(detail.contact!.id, t); refresh(); })}
+          onPick={(t) => { patch({ contact: detail.contact ? { ...detail.contact, tags: Array.from(new Set([...(detail.contact.tags ?? []), t])) } : detail.contact }); start(async () => { await addContactTag(detail.contact!.id, t); refresh(); }); }}
+          onRemove={(t) => { patch({ contact: { ...detail.contact!, tags: (detail.contact!.tags ?? []).filter((x) => x !== t) } }); start(async () => { await removeContactTag(detail.contact!.id, t); refresh(); }); }}
           onClose={() => setTagRect(null)} />
       )}
       {actionsRect && (

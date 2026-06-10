@@ -92,6 +92,13 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Page skeleton (route loading) */
+.skl { border-radius: 10px; background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface) 50%, var(--surface-2) 70%); background-size: 200% 100%; animation: skl-shimmer 1.3s linear infinite; }
+.skl-title { width: 220px; height: 30px; border-radius: 8px; }
+.skl-bar { height: 44px; }
+.skl-row { height: 56px; }
+@keyframes skl-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 /* Top navigation progress bar (shows on section change). */
 .nav-progress { position: fixed; top: 0; left: 0; height: 3px; z-index: 6000; background: var(--brand); box-shadow: 0 0 8px var(--brand); border-radius: 0 3px 3px 0; animation: nav-progress 1.4s ease-out forwards; }
 @keyframes nav-progress { 0% { width: 0; } 40% { width: 55%; } 75% { width: 82%; } 100% { width: 92%; } }

@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
@@ -121,6 +121,7 @@ export interface ShellUser {
 
 function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { lang, t } = useApp();
   const [profOpen, setProfOpen] = useState(false);
   const profBtn = useRef<HTMLButtonElement>(null);
@@ -132,7 +133,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
     const badge = badges[it.id] ?? it.badge ?? null;
     const secondary = secondaryBadges[it.id] ?? null;
     return (
-      <Link key={it.id} href={it.href} className={"rail-item" + (on ? " on" : "")}>
+      <Link key={it.id} href={it.href} onMouseEnter={() => router.prefetch(it.href)} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
         <span className="rl">{it.id === "orders" ? objectName : t(it.labelKey)}</span>
         <span className="rail-badges">
