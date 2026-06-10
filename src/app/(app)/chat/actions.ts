@@ -1,5 +1,4 @@
 "use server";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 async function ctx() {
@@ -41,14 +40,12 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", convId);
 
-  revalidatePath("/chat");
 }
 
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
 export async function retryMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("messages").update({ state: "queued", send_attempts: 0, next_retry_at: null }).eq("id", messageId).eq("direction", "out").in("state", ["failed", "sending"]);
-  revalidatePath("/chat");
 }
 
 /** Edit an outbound message (worker re-sends an edit to WhatsApp). */
@@ -57,7 +54,6 @@ export async function editMessage(messageId: string, body: string): Promise<void
   if (!text) return;
   const { supabase } = await ctx();
   await supabase.from("messages").update({ body: text, pending_op: "edit" }).eq("id", messageId).eq("direction", "out");
-  revalidatePath("/chat");
 }
 
 /** Add/replace/remove the agent's emoji reaction on a message (worker sends it to WhatsApp). */
@@ -70,14 +66,12 @@ export async function reactToMessage(messageId: string, emoji: string): Promise<
   const toggleOff = mine?.emoji === emoji;
   const next = toggleOff ? others : [...others, { emoji, by: "agent" }];
   await supabase.from("messages").update({ reactions: next, pending_op: "react", react_emoji: toggleOff ? "" : emoji }).eq("id", messageId);
-  revalidatePath("/chat");
 }
 
 /** Delete an outbound message for everyone (worker revokes it). */
 export async function deleteMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("messages").update({ pending_op: "delete" }).eq("id", messageId).eq("direction", "out");
-  revalidatePath("/chat");
 }
 
 /** Queue an outbound media message (file already uploaded to storage). */
@@ -94,7 +88,6 @@ export async function sendMediaMessage(
     media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name || null,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
-  revalidatePath("/chat");
 }
 
 export async function setConvStatus(
@@ -118,8 +111,6 @@ export async function setConvStatus(
     text: `Estado → ${status}`,
   });
   await runConvStatusAutomations(convId, businessId, status, userId);
-  revalidatePath("/chat");
-  revalidatePath("/flows");
 }
 
 /** Fire enabled automations triggered by a conversation reaching a status. */
@@ -167,7 +158,6 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
 export async function markConvRead(convId: string): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("conversations").update({ unread: 0 }).eq("id", convId);
-  revalidatePath("/chat");
 }
 
 export async function acceptConv(convId: string): Promise<void> {
@@ -183,7 +173,6 @@ export async function acceptConv(convId: string): Promise<void> {
     kind: "user",
     text: "Aceptado",
   });
-  revalidatePath("/chat");
 }
 
 export async function addConvNote(convId: string, body: string): Promise<void> {
@@ -199,7 +188,6 @@ export async function addConvNote(convId: string, body: string): Promise<void> {
     author_id: userId,
     body: text,
   });
-  revalidatePath("/chat");
 }
 
 /** Permanently delete a conversation and its messages (FK cascade). */
@@ -211,7 +199,6 @@ export async function deleteConv(convId: string): Promise<void> {
     await supabase.from("events").delete().eq("parent_type", "conversation").eq("parent_id", convId);
   }
   await supabase.from("conversations").delete().eq("id", convId);
-  revalidatePath("/chat");
 }
 
 /** Rename the contact behind a chat. */
@@ -220,7 +207,6 @@ export async function renameContact(contactId: string, name: string): Promise<vo
   const clean = name.trim();
   if (!clean) return;
   await supabase.from("contacts").update({ name: clean }).eq("id", contactId);
-  revalidatePath("/chat");
 }
 
 /** Add a tag to a contact (deduplicated). */
@@ -231,7 +217,6 @@ export async function addContactTag(contactId: string, tag: string): Promise<voi
   const { data: c } = await supabase.from("contacts").select("tags").eq("id", contactId).maybeSingle();
   const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), clean]));
   await supabase.from("contacts").update({ tags }).eq("id", contactId);
-  revalidatePath("/chat");
 }
 
 /** Remove a tag from a contact. */
@@ -240,21 +225,17 @@ export async function removeContactTag(contactId: string, tag: string): Promise<
   const { data: c } = await supabase.from("contacts").select("tags").eq("id", contactId).maybeSingle();
   const tags = ((c?.tags as string[]) ?? []).filter((t) => t !== tag);
   await supabase.from("contacts").update({ tags }).eq("id", contactId);
-  revalidatePath("/chat");
-  revalidatePath("/orders");
 }
 
 /** Ask the worker to (re)fetch the contact's WhatsApp name + profile photo. */
 export async function requestContactInfo(contactId: string): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("contacts").update({ fetch_requested: new Date().toISOString() }).eq("id", contactId);
-  revalidatePath("/chat");
 }
 
 export async function setConvHidden(convId: string, hidden: boolean): Promise<void> {
   const { supabase } = await ctx();
   await supabase.from("conversations").update({ hidden }).eq("id", convId);
-  revalidatePath("/chat");
 }
 
 /** Snooze (postpone) a conversation until `untilISO`, or pass null to un-snooze. */
@@ -269,7 +250,6 @@ export async function snoozeConv(convId: string, untilISO: string | null): Promi
       text: untilISO ? "Pospuesto" : "Reactivado",
     });
   }
-  revalidatePath("/chat");
 }
 
 export async function transferConv(
@@ -300,5 +280,4 @@ export async function transferConv(
     kind: "swap",
     text: "Transferido",
   });
-  revalidatePath("/chat");
 }

@@ -510,6 +510,19 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
   useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
 
+  // Per-conversation draft: restore unsent text when you reopen a chat (cleared on send).
+  const draftKey = (id: string) => "ht_draft_" + id;
+  const textConvRef = useRef(detail.id);
+  useEffect(() => {
+    textConvRef.current = detail.id;
+    try { setText(localStorage.getItem(draftKey(detail.id)) ?? ""); } catch { setText(""); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.id]);
+  useEffect(() => {
+    const id = textConvRef.current; // the conversation this text belongs to
+    try { if (text) localStorage.setItem(draftKey(id), text); else localStorage.removeItem(draftKey(id)); } catch {}
+  }, [text]);
+
   // Auto-grow the composer as lines are typed, capped at 4 lines (then it scrolls).
   useEffect(() => {
     const el = taRef.current;
@@ -553,14 +566,16 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     const body = text.trim();
     if (!body) return;
     if (editing) {
+      // Realtime echo (liveMessages) reflects the edit — no full refresh needed.
       const id = editing.id; setEditing(null); setText("");
-      start(async () => { await editMessage(id, body); refresh(); });
+      start(async () => { await editMessage(id, body); });
       return;
     }
     const rt = replyTo?.id;
     setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [] }]);
     setText(""); setReplyTo(null);
-    start(async () => { await sendMessage(detail.id, body, rt); refresh(); });
+    // Optimistic bubble shows instantly; the realtime echo replaces it with the stored message.
+    start(async () => { await sendMessage(detail.id, body, rt); });
   }
 
   if (!connected) {
