@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type OrderRow, type PillColor, priorityColor, formatMoney, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
+import { type OrderRow, type PillColor, type PriceTier, priorityColor, formatMoney, tierPrice, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
@@ -284,7 +284,7 @@ function NewOrderModal({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [contactName, setContactName] = useState(defaultContact ?? "");
-  type Line = { item: string; qty: string; price: string };
+  type Line = { item: string; qty: string; price: string; basePrice?: number; tiers?: PriceTier[] };
   const [lines, setLines] = useState<Line[]>([{ item: "", qty: "1", price: "" }]);
   const [priority, setPriority] = useState("normal");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
@@ -292,13 +292,21 @@ function NewOrderModal({
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
   const hasItem = lines.some((l) => l.item.trim());
 
-  const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => {
+    if (j !== i) return l;
+    const next = { ...l, ...patch };
+    // Re-price from quantity tiers when the qty changes on a catalog line.
+    if (patch.qty !== undefined && next.tiers && next.tiers.length && next.basePrice != null) {
+      next.price = String(tierPrice(next.basePrice, next.tiers, Number(next.qty) || 1));
+    }
+    return next;
+  }));
   const addLine = (l?: Line) => setLines((ls) => [...ls, l ?? { item: "", qty: "1", price: "" }]);
   const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls));
   const addFromCatalog = (id: string) => {
     const p = products.find((x) => x.id === id);
     if (!p) return;
-    const line: Line = { item: p.name, qty: "1", price: String(p.price) };
+    const line: Line = { item: p.name, qty: "1", price: String(tierPrice(p.price, p.price_tiers, 1)), basePrice: p.price, tiers: p.price_tiers };
     // Fill the first empty row, else append.
     setLines((ls) => {
       const i = ls.findIndex((l) => !l.item.trim());
@@ -344,14 +352,20 @@ function NewOrderModal({
           )}
           <label className="lbl">{lang === "es" ? "Artículos" : "Items"}</label>
           <div className="col gap-2">
-            {lines.map((l, i) => (
-              <div className="row gap-2" key={i} style={{ alignItems: "flex-end" }}>
-                <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={lang === "es" ? "Descripción" : "Description"} /></div>
-                <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>
-                <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>
-                <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
-              </div>
-            ))}
+            {lines.map((l, i) => {
+              const onTier = !!(l.tiers?.length && l.basePrice != null && Number(l.price) < l.basePrice);
+              return (
+                <div className="col gap-1" key={i}>
+                  <div className="row gap-2" style={{ alignItems: "flex-end" }}>
+                    <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={lang === "es" ? "Descripción" : "Description"} /></div>
+                    <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>
+                    <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>
+                    <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
+                  </div>
+                  {onTier && <span className="t-xs row gap-1" style={{ color: "var(--green)" }}><Icon name="layers" size={11} />{lang === "es" ? `Precio por volumen (base $${formatMoney(l.basePrice!)})` : `Volume price (base $${formatMoney(l.basePrice!)})`}</span>}
+                </div>
+              );
+            })}
             <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => addLine()}><Icon name="plus" size={14} />{lang === "es" ? "Agregar producto" : "Add product"}</button>
           </div>
           <div className="row gap-2">

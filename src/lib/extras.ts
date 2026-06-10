@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getAgents } from "@/lib/chat";
 import { getStages, getAreas } from "@/lib/business";
+import type { PriceTier } from "@/lib/types";
 
 export interface Automation {
   id: string;
@@ -23,14 +24,22 @@ export async function getAutomations(businessId: string): Promise<Automation[]> 
 }
 
 export interface Product {
-  id: string; name: string; kind: "product" | "service"; price: number; active: boolean;
+  id: string; name: string; kind: "product" | "service"; price: number; active: boolean; price_tiers: PriceTier[];
 }
 export async function getProducts(businessId: string): Promise<Product[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("products").select("id, name, kind, price, active")
+  // Resilient to a not-yet-applied 0024 (price_tiers).
+  let { data, error } = await supabase
+    .from("products").select("id, name, kind, price, active, price_tiers")
     .eq("business_id", businessId).order("created_at");
-  return (data ?? []) as Product[];
+  if (error) {
+    const r = await supabase.from("products").select("id, name, kind, price, active").eq("business_id", businessId).order("created_at");
+    data = (r.data ?? []) as typeof data;
+  }
+  return (data ?? []).map((p) => {
+    const t = (p as { price_tiers?: unknown }).price_tiers;
+    return { ...p, price_tiers: Array.isArray(t) ? (t as PriceTier[]) : [] };
+  }) as Product[];
 }
 
 export interface Appointment {

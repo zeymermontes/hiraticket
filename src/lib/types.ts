@@ -37,6 +37,18 @@ export function priorityColor(p: OrderRow["priority"]): PillColor {
   return PRIORITY_COLOR[p] ?? "slate";
 }
 
+export interface PriceTier { min: number; price: number }
+/** Unit price for `qty` honoring quantity tiers — the tier with the highest `min` ≤ qty wins;
+ *  below all tiers the base price applies. */
+export function tierPrice(base: number, tiers: PriceTier[], qty: number): number {
+  let price = base;
+  let bestMin = 0;
+  for (const t of tiers ?? []) {
+    if (qty >= t.min && t.min > bestMin) { price = t.price; bestMin = t.min; }
+  }
+  return price;
+}
+
 const TAG_COLORS: PillColor[] = ["brand", "blue", "violet", "teal", "green", "amber", "red", "slate"];
 /** Deterministic color for a tag name (so the same tag is always the same color). */
 export function tagColor(name: string): PillColor {

@@ -47,7 +47,7 @@ export async function createProduct(businessId: string, input: { name: string; k
   });
   revalidatePath("/catalog");
 }
-export async function updateProduct(id: string, patch: { name?: string; price?: number; active?: boolean }) {
+export async function updateProduct(id: string, patch: { name?: string; price?: number; active?: boolean; price_tiers?: { min: number; price: number }[] }) {
   const supabase = await createClient();
   await supabase.from("products").update(patch).eq("id", id);
   revalidatePath("/catalog");
