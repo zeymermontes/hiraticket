@@ -105,7 +105,8 @@ end $$;`); err != nil {
 	// Auto-retry bookkeeping columns (idempotent — works even if the migration wasn't run).
 	if _, err := db.ExecContext(ctx, `alter table messages
 		add column if not exists send_attempts int not null default 0,
-		add column if not exists next_retry_at timestamptz`); err != nil {
+		add column if not exists next_retry_at timestamptz,
+		add column if not exists fail_reason text`); err != nil {
 		logger.Warnf("add retry columns: %v", err)
 	}
 
@@ -282,6 +283,24 @@ func (m *Manager) pollHeartbeat(ctx context.Context) {
 				conn := len(m.byBiz)
 				m.mu.Unlock()
 				m.log.Infof("outbound backlog (2h): queued=%d sending=%d failed=%d  (sessions connected=%d)", queued, sending, failed, conn)
+				// Spell out each failed message so the cause (and whether it's a fresh failure or a
+				// stale leftover) is obvious without grepping earlier logs.
+				if failed > 0 {
+					rows, qerr := m.db.QueryContext(ctx, `SELECT id, type, send_attempts,
+						round(extract(epoch from (now()-created_at))/60)::int AS age_min, coalesce(fail_reason,'?')
+						FROM messages WHERE direction='out' AND state='failed' AND created_at > now() - interval '2 hours'
+						ORDER BY created_at DESC LIMIT 10`)
+					if qerr == nil {
+						for rows.Next() {
+							var id, mtype, reason string
+							var attempts, age int
+							if rows.Scan(&id, &mtype, &attempts, &age, &reason) == nil {
+								m.log.Infof("  failed %s (%s, %dm ago, %d attempts): %s", id, mtype, age, attempts, reason)
+							}
+						}
+						rows.Close()
+					}
+				}
 			}
 		}
 	}
@@ -833,7 +852,7 @@ func (m *Manager) retryOrFail(ctx context.Context, o outMsg, reason string) {
 	next := o.attempts + 1
 	if next >= maxSendAttempts {
 		m.log.Errorf("send %s failed (giving up after %d): %s", o.id, next, reason)
-		m.exec(ctx, `UPDATE messages SET state='failed', send_attempts=$2 WHERE id=$1`, o.id, next)
+		m.exec(ctx, `UPDATE messages SET state='failed', send_attempts=$2, fail_reason=$3 WHERE id=$1`, o.id, next, reason)
 		return
 	}
 	backoff := 3 << uint(o.attempts) // 3,6,12,24,48s
@@ -875,7 +894,7 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	}
 	if !phone.Valid || digits(phone.String) == "" {
 		m.log.Errorf("send %s failed: no phone on conversation %s", o.id, o.conv)
-		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+		m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='no phone on conversation' WHERE id=$1`, o.id)
 		return false
 	}
 	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
