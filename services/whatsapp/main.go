@@ -78,12 +78,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.SetMaxOpenConns(8)
+	// One small SHARED pool for the worker AND whatsmeow's sqlstore. The Supabase Session pooler
+	// caps total clients (~15) and a deploy briefly doubles instances, so stay lean and recycle
+	// idle connections. (Previously sqlstore.New opened a second, uncapped pool → pool exhaustion.)
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(60 * time.Second)
 
-	container, err := sqlstore.New(ctx, "postgres", dsn, waLog.Stdout("DB", "WARN", true))
-	if err != nil {
-		panic(err)
-	}
+	container := sqlstore.NewWithDB(db, "postgres", waLog.Stdout("DB", "WARN", true))
 	if err := container.Upgrade(ctx); err != nil {
 		panic(err)
 	}
