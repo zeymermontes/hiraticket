@@ -119,7 +119,7 @@ export function BusinessConfig({
             <button className={"chip" + (productStages ? " on" : "")} title={lang === "es" ? "Cada producto avanza por su propia etapa; el pedido muestra la menos avanzada" : "Each product moves through its own stage; the order shows the least-advanced one"}
               onClick={() => start(async () => {
                 const r = await updateBusinessProfile(businessId, { product_stages: !productStages });
-                if (!r.ok) { alert((lang === "es" ? "No se pudo activar. Aplica la migración 0019_item_stages.sql.\n\n" : "Couldn't toggle. Apply migration 0019_item_stages.sql.\n\n") + (r.error ?? "")); return; }
+                if (!r.ok) { alert(lang === "es" ? "No se pudo activar. Aplica las migraciones 0019 y 0020 con el pooler.\n\n(" + (r.error ?? "") + ")" : "Couldn't toggle. Apply migrations 0019 and 0020.\n\n(" + (r.error ?? "") + ")"); return; }
                 router.refresh();
               })}>
               <Icon name="layers" size={13} />{lang === "es" ? "Etapas por producto" : "Per-product stages"}

@@ -63,9 +63,11 @@ export async function deleteStage(stageId: string) {
 /** Update the business vertical + the singular object noun. */
 export async function updateBusinessProfile(businessId: string, patch: { vertical?: string; object_singular?: string; product_stages?: boolean }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { error } = await supabase.from("businesses").update(patch).eq("id", businessId);
+  const { data, error } = await supabase.from("businesses").update(patch).eq("id", businessId).select("id");
   revalidateAll();
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: "no-permission" }; // RLS blocked / migration 0020 not applied
+  return { ok: true };
 }
 
 /** Replace the per-vertical custom field list. */
