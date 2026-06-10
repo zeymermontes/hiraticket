@@ -67,6 +67,7 @@ export const ICONS: Record<string, IconFn> = {
   dots: () => <><circle cx="6" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="18" cy="12" r="1.4" fill="currentColor" /></>,
   pin: () => <>{P("M12 21s6-5.3 6-10a6 6 0 1 0-12 0c0 4.7 6 10 6 10Z")}<circle cx="12" cy="11" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" /></>,
   forward: () => <>{P("M14 8V5l6 5-6 5v-3c-5 0-8 2-9 5 0-5 3-10 9-12Z")}</>,
+  download: () => <>{P("M12 4v10m0 0 3.5-3.5M12 14l-3.5-3.5M5 19h14")}</>,
   sparkles: () => <>{P("M12 4l1.4 3.6L17 9l-3.6 1.4L12 14l-1.4-3.6L7 9l3.6-1.4Z")}</>,
   tag: () => <>{P("M20.6 13.4 13 21l-9-9V4h8l8.6 8.6a1.4 1.4 0 0 1 0 2.8Z")}<circle cx="8.5" cy="8.5" r="1.4" fill="currentColor" /></>,
 };
