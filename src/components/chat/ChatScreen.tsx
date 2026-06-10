@@ -315,7 +315,12 @@ export function ChatScreen({
     _prefetching.add(id);
     liveDetail(id).then((d) => { if (d) _detailCache.set(id, d); }).catch(() => {}).finally(() => _prefetching.delete(id));
   }, []);
-  const openConv = useCallback((c: ConvListItem) => { setDetail(_detailCache.get(c.id) ?? skeletonDetail(c)); }, []);
+  const openConv = useCallback((c: ConvListItem) => {
+    setDetail(_detailCache.get(c.id) ?? skeletonDetail(c));
+    // Persist immediately on the explicit click (the URL lags behind the optimistic open, so the
+    // URL-guarded effect below can miss it and the "last chat" cookie would get stuck).
+    try { document.cookie = `ht_lastChat=${c.id}; path=/; max-age=2592000; SameSite=Lax`; } catch {}
+  }, []);
 
   // Targeted refresh used by click handlers instead of refresh(): refetches the open
   // conversation (incl. notes/orders, which aren't realtime-published) + the list — not the route.
