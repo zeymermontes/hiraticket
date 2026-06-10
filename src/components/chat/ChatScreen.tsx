@@ -824,7 +824,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
 
   return (
-    <div className="chatcol" style={floating ? { height: "100%" } : undefined}>
+    <div className="chatcol" style={floating ? { height: "100%", flex: 1, minWidth: 0, width: "100%" } : undefined}>
       <div className="thread-head">
         <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38} />
         <div className="grow" style={{ minWidth: 0 }}>
