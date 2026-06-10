@@ -485,6 +485,14 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 		client.Disconnect()
 	case *events.Disconnected:
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1 AND status='connected'`, s.ID)
+	case *events.StreamReplaced:
+		// Another connection took over this WhatsApp session — almost always a SECOND worker
+		// instance running with the same number. Step aside cleanly (stop sending here) instead
+		// of fighting for the socket, and make the reason obvious in the logs.
+		m.log.Warnf("session %s was REPLACED by another connection — is a second worker (local + Render?) using the same number? this instance will stop sending until restarted", s.ID)
+		m.exec(ctx, `UPDATE whatsapp_sessions SET status='reconnecting', updated_at=now() WHERE id=$1`, s.ID)
+		m.drop(s.ID, s.BusinessID)
+		client.Disconnect()
 	case *events.Message:
 		m.handleIncoming(ctx, s, client, v)
 	case *events.Receipt:
@@ -812,6 +820,7 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 		return false
 	}
 	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2, send_attempts=0, next_retry_at=NULL WHERE id=$1`, o.id, resp.ID)
+	m.log.Infof("sent %s (%s) → %s", o.id, o.mtype, jid)
 	return true
 }
 
