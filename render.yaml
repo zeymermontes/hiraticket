@@ -36,8 +36,10 @@ services:
     branch: main
     autoDeploy: true
     envVars:
-      # Supabase direct Postgres connection string (Settings -> Database),
-      # e.g. postgresql://postgres:PASSWORD@db.<ref>.supabase.co:5432/postgres?sslmode=require
+      # IMPORTANT: use the Supabase **Session pooler** (IPv4, port 5432). The direct
+      # db.<ref>.supabase.co host is IPv6-only and Render can't reach it. Do NOT use the
+      # transaction pooler (6543): whatsmeow's sqlstore needs session features.
+      # postgresql://postgres.<ref>:PASSWORD@aws-1-<region>.pooler.supabase.com:5432/postgres?sslmode=require
       - key: DATABASE_URL
         sync: false
       # Used to store inbound media in the 'media' storage bucket.
