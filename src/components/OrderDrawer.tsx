@@ -41,7 +41,9 @@ export function OrderDrawer({
   const DRAWER_W = 560; // width of the order drawer this panel docks against
   useEffect(() => {
     const saved = Number(localStorage.getItem("hira.orderChatW"));
+    // Default: fill the space left of the drawer (comfortable, no dead gap); else the saved width.
     if (saved >= 320) setChatW(saved);
+    else setChatW(Math.max(440, window.innerWidth - DRAWER_W - 24));
   }, []);
   function startResize(e: React.PointerEvent) {
     e.preventDefault();
