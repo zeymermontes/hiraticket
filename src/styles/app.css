@@ -92,6 +92,12 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Media with reserved space + loading skeleton (no layout shift / "pop"). */
+.media-frame { position: relative; display: block; border-radius: 10px; overflow: hidden; background: var(--surface-2); max-width: 100%; }
+.media-el { width: 100%; height: 100%; display: block; transition: opacity .2s ease; }
+.media-skeleton { position: absolute; inset: 0; background: linear-gradient(100deg, var(--surface-2) 28%, var(--surface) 50%, var(--surface-2) 72%); background-size: 200% 100%; animation: media-shimmer 1.3s linear infinite; }
+@keyframes media-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 /* Typing indicator ("escribiendo…"). */
 .typing-ind { color: var(--wa, #25d366); font-style: italic; font-weight: 600; }
 

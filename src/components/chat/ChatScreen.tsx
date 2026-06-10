@@ -136,13 +136,37 @@ function usePopover() {
   return { ref, open, rect, toggle, close: () => setOpen(false) };
 }
 
+/** Reserve the exact display box (from stored w/h, or a default) so media never reflows the
+ *  thread when it finishes loading — no "pop", and the scroll-to-bottom stays accurate. */
+function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH: number) {
+  const meta = (m.meta ?? {}) as { w?: number; h?: number };
+  if (meta.w && meta.h && meta.w > 0 && meta.h > 0) {
+    const s = Math.min(maxW / meta.w, maxH / meta.h, 1);
+    return { width: Math.max(60, Math.round(meta.w * s)), height: Math.max(60, Math.round(meta.h * s)) };
+  }
+  return { width: defW, height: defH };
+}
+
+function MediaImage({ m, url }: { m: ChatMessage; url: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const isSticker = m.type === "sticker";
+  const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={box}>
+      {!loaded && <span className="media-skeleton" />}
+      <img src={url} alt="" onLoad={() => setLoaded(true)} className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+    </a>
+  );
+}
+
 function MediaBlock({ m }: { m: ChatMessage }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
-  if (m.type === "image" || m.type === "sticker") {
-    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="" style={{ maxWidth: m.type === "sticker" ? 130 : 240, maxHeight: 280, borderRadius: 10, display: "block" }} /></a>;
+  if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} />;
+  if (m.type === "video") {
+    const box = mediaBox(m, 260, 320, 260, 180);
+    return <div className="media-frame" style={box}><video src={url} controls className="media-el" style={{ objectFit: "cover" }} /></div>;
   }
-  if (m.type === "video") return <video src={url} controls style={{ maxWidth: 260, borderRadius: 10, display: "block" }} />;
   if (m.type === "audio") return <audio src={url} controls style={{ maxWidth: 240 }} />;
   // document / other
   return (
@@ -802,8 +826,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   <div className="bubble" style={{ padding: 3 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                       {row.items.slice(0, 4).map((m, idx) => (
-                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" style={{ position: "relative", display: "block" }}>
-                          <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, display: "block" }} />
+                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden" }}>
+                          <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
                         </a>
                       ))}

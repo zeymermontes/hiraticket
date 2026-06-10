@@ -712,13 +712,19 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	mtype, mmime, mname, meta := "text", "", "", ""
 	switch {
 	case msg.GetImageMessage() != nil:
-		mtype, mmime, text = "image", msg.GetImageMessage().GetMimetype(), firstNonEmpty(msg.GetImageMessage().GetCaption(), text)
+		im := msg.GetImageMessage()
+		mtype, mmime, text = "image", im.GetMimetype(), firstNonEmpty(im.GetCaption(), text)
+		meta = jsonStr(map[string]interface{}{"w": im.GetWidth(), "h": im.GetHeight()})
 	case msg.GetStickerMessage() != nil:
-		mtype, mmime = "sticker", msg.GetStickerMessage().GetMimetype()
+		st := msg.GetStickerMessage()
+		mtype, mmime = "sticker", st.GetMimetype()
+		meta = jsonStr(map[string]interface{}{"w": st.GetWidth(), "h": st.GetHeight()})
 	case msg.GetAudioMessage() != nil:
 		mtype, mmime = "audio", msg.GetAudioMessage().GetMimetype()
 	case msg.GetVideoMessage() != nil:
-		mtype, mmime, text = "video", msg.GetVideoMessage().GetMimetype(), firstNonEmpty(msg.GetVideoMessage().GetCaption(), text)
+		vm := msg.GetVideoMessage()
+		mtype, mmime, text = "video", vm.GetMimetype(), firstNonEmpty(vm.GetCaption(), text)
+		meta = jsonStr(map[string]interface{}{"w": vm.GetWidth(), "h": vm.GetHeight()})
 	case msg.GetDocumentMessage() != nil:
 		mtype, mmime, mname = "document", msg.GetDocumentMessage().GetMimetype(), msg.GetDocumentMessage().GetFileName()
 		text = firstNonEmpty(msg.GetDocumentMessage().GetCaption(), text)
