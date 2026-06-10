@@ -13,7 +13,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -31,6 +31,7 @@ export function OrderDrawer({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [note, setNote] = useState("");
+  const [payAmount, setPayAmount] = useState("");
   const [xfer, setXfer] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const tagBtn = useRef<HTMLButtonElement>(null);
@@ -148,10 +149,41 @@ export function OrderDrawer({
 
           {/* payment */}
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Estado de pago" : "Payment"}</h4><Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
-            <div style={{ padding: "12px 14px", display: "flex", gap: 8 }}>
-              <button className="btn btn-sm btn-outline grow" disabled={pending || !detail.conversation_id} onClick={() => run(() => chargeOrder(detail.id))}><Icon name="send" size={14} />{lang === "es" ? "Enviar link de pago" : "Send pay link"}</button>
-              {detail.pay_status !== "paid" && <button className="btn btn-sm btn-primary grow" disabled={pending} onClick={() => run(() => markPaid(detail.id))}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>}
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4><Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
+            <div style={{ padding: "12px 14px" }} className="col gap-2">
+              <div className="col gap-1">
+                <div className="kv"><span className="k">{lang === "es" ? "Total" : "Total"}</span><span className="v mono">${formatMoney(detail.total)}</span></div>
+                <div className="kv"><span className="k">{lang === "es" ? "Pagado" : "Paid"}</span><span className="v mono" style={{ color: "var(--green)" }}>${formatMoney(detail.paid)}</span></div>
+                <div className="kv"><span className="k">{lang === "es" ? "Saldo" : "Balance"}</span><span className="v mono" style={{ fontWeight: 800, color: detail.total - detail.paid > 0 ? "var(--amber)" : "var(--text)" }}>${formatMoney(Math.max(0, detail.total - detail.paid))}</span></div>
+              </div>
+
+              {detail.payments.length > 0 && (
+                <div className="col gap-1" style={{ paddingTop: 2 }}>
+                  {detail.payments.map((p) => {
+                    const au = p.created_by ? agents.find((a) => a.id === p.created_by) : null;
+                    return (
+                      <div className="row gap-2" key={p.id} style={{ alignItems: "center", fontSize: 12.5 }}>
+                        <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(p.amount)}</span>
+                        {p.method && <Pill color="slate">{p.method}</Pill>}
+                        <span className="t-xs muted truncate grow">{p.note || (au ? au.name : "")} · {new Date(p.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
+                        <button className="iconbtn sm" title={lang === "es" ? "Eliminar pago" : "Delete payment"} onClick={() => run(() => deletePayment(p.id))}><Icon name="x" size={13} /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {detail.pay_status !== "paid" && (
+                <div className="row gap-2" style={{ alignItems: "center" }}>
+                  <div className="field field-sm field-filled grow"><span className="t-sm muted">$</span><input type="number" min={0} placeholder={lang === "es" ? "Monto del pago" : "Payment amount"} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} /></div>
+                  <button className="btn btn-sm btn-outline" disabled={pending || !(Number(payAmount) > 0)} onClick={() => { run(() => addPayment(detail.id, Number(payAmount))); setPayAmount(""); }}><Icon name="plus" size={14} />{lang === "es" ? "Registrar" : "Add"}</button>
+                </div>
+              )}
+
+              <div className="row gap-2">
+                <button className="btn btn-sm btn-outline grow" disabled={pending || !detail.conversation_id} onClick={() => run(() => chargeOrder(detail.id))}><Icon name="send" size={14} />{lang === "es" ? "Enviar link de pago" : "Send pay link"}</button>
+                {detail.pay_status !== "paid" && <button className="btn btn-sm btn-primary grow" disabled={pending} onClick={() => run(() => markPaid(detail.id))}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>}
+              </div>
             </div>
           </div>
 

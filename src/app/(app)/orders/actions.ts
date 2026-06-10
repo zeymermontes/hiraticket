@@ -41,9 +41,52 @@ export async function chargeOrder(orderId: string): Promise<void> {
   revalidatePath("/orders");
 }
 
-/** Mark an order as paid. */
+type SB = Awaited<ReturnType<typeof createClient>>;
+
+/** order.pay_status from the sum of its payments vs total. */
+async function recomputePayStatus(supabase: SB, orderId: string, total: number): Promise<void> {
+  const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
+  const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
+  const status = total > 0 && paid >= total ? "paid" : paid > 0 ? "partial" : "pending";
+  await supabase.from("orders").update({ pay_status: status }).eq("id", orderId);
+}
+
+/** Record a (partial) payment against an order, then recompute its pay status. */
+export async function addPayment(orderId: string, amount: number, method?: string | null, note?: string | null): Promise<void> {
+  if (!amount || amount <= 0) return;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
+  if (!order) return;
+  await supabase.from("payments").insert({ business_id: order.business_id, order_id: orderId, amount, method: method ?? null, note: note ?? null, created_by: user?.id ?? null });
+  await recomputePayStatus(supabase, orderId, order.total as number);
+  revalidatePath("/orders");
+}
+
+/** Delete a payment and recompute the order's pay status. */
+export async function deletePayment(paymentId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: pay } = await supabase.from("payments").select("order_id").eq("id", paymentId).maybeSingle();
+  await supabase.from("payments").delete().eq("id", paymentId);
+  if (pay?.order_id) {
+    const { data: order } = await supabase.from("orders").select("total").eq("id", pay.order_id).maybeSingle();
+    await recomputePayStatus(supabase, pay.order_id as string, (order?.total as number) ?? 0);
+  }
+  revalidatePath("/orders");
+}
+
+/** Mark an order fully paid — records a payment for the outstanding balance, then sets 'paid'. */
 export async function markPaid(orderId: string): Promise<void> {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
+  if (!order) return;
+  const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
+  const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
+  const remaining = (Number(order.total) || 0) - paid;
+  if (remaining > 0) {
+    await supabase.from("payments").insert({ business_id: order.business_id, order_id: orderId, amount: remaining, method: "manual", note: "Pago completo", created_by: user?.id ?? null });
+  }
   await supabase.from("orders").update({ pay_status: "paid" }).eq("id", orderId);
   revalidatePath("/orders");
 }
