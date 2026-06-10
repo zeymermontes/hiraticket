@@ -120,6 +120,10 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists typing_until timestamptz`); err != nil {
 		logger.Warnf("add typing_until column: %v", err)
 	}
+	// Per-business toggle: appear online to receive typing (default on). Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table businesses add column if not exists show_typing boolean not null default true`); err != nil {
+		logger.Warnf("add show_typing column: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
@@ -272,11 +276,41 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 	}
 }
 
+// syncPresence sets the number's online presence to match the business's show_typing toggle:
+// available (receive customers' typing + appear online) or unavailable (private, no typing).
+func (m *Manager) syncPresence(ctx context.Context, businessID string, client *whatsmeow.Client) {
+	if client == nil || !client.IsConnected() {
+		return
+	}
+	show := true
+	if err := m.db.QueryRowContext(ctx, `SELECT coalesce(show_typing, true) FROM businesses WHERE id=$1`, businessID).Scan(&show); err != nil {
+		return
+	}
+	presence := types.PresenceAvailable
+	if !show {
+		presence = types.PresenceUnavailable
+	}
+	if err := client.SendPresence(ctx, presence); err != nil {
+		m.log.Warnf("send presence: %v", err)
+	}
+}
+
 // pollHeartbeat periodically logs how many outbound messages are stuck, so a recurring problem
 // (queued not draining, anything 'failed') is visible without guessing.
 func (m *Manager) pollHeartbeat(ctx context.Context) {
 	for {
 		time.Sleep(30 * time.Second)
+		// Keep presence in sync with the show_typing toggle (applies runtime changes) and keep the
+		// "online" status fresh so typing notifications keep flowing.
+		m.mu.Lock()
+		snap := make(map[string]*whatsmeow.Client, len(m.byBiz))
+		for biz, c := range m.byBiz {
+			snap[biz] = c
+		}
+		m.mu.Unlock()
+		for biz, c := range snap {
+			m.syncPresence(ctx, biz, c)
+		}
 		var queued, sending, failed int
 		if err := m.db.QueryRowContext(ctx, `SELECT
 			count(*) filter (where state='queued'),
@@ -555,11 +589,9 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 				SET status='connected', qr=NULL, pairing_code=NULL, phone=$1, device_jid=$2, last_seen=now(), updated_at=now()
 				WHERE id=$3`, phone, jid, s.ID)
 			m.log.Infof("connected %s as %s", s.ID, phone)
-			// Mark ourselves available so WhatsApp delivers the contacts' typing (ChatPresence)
-			// notifications. Note: this also makes the number appear "online" while connected.
-			if perr := client.SendPresence(ctx, types.PresenceAvailable); perr != nil {
-				m.log.Warnf("send presence: %v", perr)
-			}
+			// Presence per the business's show_typing toggle (available → receive typing + appear
+			// online; unavailable → stay private but no typing indicators).
+			m.syncPresence(ctx, s.BusinessID, client)
 			// Auto-heal: give recently-failed sends (usually deploy-window/StreamReplaced casualties)
 			// another shot now that the session is back, so the user doesn't have to hit Retry.
 			if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', send_attempts=0, next_retry_at=NULL

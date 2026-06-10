@@ -9,6 +9,7 @@ export interface Business {
   onboarded: boolean;
   custom_fields: string[] | null;
   product_stages: boolean;
+  show_typing: boolean; // appear "online" to receive customers' typing indicators
 }
 
 export interface OrderRow {

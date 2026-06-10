@@ -5,9 +5,9 @@ import type { Business, OrderRow } from "@/lib/types";
 export async function getMyBusiness(): Promise<Business | null> {
   const supabase = await createClient();
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
-  // Try with product_stages (migration 0019). Fall back gracefully if the column isn't there yet.
+  // Try with the optional columns (migrations 0019/0027). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing`)
     .order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (error) {
     const r = await supabase.from("businesses").select(BASE)
@@ -15,7 +15,8 @@ export async function getMyBusiness(): Promise<Business | null> {
     data = r.data as typeof data;
   }
   if (!data) return null;
-  return { ...(data as Record<string, unknown>), product_stages: (data as { product_stages?: boolean }).product_stages ?? false } as Business;
+  const d = data as Record<string, unknown>;
+  return { ...d, product_stages: (d.product_stages as boolean) ?? false, show_typing: (d.show_typing as boolean) ?? true } as Business;
 }
 
 export async function getOrders(businessId: string): Promise<OrderRow[]> {

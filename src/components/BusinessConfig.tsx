@@ -39,7 +39,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping,
 }: {
   businessId: string;
   businessName: string;
@@ -50,6 +50,7 @@ export function BusinessConfig({
   objectSingular: string;
   customFields: string[];
   productStages: boolean;
+  showTyping: boolean;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -140,6 +141,22 @@ export function BusinessConfig({
             <div className="row gap-2">
               <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva etapa…" : "New stage…"} value={newStage} onChange={(e) => setNewStage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addStage(); }} />
               <button className="btn btn-sm btn-primary" disabled={!newStage.trim()} onClick={addStage}><Icon name="plus" size={14} />{lang === "es" ? "Agregar etapa" : "Add stage"}</button>
+            </div>
+          </div>
+        </section>
+
+        {/* WhatsApp privacy */}
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="whatsapp" size={16} /><h4 className="grow">{lang === "es" ? "WhatsApp" : "WhatsApp"}</h4></div>
+          <div className="ws-block-body col gap-2">
+            <div className="row gap-2" style={{ alignItems: "flex-start" }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Ver cuándo el cliente escribe" : "See when the customer is typing"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Muestra \"escribiendo…\". Requiere que tu número aparezca en línea mientras el worker está conectado." : "Shows \"typing…\". Requires your number to appear online while the worker is connected."}</div>
+              </div>
+              <button className={"chip" + (showTyping ? " on" : "")} onClick={() => run(() => updateBusinessProfile(businessId, { show_typing: !showTyping }))}>
+                {showTyping ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
+              </button>
             </div>
           </div>
         </section>
