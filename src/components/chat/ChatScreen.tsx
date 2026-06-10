@@ -829,10 +829,25 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                         <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden" }}>
                           <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
+                          {m.state === "failed" && (
+                            <button title={lang === "es" ? "Reintentar" : "Retry"} onClick={(e) => { e.preventDefault(); e.stopPropagation(); start(async () => { await retryMessage(m.id); refresh(); }); }}
+                              style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.55)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, border: "none", cursor: "pointer", font: "inherit", fontSize: 10.5, fontWeight: 700 }}>
+                              <Icon name="refresh" size={17} />{lang === "es" ? "Reintentar" : "Retry"}
+                            </button>
+                          )}
+                          {m.state === "queued" && <span style={{ position: "absolute", bottom: 3, right: 3, background: "rgba(0,0,0,.45)", borderRadius: 5, padding: "1px 3px", display: "inline-flex", color: "#fff" }}><Tick state="queued" /></span>}
                         </a>
                       ))}
                     </div>
-                    <div className="bubble-meta">{relTime(row.created_at, lang)}{out && <Tick state={row.items[row.items.length - 1].state} />}</div>
+                    <div className="bubble-meta">
+                      {row.items.some((it) => it.state === "failed") && (
+                        <button onClick={() => start(async () => { for (const it of row.items.filter((x) => x.state === "failed")) await retryMessage(it.id); refresh(); })}
+                          style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}>
+                          <Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}
+                        </button>
+                      )}
+                      {relTime(row.created_at, lang)}{out && <Tick state={row.items.some((it) => it.state === "failed") ? "failed" : row.items[row.items.length - 1].state} />}
+                    </div>
                   </div>
                 </div>
               </React.Fragment>
