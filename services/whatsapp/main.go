@@ -531,7 +531,8 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 		// Another connection took over this WhatsApp session — usually the previous deploy's
 		// instance overlapping during a redeploy. Step aside and back off for a cooldown so we
 		// don't tight-loop reconnecting and fighting it; pollSessions skips us until it elapses.
-		m.log.Warnf("session %s was REPLACED by another connection — backing off 45s (deploy overlap, or a 2nd worker on the same number?)", s.ID)
+		m.log.Warnf("session %s was REPLACED by another connection — stepping aside 45s (deploy overlap, or a 2nd worker on the same number?)", s.ID)
+		client.EnableAutoReconnect = false // don't let whatsmeow reconnect this one and fight for the socket
 		m.mu.Lock()
 		m.replaced[s.ID] = time.Now().Add(45 * time.Second)
 		m.mu.Unlock()
