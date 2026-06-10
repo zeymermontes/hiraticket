@@ -37,7 +37,7 @@ export function priorityColor(p: OrderRow["priority"]): PillColor {
   return PRIORITY_COLOR[p] ?? "slate";
 }
 
-export const MSG_PAGE = 40; // chat messages loaded per page (initial window + each scroll-up)
+export const MSG_PAGE = 25; // chat messages loaded per page (initial window + each scroll-up)
 
 export interface PriceTier { min: number; price: number }
 /** Unit price for `qty` honoring quantity tiers — the tier with the highest `min` ≤ qty wins;

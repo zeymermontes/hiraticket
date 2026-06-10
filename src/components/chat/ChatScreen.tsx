@@ -37,6 +37,23 @@ function linkify(text: string): React.ReactNode {
 }
 const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
 
+// Session cache of opened conversation details, so switching chats can render instantly while
+// fresh data loads in the background. Populated on open + on hover-prefetch.
+const _detailCache = new Map<string, ConvDetail>();
+const _prefetching = new Set<string>();
+
+/** Minimal detail from a list item — shows the header instantly before the full detail loads. */
+function skeletonDetail(c: ConvListItem): ConvDetail {
+  return {
+    id: c.id, status: c.status, assignee_id: c.assignee_id, unread: c.unread,
+    hidden: c.hidden, snoozed_until: c.snoozed_until, area: c.area,
+    contact: c.contact
+      ? { id: c.contact.id, name: c.contact.name, phone: c.contact.phone, tags: c.contact.tags ?? [], avatar_url: c.contact.avatar_url, created_at: null }
+      : null,
+    messages: [], notes: [], events: [], orders: [],
+  };
+}
+
 /** Union two message lists by id (later list wins for updated state), sorted oldest→newest. */
 function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
   const map = new Map<string, ChatMessage>();
@@ -230,6 +247,16 @@ export function ChatScreen({
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+
+  // Speed: cache each opened detail, prefetch on hover, and open instantly from cache/skeleton
+  // (the URL navigation still refetches fresh data in the background).
+  useEffect(() => { if (detail) _detailCache.set(detail.id, detail); }, [detail]);
+  const prefetchDetail = useCallback((id: string) => {
+    if (_detailCache.has(id) || _prefetching.has(id)) return;
+    _prefetching.add(id);
+    liveDetail(id).then((d) => { if (d) _detailCache.set(id, d); }).catch(() => {}).finally(() => _prefetching.delete(id));
+  }, []);
+  const openConv = useCallback((c: ConvListItem) => { setDetail(_detailCache.get(c.id) ?? skeletonDetail(c)); }, []);
 
   // Targeted refresh used by click handlers instead of refresh(): refetches the open
   // conversation (incl. notes/orders, which aren't realtime-published) + the list — not the route.
@@ -432,7 +459,7 @@ export function ChatScreen({
             filtered.map((c) => {
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
-                <Link key={c.id} href={`/chat?c=${c.id}`} className={"conv" + (c.id === selectedId ? " sel" : "") + (c.unread ? " unread" : "")}>
+                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={() => openConv(c)} className={"conv" + (c.id === selectedId ? " sel" : "") + (c.unread ? " unread" : "")}>
                   <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">

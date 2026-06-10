@@ -109,6 +109,12 @@ end $$;`); err != nil {
 		logger.Warnf("add retry columns: %v", err)
 	}
 
+	// Index for fast paginated message loads (newest-N, then older pages). Idempotent.
+	if _, err := db.ExecContext(ctx, `create index if not exists messages_conv_created_idx
+		on public.messages (conversation_id, created_at desc)`); err != nil {
+		logger.Warnf("create messages index: %v", err)
+	}
+
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
 	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'`); err != nil {
