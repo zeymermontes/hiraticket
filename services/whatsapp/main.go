@@ -738,9 +738,19 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		body = mname
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta))
+	// If this message quotes another (a reply), link it to our stored message so it renders as a reply.
+	var replyTo interface{}
+	if ci != nil && ci.GetStanzaID() != "" {
+		var rid string
+		if e := m.db.QueryRowContext(ctx,
+			`SELECT id FROM messages WHERE business_id=$1 AND wa_id=$2 LIMIT 1`, s.BusinessID, ci.GetStanzaID()).Scan(&rid); e == nil {
+			replyTo = rid
+		}
+	}
+
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo)
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
