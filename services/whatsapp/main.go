@@ -795,9 +795,15 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	}
 
 	var phone sql.NullString
-	if err := m.db.QueryRowContext(ctx,
+	if perr := m.db.QueryRowContext(ctx,
 		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, o.conv).
-		Scan(&phone); err != nil || !phone.Valid || digits(phone.String) == "" {
+		Scan(&phone); perr != nil {
+		// Transient DB hiccup (pooler) — retry with backoff instead of silently failing.
+		m.retryOrFail(ctx, o, "phone lookup: "+perr.Error())
+		return false
+	}
+	if !phone.Valid || digits(phone.String) == "" {
+		m.log.Errorf("send %s failed: no phone on conversation %s", o.id, o.conv)
 		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
 		return false
 	}
