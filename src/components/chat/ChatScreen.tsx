@@ -100,6 +100,9 @@ function useChatRefresh() {
   const router = useRouter();
   return ctx ?? (() => router.refresh());
 }
+// Optimistically patch the open conversation's detail (instant feedback before the action resolves).
+const ChatPatchContext = createContext<((patch: Partial<ConvDetail>) => void) | null>(null);
+function useChatPatch() { return useContext(ChatPatchContext) ?? (() => {}); }
 
 function LocationBlock({ m }: { m: ChatMessage }) {
   const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
@@ -298,6 +301,7 @@ export function ChatScreen({
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+  const patchDetail = useCallback((patch: Partial<ConvDetail>) => setDetail((c) => (c ? { ...c, ...patch } : c)), []);
 
   // Re-render periodically so typing indicators expire on their own (no "paused" event needed).
   const [, setNowTick] = useState(0);
@@ -486,6 +490,7 @@ export function ChatScreen({
 
   return (
     <ChatRefreshContext.Provider value={softRefresh}>
+    <ChatPatchContext.Provider value={patchDetail}>
     <div
       className="chat"
       style={{
@@ -587,6 +592,7 @@ export function ChatScreen({
         </div>
       )}
     </div>
+    </ChatPatchContext.Provider>
     </ChatRefreshContext.Provider>
   );
 }
@@ -595,6 +601,7 @@ export function ChatScreen({
 export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
+  const patch = useChatPatch();
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
   const [extra, setExtra] = useState<ChatMessage[]>([]);
@@ -853,7 +860,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         <TransferControl detail={detail} agents={agents} areas={areas} />
         {detail.status !== "resolved" ? (
           <button className="iconbtn" title={lang === "es" ? "Resolver" : "Resolve"} style={{ color: "var(--green)" }} disabled={pending}
-            onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); })}>
+            onClick={() => { patch({ status: "resolved" }); start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); }); }}>
             {pending ? <Spinner size={15} /> : <Icon name="check" />}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
@@ -1125,6 +1132,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   const { lang } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
+  const patch = useChatPatch();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [loadingOrder, setLoadingOrder] = useState<string | null>(null);
@@ -1160,6 +1168,8 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
     const body = note.trim();
     if (!body) return;
     setNote("");
+    // Optimistic: show the note immediately; refresh() reconciles with the stored row.
+    patch({ notes: [...detail.notes, { id: "tmp" + detail.notes.length, body, author_id: null, created_at: new Date().toISOString() }] });
     start(async () => { await addConvNote(detail.id, body); refresh(); });
   }
   function saveName() {
@@ -1321,6 +1331,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
 function StatusControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
+  const patch = useChatPatch();
   const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   return (
@@ -1331,7 +1342,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 180, zIndex: 201 }}>
             {(["open", "pending", "resolved"] as const).map((s) => (
-              <button className="menu-item" key={s} onClick={() => { close(); start(async () => { await setConvStatus(detail.id, s); refresh(); }); }}>
+              <button className="menu-item" key={s} onClick={() => { close(); patch({ status: s }); start(async () => { await setConvStatus(detail.id, s); refresh(); }); }}>
                 <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
               </button>
             ))}
