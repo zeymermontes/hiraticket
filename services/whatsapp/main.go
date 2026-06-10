@@ -520,6 +520,14 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 				SET status='connected', qr=NULL, pairing_code=NULL, phone=$1, device_jid=$2, last_seen=now(), updated_at=now()
 				WHERE id=$3`, phone, jid, s.ID)
 			m.log.Infof("connected %s as %s", s.ID, phone)
+			// Auto-heal: give recently-failed sends (usually deploy-window/StreamReplaced casualties)
+			// another shot now that the session is back, so the user doesn't have to hit Retry.
+			if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', send_attempts=0, next_retry_at=NULL
+				WHERE business_id=$1 AND direction='out' AND state='failed' AND created_at > now() - interval '15 minutes'`, s.BusinessID); err == nil {
+				if n, _ := res.RowsAffected(); n > 0 {
+					m.log.Infof("requeued %d recently-failed message(s) after reconnect", n)
+				}
+			}
 		}
 	case *events.LoggedOut:
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='disconnected', qr=NULL, pairing_code=NULL, phone=NULL, device_jid=NULL, updated_at=now() WHERE id=$1`, s.ID)
