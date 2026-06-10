@@ -61,7 +61,7 @@ export async function deleteStage(stageId: string) {
 }
 
 /** Update the business vertical + the singular object noun. */
-export async function updateBusinessProfile(businessId: string, patch: { vertical?: string; object_singular?: string; product_stages?: boolean; show_typing?: boolean }): Promise<{ ok: boolean; error?: string }> {
+export async function updateBusinessProfile(businessId: string, patch: { vertical?: string; object_singular?: string; product_stages?: boolean; show_typing?: boolean; mode?: string }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const { data, error } = await supabase.from("businesses").update(patch).eq("id", businessId).select("id");
   revalidateAll();

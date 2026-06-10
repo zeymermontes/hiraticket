@@ -10,6 +10,7 @@ interface AppState {
   theme: Theme;
   density: Density;
   brand: string;
+  personal: boolean; // 'personal management' mode → tasks/subtasks, no money
   setLang: (l: Lang) => void;
   setTheme: (t: Theme) => void;
   setDensity: (d: Density) => void;
@@ -36,7 +37,7 @@ function readLS<T>(key: string, fallback: T): T {
   }
 }
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
+export function AppProvider({ children, personal = false }: { children: React.ReactNode; personal?: boolean }) {
   const [lang, setLangState] = useState<Lang>("es");
   const [theme, setThemeState] = useState<Theme>("light");
   const [density, setDensityState] = useState<Density>("comfortable");
@@ -85,6 +86,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     theme,
     density,
     brand,
+    personal,
     setLang: setLangState,
     setTheme: setThemeState,
     setDensity: setDensityState,

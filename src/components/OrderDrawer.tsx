@@ -27,7 +27,7 @@ export function OrderDrawer({
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean;
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   // Keep the detail live: re-seed from the prop, and re-fetch after each mutation so the drawer
@@ -148,7 +148,7 @@ export function OrderDrawer({
 
           {/* line items */}
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="orders" size={16} /><h4>{lang === "es" ? "Artículos del pedido" : "Line items"}</h4></div>
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4>{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos del pedido" : "Line items")}</h4></div>
             <div style={{ padding: "4px 14px 12px" }}>
               {detail.items.map((li) => (
                 <div className="lineitem" key={li.id}>
@@ -156,21 +156,25 @@ export function OrderDrawer({
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{li.name}</div>
                     <div className="row gap-2" style={{ marginTop: 2 }}>
-                      <span className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</span>
+                      {!personal && <span className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</span>}
+                      {personal && li.qty > 1 && <span className="t-xs muted mono">{li.qty}×</span>}
                       {detail.product_stages && <StageChip itemId={li.id} value={li.stage_id} stages={stages} lang={lang} onChange={(sid) => { const st = stages.find((s) => s.id === sid); runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, stage_id: sid, stage: st ? { name: st.name, color: st.color } : null } : it)) }, () => setItemStage(li.id, sid)); }} />}
                     </div>
                   </div>
-                  <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(li.subtotal)}</span>
+                  {!personal && <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(li.subtotal)}</span>}
                 </div>
               ))}
-              <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
-                <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
-                <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(detail.total)}</span>
-              </div>
+              {!personal && (
+                <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
+                  <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
+                  <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(detail.total)}</span>
+                </div>
+              )}
             </div>
           </div>
 
           {/* payment */}
+          {!personal && (
           <div className="ws-block">
             <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4><Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
             <div style={{ padding: "12px 14px" }} className="col gap-2">
@@ -209,6 +213,7 @@ export function OrderDrawer({
               </div>
             </div>
           </div>
+          )}
 
           {/* notes */}
           <div className="ws-block">

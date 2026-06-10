@@ -1228,7 +1228,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 
 /* ---------- Workspace (center column) ---------- */
 function Workspace({ detail, agents, areas, stages, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
@@ -1290,7 +1290,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   const blockContent: Record<string, (handle: { onPointerDown: (e: React.PointerEvent) => void }) => React.ReactNode> = {
     orders: (handle) => (
       <>
-        <div className="ws-block-head">{grip(handle)}<Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pedidos" : "Orders"} <span className="muted">· {detail.orders.length}</span></h4>
+        <div className="ws-block-head">{grip(handle)}<Icon name="orders" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")} <span className="muted">· {detail.orders.length}</span></h4>
           <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
         </div>
         <div className="ws-block-body col gap-2">
@@ -1299,7 +1299,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
               <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
                 <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
                 {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
-                <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></div>
+                <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" />{!personal && <span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span>}</div>
               </button>
             ))}
         </div>
@@ -1378,7 +1378,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
             {detail.area && <Pill color={detail.area.color as PillColor}>{detail.area.name}</Pill>}
           </div>
           <div className="col gap-1" style={{ paddingTop: 4 }}>
-            <div className="kv"><span className="k">{lang === "es" ? "Total gastado" : "Lifetime"}</span><span className="v mono">${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</span></div>
+            {!personal && <div className="kv"><span className="k">{lang === "es" ? "Total gastado" : "Lifetime"}</span><span className="v mono">${detail.orders.reduce((s, o) => s + (o.total || 0), 0).toLocaleString("es-MX")}</span></div>}
             <div className="kv"><span className="k">{lang === "es" ? "Primer contacto" : "First seen"}</span><span className="v">{detail.contact?.created_at ? new Date(detail.contact.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</span></div>
           </div>
           <button className="btn btn-dark btn-block" style={{ marginTop: 2 }} onClick={onOpen360}><Icon name="eye" size={15} />{lang === "es" ? "Historial completo" : "Full history"}<span className="grow" /><Icon name="arrowr" size={15} /></button>

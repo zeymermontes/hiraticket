@@ -7,7 +7,6 @@ import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
-import { VERTICALS } from "@/lib/verticals";
 import { ReorderList } from "@/components/ReorderList";
 import {
   createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields,
@@ -39,7 +38,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, mode,
 }: {
   businessId: string;
   businessName: string;
@@ -51,6 +50,7 @@ export function BusinessConfig({
   customFields: string[];
   productStages: boolean;
   showTyping: boolean;
+  mode: "business" | "personal";
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -74,20 +74,23 @@ export function BusinessConfig({
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         {/* Vertical + object name */}
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
-          <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Tipo de negocio" : "Business type"}</h4></div>
+          <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Tipo de espacio" : "Workspace type"}</h4></div>
           <div className="ws-block-body col gap-3">
             <div className="row gap-2" style={{ flexWrap: "wrap" }}>
-              {VERTICALS.map((v) => (
-                <button key={v.id} onClick={() => run(() => updateBusinessProfile(businessId, { vertical: v.id, object_singular: v.object[lang] }))}
-                  style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                    background: vertical === v.id ? "var(--brand-50)" : "var(--surface)", border: "1px solid " + (vertical === v.id ? "var(--brand)" : "var(--border)") }}>
-                  <Icon name={v.icon} size={18} /><span style={{ fontWeight: 600, fontSize: 13 }}>{v.name[lang]}</span>
+              {([
+                { id: "business", icon: "store", title: lang === "es" ? "Negocio" : "Business", desc: lang === "es" ? "Pedidos, productos, precios y pagos" : "Orders, products, prices, payments" },
+                { id: "personal", icon: "orders", title: lang === "es" ? "Gestión personal" : "Personal management", desc: lang === "es" ? "Tareas y subtareas, sin dinero" : "Tasks & subtasks, no money" },
+              ] as const).map((o) => (
+                <button key={o.id} onClick={() => run(() => updateBusinessProfile(businessId, { mode: o.id, object_singular: o.id === "personal" ? "Tarea" : "Pedido", product_stages: o.id === "personal" ? true : productStages }))}
+                  style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left", flex: "1 1 220px",
+                    background: mode === o.id ? "var(--brand-50)" : "var(--surface)", border: "2px solid " + (mode === o.id ? "var(--brand)" : "var(--border)") }}>
+                  <Icon name={o.icon} size={19} /><span style={{ minWidth: 0 }}><span style={{ display: "block", fontWeight: 700, fontSize: 13.5 }}>{o.title}</span><span className="t-xs muted">{o.desc}</span></span>
                 </button>
               ))}
             </div>
             <div className="row gap-2" style={{ alignItems: "center", maxWidth: 420 }}>
-              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "¿Cómo le llamas al objeto?" : "What do you call the object?"}</label>
-              <input className="inp-inline grow" defaultValue={objectSingular} placeholder={lang === "es" ? "Pedido" : "Order"}
+              <label className="lbl" style={{ margin: 0 }}>{mode === "personal" ? (lang === "es" ? "¿Cómo le llamas a la tarea?" : "What do you call the task?") : (lang === "es" ? "¿Cómo le llamas al objeto?" : "What do you call the object?")}</label>
+              <input className="inp-inline grow" defaultValue={objectSingular} placeholder={mode === "personal" ? "Tarea" : "Pedido"}
                 onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== objectSingular) run(() => updateBusinessProfile(businessId, { object_singular: v })); }} />
             </div>
           </div>

@@ -122,7 +122,7 @@ export interface ShellUser {
 function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { lang, t } = useApp();
+  const { lang, t, personal } = useApp();
   const [profOpen, setProfOpen] = useState(false);
   const profBtn = useRef<HTMLButtonElement>(null);
   const [profRect, setProfRect] = useState<DOMRect | null>(null);
@@ -153,7 +153,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
       <div className="rail-logo" title="Hiraticket">H</div>
       <div className="rail-nav">{PRIMARY.map(renderItem)}</div>
       <div className="rail-sep" />
-      <div className="rail-nav">{ADMIN.map(renderItem)}</div>
+      <div className="rail-nav">{ADMIN.filter((it) => !(personal && it.id === "catalog")).map(renderItem)}</div>
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
         <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
           <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={28} presence="online" />
@@ -178,7 +178,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
 }
 
 function TopBar({ notifications, connected, businessId }: { notifications: Notif[]; connected: boolean; businessId: string }) {
-  const { lang, setLang, theme, setTheme, t } = useApp();
+  const { lang, setLang, theme, setTheme, t, personal } = useApp();
   return (
     <header className="topbar">
       <div className="topbar-search">
@@ -208,7 +208,7 @@ function TopBar({ notifications, connected, businessId }: { notifications: Notif
       <Bell notifications={notifications} />
 
       <Link className="btn btn-primary" href="/orders?new=1">
-        <Icon name="plus" /> <span className="hide-narrow">{t("new_order")}</span>
+        <Icon name="plus" /> <span className="hide-narrow">{personal ? (lang === "es" ? "Nueva tarea" : "New task") : t("new_order")}</span>
       </Link>
     </header>
   );
@@ -222,6 +222,7 @@ export function Shell({
   notifications = [],
   connected = false,
   objectName = "Pedidos",
+  personal = false,
   children,
 }: {
   user: ShellUser;
@@ -231,6 +232,7 @@ export function Shell({
   notifications?: Notif[];
   connected?: boolean;
   objectName?: string;
+  personal?: boolean;
   children: React.ReactNode;
 }) {
   // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
@@ -247,7 +249,7 @@ export function Shell({
   }, [businessId]);
 
   return (
-    <AppProvider>
+    <AppProvider personal={personal}>
       <ToastProvider>
         <NavProgress />
         <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />

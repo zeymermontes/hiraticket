@@ -110,13 +110,19 @@ export async function moveOrderArea(orderId: string, areaId: string): Promise<vo
  * Creates the caller's business with a working default pipeline (no sample data).
  * Used by the first-run onboarding wizard.
  */
-export async function createBusiness(name: string, vertical: string): Promise<void> {
+export async function createBusiness(name: string, mode: string = "business"): Promise<void> {
   const supabase = await createClient();
+  const personal = mode === "personal";
   const { error } = await supabase.rpc("create_business", {
-    p_name: name.trim() || "Mi negocio",
-    p_vertical: vertical || "imprenta",
+    p_name: name.trim() || (personal ? "Mi espacio" : "Mi negocio"),
+    p_vertical: personal ? "personal" : "imprenta",
   });
   if (error) throw new Error(error.message);
+  // Set the workspace mode + default noun (orders→"Pedido" / tasks→"Tarea") on the new business.
+  const { data: biz } = await supabase.from("businesses").select("id").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (biz) {
+    await supabase.from("businesses").update({ mode: personal ? "personal" : "business", object_singular: personal ? "Tarea" : "Pedido", product_stages: personal }).eq("id", biz.id as string);
+  }
   revalidatePath("/", "layout");
 }
 

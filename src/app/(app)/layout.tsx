@@ -58,6 +58,7 @@ export default async function AppLayout({
       notifications={notifications}
       connected={isConnected(sessions)}
       objectName={objectName}
+      personal={business.mode === "personal"}
     >
       {children}
     </Shell>

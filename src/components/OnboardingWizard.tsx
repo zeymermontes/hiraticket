@@ -6,15 +6,6 @@ import { useApp } from "@/components/AppContext";
 import type { Business } from "@/lib/types";
 import { createBusiness, completeOnboarding } from "@/app/(app)/actions";
 
-const VERTICALS = [
-  { id: "imprenta", es: "Imprenta / Stickers", en: "Print / Stickers" },
-  { id: "restaurante", es: "Restaurante", en: "Restaurant" },
-  { id: "estetica", es: "Estética", en: "Salon" },
-  { id: "veterinaria", es: "Veterinaria", en: "Vet" },
-  { id: "retail", es: "Retail", en: "Retail" },
-  { id: "taller", es: "Taller", en: "Workshop" },
-  { id: "other", es: "Otro / Genérico", en: "Other / Generic" },
-];
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -35,35 +26,48 @@ export function OnboardingWizard({ business }: { business: Business | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
-  const [vertical, setVertical] = useState("imprenta");
+  const [mode, setMode] = useState<"business" | "personal">("business");
   const [err, setErr] = useState<string | null>(null);
 
-  // Phase A — create the business (required; this is the tenant).
+  // Phase A — create the workspace (required; this is the tenant).
   if (!business) {
     function submit() {
       if (!name.trim()) return;
       setErr(null);
       start(async () => {
-        try { await createBusiness(name, vertical); router.refresh(); }
+        try { await createBusiness(name, mode); router.refresh(); }
         catch (e) { setErr(e instanceof Error ? e.message : "error"); }
       });
     }
+    const opts: { id: "business" | "personal"; icon: string; title: string; desc: string }[] = [
+      { id: "business", icon: "store", title: lang === "es" ? "Negocio" : "Business", desc: lang === "es" ? "Pedidos con productos, precios y pagos. Para vender a clientes." : "Orders with products, prices and payments. Selling to customers." },
+      { id: "personal", icon: "orders", title: lang === "es" ? "Gestión personal" : "Personal management", desc: lang === "es" ? "Tareas con subtareas, sin dinero. Para organizar tu trabajo." : "Tasks with subtasks, no money. To organize your work." },
+    ];
     return (
       <Shell>
-        <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Crea tu negocio" : "Create your business"}</h1>
+        <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Crea tu espacio" : "Create your workspace"}</h1>
         <p className="muted" style={{ marginTop: 4, marginBottom: 18 }}>
-          {lang === "es" ? "Configuramos tu pipeline según tu rubro. Sin datos de ejemplo." : "We'll set up your pipeline for your industry. No sample data."}
+          {lang === "es" ? "Elige cómo lo vas a usar. Sin datos de ejemplo." : "Choose how you'll use it. No sample data."}
         </p>
         <div className="col gap-2">
-          <label className="lbl">{lang === "es" ? "Nombre del negocio" : "Business name"}</label>
+          <label className="lbl">{lang === "es" ? "Nombre" : "Name"}</label>
           <div className="field field-lg" style={{ height: 44 }}>
             <Icon name="store" />
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Hirata" autoFocus />
           </div>
-          <label className="lbl" style={{ marginTop: 6 }}>{lang === "es" ? "Rubro" : "Industry"}</label>
-          <select className="select" value={vertical} onChange={(e) => setVertical(e.target.value)}>
-            {VERTICALS.map((v) => <option key={v.id} value={v.id}>{lang === "es" ? v.es : v.en}</option>)}
-          </select>
+          <label className="lbl" style={{ marginTop: 6 }}>{lang === "es" ? "Tipo de espacio" : "Workspace type"}</label>
+          <div className="col gap-2">
+            {opts.map((o) => (
+              <button key={o.id} type="button" onClick={() => setMode(o.id)}
+                style={{ display: "flex", gap: 12, alignItems: "flex-start", textAlign: "left", padding: 14, borderRadius: 12, cursor: "pointer", background: mode === o.id ? "var(--brand-50)" : "var(--surface)", border: "2px solid " + (mode === o.id ? "var(--brand)" : "var(--border)") }}>
+                <span style={{ width: 38, height: 38, borderRadius: 10, flex: "none", background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={o.icon} size={19} /></span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{o.title}</span>
+                  <span className="t-xs muted">{o.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
           {err && <div className="t-sm" style={{ color: "var(--red)" }}>{err}</div>}
           <button className="btn btn-primary btn-lg btn-block" style={{ marginTop: 10 }} disabled={pending || !name.trim()} onClick={submit}>
             <Icon name="arrowr" size={16} />{lang === "es" ? "Continuar" : "Continue"}

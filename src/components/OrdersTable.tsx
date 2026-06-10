@@ -38,7 +38,7 @@ export function OrdersTable({
   products: Product[];
   contacts: { id: string; name: string }[];
 }) {
-  const { t, lang } = useApp();
+  const { t, lang, personal } = useApp();
   const router = useRouter();
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const [q, setQ] = useState("");
@@ -171,8 +171,8 @@ export function OrdersTable({
               <th>{t("col_area")}</th>
               <th>{lang === "es" ? "Agente" : "Agent"}</th>
               <th>{lang === "es" ? "Prioridad" : "Priority"}</th>
-              <th>{lang === "es" ? "Artículos" : "Items"}</th>
-              <Sort k="total">{t("col_total")}</Sort>
+              <th>{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items")}</th>
+              {!personal && <Sort k="total">{t("col_total")}</Sort>}
               <Sort k="created_at">{lang === "es" ? "Creado" : "Created"}</Sort>
               <Sort k="updated_at">{t("col_updated")}</Sort>
             </tr>
@@ -196,7 +196,7 @@ export function OrdersTable({
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
                 <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
-                <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>
+                {!personal && <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>}
                 <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
                 <td className="muted t-sm">{relDate(o.updated_at)}</td>
               </tr>
@@ -280,7 +280,7 @@ function NewOrderModal({
   products: Product[];
   contacts: { id: string; name: string }[];
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [contactName, setContactName] = useState(defaultContact ?? "");
@@ -334,14 +334,14 @@ function NewOrderModal({
       <div className="modal" role="dialog">
         <div className="modal-head">
           <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="orders" /></span>
-          <h3 className="grow">{lang === "es" ? "Nuevo pedido" : "New order"}</h3>
+          <h3 className="grow">{personal ? (lang === "es" ? "Nueva tarea" : "New task") : (lang === "es" ? "Nuevo pedido" : "New order")}</h3>
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
         <div className="modal-body col gap-2">
           <label className="lbl">{lang === "es" ? "Cliente" : "Customer"}</label>
           <input className="inp-inline" list="contact-list" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={lang === "es" ? "Nombre del cliente" : "Customer name"} />
           <datalist id="contact-list">{contacts.map((c) => <option key={c.id} value={c.name} />)}</datalist>
-          {products.length > 0 && (
+          {!personal && products.length > 0 && (
             <>
               <label className="lbl">{lang === "es" ? "Agregar del catálogo" : "Add from catalog"}</label>
               <select className="select" value="" onChange={(e) => { addFromCatalog(e.target.value); e.target.value = ""; }}>
@@ -350,23 +350,23 @@ function NewOrderModal({
               </select>
             </>
           )}
-          <label className="lbl">{lang === "es" ? "Artículos" : "Items"}</label>
+          <label className="lbl">{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items")}</label>
           <div className="col gap-2">
             {lines.map((l, i) => {
-              const onTier = !!(l.tiers?.length && l.basePrice != null && Number(l.price) < l.basePrice);
+              const onTier = !personal && !!(l.tiers?.length && l.basePrice != null && Number(l.price) < l.basePrice);
               return (
                 <div className="col gap-1" key={i}>
                   <div className="row gap-2" style={{ alignItems: "flex-end" }}>
-                    <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={lang === "es" ? "Descripción" : "Description"} /></div>
+                    <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Descripción" : "Description")} /></div>
                     <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>
-                    <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>
+                    {!personal && <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>}
                     <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
                   </div>
                   {onTier && <span className="t-xs row gap-1" style={{ color: "var(--green)" }}><Icon name="layers" size={11} />{lang === "es" ? `Precio por volumen (base $${formatMoney(l.basePrice!)})` : `Volume price (base $${formatMoney(l.basePrice!)})`}</span>}
                 </div>
               );
             })}
-            <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => addLine()}><Icon name="plus" size={14} />{lang === "es" ? "Agregar producto" : "Add product"}</button>
+            <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => addLine()}><Icon name="plus" size={14} />{personal ? (lang === "es" ? "Agregar subtarea" : "Add subtask") : (lang === "es" ? "Agregar producto" : "Add product")}</button>
           </div>
           <div className="row gap-2">
             <div className="grow"><label className="lbl">{lang === "es" ? "Etapa" : "Stage"}</label>
@@ -381,10 +381,12 @@ function NewOrderModal({
               </select>
             </div>
           </div>
-          <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
-            <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Subtotal" : "Subtotal"}</span>
-            <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal)}</span>
-          </div>
+          {!personal && (
+            <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
+              <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Subtotal" : "Subtotal"}</span>
+              <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal)}</span>
+            </div>
+          )}
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>

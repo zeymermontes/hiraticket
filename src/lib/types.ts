@@ -10,6 +10,7 @@ export interface Business {
   custom_fields: string[] | null;
   product_stages: boolean;
   show_typing: boolean; // appear "online" to receive customers' typing indicators
+  mode: "business" | "personal"; // 'personal' → tasks/subtasks, no prices/payments
 }
 
 export interface OrderRow {
