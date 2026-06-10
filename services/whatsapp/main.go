@@ -280,9 +280,14 @@ func (m *Manager) pollHeartbeat(ctx context.Context) {
 			FROM messages WHERE direction='out' AND created_at > now() - interval '2 hours'`).Scan(&queued, &sending, &failed); err == nil {
 			if queued+sending+failed > 0 {
 				m.mu.Lock()
-				conn := len(m.byBiz)
+				conn, live := len(m.byBiz), 0
+				for _, c := range m.byBiz {
+					if c.IsConnected() {
+						live++
+					}
+				}
 				m.mu.Unlock()
-				m.log.Infof("outbound backlog (2h): queued=%d sending=%d failed=%d  (sessions connected=%d)", queued, sending, failed, conn)
+				m.log.Infof("outbound backlog (2h): queued=%d sending=%d failed=%d  (sessions=%d, actually connected=%d)", queued, sending, failed, conn, live)
 				// Spell out each failed message so the cause (and whether it's a fresh failure or a
 				// stale leftover) is obvious without grepping earlier logs.
 				if failed > 0 {
@@ -869,8 +874,10 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	m.mu.Lock()
 	client := m.byBiz[o.biz]
 	m.mu.Unlock()
-	if client == nil {
-		return false // not connected yet — leave queued for the next poll
+	if client == nil || !client.IsConnected() {
+		// Not actually connected (e.g. mid-reconnect) — leave queued, don't burn a failed attempt
+		// on a dead socket. pollOutbound retries once the session is back.
+		return false
 	}
 
 	// Claim atomically so a restart can't double-send.
