@@ -1,4 +1,34 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+const PUBLIC_MEDIA_MARKER = "/object/public/media/";
+/** Stored media_url → storage path (handles raw paths and legacy full public URLs). */
+function mediaPath(u: string | null): string | null {
+  if (!u) return null;
+  const i = u.indexOf(PUBLIC_MEDIA_MARKER);
+  if (i >= 0) return decodeURIComponent(u.slice(i + PUBLIC_MEDIA_MARKER.length));
+  if (!u.startsWith("http")) return u; // already a bare path
+  return null; // external URL — leave untouched
+}
+
+/** Replace media_url paths with short-lived signed URLs (private 'media' bucket). */
+async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
+  const paths = [...new Set(messages.map((m) => mediaPath(m.media_url)).filter((p): p is string => !!p))];
+  if (paths.length === 0) return messages;
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.storage.from("media").createSignedUrls(paths, 60 * 60 * 24 * 7);
+    const signed = new Map<string, string>();
+    (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
+    return messages.map((m) => {
+      const p = mediaPath(m.media_url);
+      return p && signed.has(p) ? { ...m, media_url: signed.get(p)! } : m;
+    });
+  } catch {
+    return messages; // admin/storage not configured — leave as-is
+  }
+}
 
 export interface Agent {
   id: string;
@@ -188,6 +218,7 @@ export async function getConversationDetail(
   } else {
     messages = ((messages ?? []) as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
   }
+  messages = await signMedia(messages ?? []);
 
   return {
     id: conv.id,

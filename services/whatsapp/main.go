@@ -237,7 +237,8 @@ func extFromMime(mime string) string {
 	}
 }
 
-// uploadMedia stores bytes in the public 'media' bucket and returns the public URL.
+// uploadMedia stores bytes in the 'media' bucket and returns the storage PATH (not a public
+// URL) — the bucket is private and the app serves it via short-lived signed URLs.
 func (m *Manager) uploadMedia(ctx context.Context, path string, data []byte, mime string) (string, error) {
 	if m.supaURL == "" || m.supaKey == "" {
 		return "", fmt.Errorf("storage not configured")
@@ -259,7 +260,32 @@ func (m *Manager) uploadMedia(ctx context.Context, path string, data []byte, mim
 		b, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("storage %d: %s", resp.StatusCode, string(b))
 	}
-	return m.supaURL + "/storage/v1/object/public/media/" + path, nil
+	return path, nil
+}
+
+// fetchMedia resolves a stored media_url (a storage path, or a legacy full URL) to bytes,
+// authenticating with the service role so it works with the private 'media' bucket.
+func (m *Manager) fetchMedia(ctx context.Context, ref string) ([]byte, string, error) {
+	if strings.HasPrefix(ref, "http") {
+		return httpGet(ctx, ref) // legacy rows stored a full public URL
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", m.supaURL+"/storage/v1/object/media/"+ref, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.supaKey)
+	req.Header.Set("apikey", m.supaKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, "", fmt.Errorf("media fetch %d: %s", resp.StatusCode, string(b))
+	}
+	data, err := io.ReadAll(resp.Body)
+	return data, resp.Header.Get("Content-Type"), err
 }
 
 func httpGet(ctx context.Context, url string) ([]byte, string, error) {
@@ -741,7 +767,7 @@ func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Cl
 	if o.mtype == "text" || o.murl == "" {
 		return &waE2E.Message{Conversation: proto.String(o.body)}, nil
 	}
-	data, ctype, err := httpGet(ctx, o.murl)
+	data, ctype, err := m.fetchMedia(ctx, o.murl)
 	if err != nil {
 		return nil, err
 	}

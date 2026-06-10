@@ -407,9 +407,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
         if (error) { console.error(error); continue; }
-        const { data } = supabase.storage.from("media").getPublicUrl(path);
+        // Store the storage PATH; the private bucket is served via signed URLs on read.
         const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: data.publicUrl, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
       }
       setStaged([]); setCaption("");
       router.refresh();
