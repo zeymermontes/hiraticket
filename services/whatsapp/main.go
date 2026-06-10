@@ -482,6 +482,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		if v.Info.IsFromMe {
 			by = "agent"
 		}
+		m.log.Infof("reaction received (%s) %q on %s", by, rm.GetText(), rm.GetKey().GetID())
 		m.applyReaction(ctx, s.BusinessID, rm.GetKey().GetID(), rm.GetText(), by)
 		return
 	}
@@ -901,6 +902,7 @@ func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op, 
 			m.log.Errorf("react %s: %v", id, err)
 			return
 		}
+		m.log.Infof("reaction sent → %s %q", chatJID, react)
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL, react_emoji=NULL WHERE id=$1`, id)
 	default:
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, id)
