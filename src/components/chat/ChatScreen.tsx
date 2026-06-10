@@ -793,7 +793,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     : (
                       <>
                         {m.media_url && <MediaBlock m={m} />}
-                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{linkify(m.body)}</div>}
+                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} />}
                       </>
                     )}
