@@ -13,7 +13,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment, loadOrderDetail } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -22,7 +22,7 @@ const PRIO: Record<string, { es: string; en: string }> = {
 };
 
 export function OrderDrawer({
-  detail, stages, areas, agents, onClose, businessId, convDetail, connected,
+  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean;
@@ -30,6 +30,11 @@ export function OrderDrawer({
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Keep the detail live: re-seed from the prop, and re-fetch after each mutation so the drawer
+  // updates in place (it's often opened from local state — Kanban/chat — that router.refresh
+  // doesn't touch).
+  const [detail, setDetail] = useState(detailProp);
+  useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const [note, setNote] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [xfer, setXfer] = useState(false);
@@ -37,7 +42,12 @@ export function OrderDrawer({
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const [chatW, setChatW] = useState(380);
-  const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
+  const run = (fn: () => Promise<unknown>) => start(async () => {
+    await fn();
+    const fresh = await loadOrderDetail(detailProp.id);
+    if (fresh) setDetail(fresh);
+    router.refresh();
+  });
 
   const DRAWER_W = 560; // width of the order drawer this panel docks against
   useEffect(() => {
