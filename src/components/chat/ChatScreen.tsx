@@ -23,6 +23,7 @@ import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
 } from "@/app/(app)/chat/actions";
+import { liveList, liveMessages, liveConvHeader } from "@/app/(app)/chat/live-actions";
 
 function LocationBlock({ m }: { m: ChatMessage }) {
   const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
@@ -134,7 +135,7 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
 };
 
 export function ChatScreen({
-  list, detail, selectedId, agents, areas, stages, meId, businessId, connected,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, meId, businessId, connected,
 }: {
   list: ConvListItem[];
   detail: ConvDetail | null;
@@ -151,25 +152,43 @@ export function ChatScreen({
   const [show360, setShow360] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
 
-  // Live updates: refresh server data when messages/conversations change.
+  // Local copies kept live by targeted realtime refetches; re-seeded when the server sends new props.
+  const [list, setList] = useState(listProp);
+  useEffect(() => { setList(listProp); }, [listProp]);
+  const [detail, setDetail] = useState(detailProp);
+  useEffect(() => { setDetail(detailProp); }, [detailProp]);
+  const detailIdRef = useRef<string | null>(null);
+  detailIdRef.current = detail?.id ?? null;
+
+  // Live updates via targeted refetches (no full route refresh — only what changed).
   useEffect(() => {
     const supabase = createClient();
-    let t: ReturnType<typeof setTimeout>;
-    const bump = () => { clearTimeout(t); t = setTimeout(() => router.refresh(), 250); };
+    let tl: ReturnType<typeof setTimeout>, tm: ReturnType<typeof setTimeout>, th: ReturnType<typeof setTimeout>;
+    const softList = () => { clearTimeout(tl); tl = setTimeout(() => { liveList(businessId).then(setList).catch(() => {}); }, 250); };
+    const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: ms } : c))).catch(() => {}); }, 120); };
+    const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
     const ch = supabase
       .channel(`chat-${businessId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, bump)
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, bump)
-      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, bump)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, (p) => {
+        const cid = (p.new as { conversation_id?: string })?.conversation_id ?? (p.old as { conversation_id?: string })?.conversation_id;
+        if (cid && cid === detailIdRef.current) softMsgs();
+        softList();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, (p) => {
+        const cid = (p.new as { id?: string })?.id ?? (p.old as { id?: string })?.id;
+        if (cid && cid === detailIdRef.current) softHeader();
+        softList();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, () => { softHeader(); softList(); })
       .subscribe();
-    return () => { clearTimeout(t); supabase.removeChannel(ch); };
-  }, [businessId, router]);
+    return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); supabase.removeChannel(ch); };
+  }, [businessId]);
 
-  // Mark a conversation read (reset unread) when it's opened.
+  // Mark a conversation read when it's open and it has unread (incl. messages that arrive while open).
   useEffect(() => {
-    if (detail && detail.unread > 0) markConvRead(detail.id).then(() => router.refresh());
+    if (detail && detail.unread > 0) { markConvRead(detail.id); setDetail((c) => (c ? { ...c, unread: 0 } : c)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail?.id]);
+  }, [detail?.id, detail?.unread]);
 
   // Remember the last chat the agent actually opened (cookie → the server page reopens it
   // when returning to /chat without an explicit ?c). Only persist when the chat was opened

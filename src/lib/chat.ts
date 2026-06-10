@@ -171,6 +171,23 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   });
 }
 
+const MSG_FULL = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";
+const MSG_BASE = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
+
+/** Signed messages for a conversation — the high-frequency realtime read (no notes/events/orders). */
+export async function getConversationMessages(convId: string): Promise<ChatMessage[]> {
+  const supabase = await createClient();
+  const res = await supabase.from("messages").select(MSG_FULL).eq("conversation_id", convId).order("created_at", { ascending: true });
+  let messages: ChatMessage[];
+  if (res.error) {
+    const base = await supabase.from("messages").select(MSG_BASE).eq("conversation_id", convId).order("created_at", { ascending: true });
+    messages = ((base.data ?? []) as Record<string, unknown>[]).map((m) => ({ ...m, forwarded: false, edited: false, meta: null, reactions: [] })) as unknown as ChatMessage[];
+  } else {
+    messages = ((res.data ?? []) as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
+  }
+  return signMedia(messages);
+}
+
 export async function getConversationDetail(
   convId: string,
 ): Promise<ConvDetail | null> {
@@ -183,12 +200,9 @@ export async function getConversationDetail(
     .maybeSingle();
   if (!conv) return null;
 
-  const FULL = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";
-  const BASE = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
-
-  const [msgRes, { data: notes }, { data: events }, { data: orders }] =
+  const [messages, { data: notes }, { data: events }, { data: orders }] =
     await Promise.all([
-      supabase.from("messages").select(FULL).eq("conversation_id", convId).order("created_at", { ascending: true }),
+      getConversationMessages(convId),
       supabase
         .from("notes")
         .select("id, body, author_id, created_at")
@@ -209,16 +223,6 @@ export async function getConversationDetail(
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [] as unknown[] }),
     ]);
-
-  // Resilient to not-yet-applied migrations (0015 forwarded/edited/meta, 0018 reactions).
-  let messages = msgRes.data as ChatMessage[] | null;
-  if (msgRes.error) {
-    const base = await supabase.from("messages").select(BASE).eq("conversation_id", convId).order("created_at", { ascending: true });
-    messages = ((base.data ?? []) as Record<string, unknown>[]).map((m) => ({ ...m, forwarded: false, edited: false, meta: null, reactions: [] })) as unknown as ChatMessage[];
-  } else {
-    messages = ((messages ?? []) as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
-  }
-  messages = await signMedia(messages ?? []);
 
   return {
     id: conv.id,

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -8,6 +8,7 @@ import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import { GlobalSearch } from "@/components/GlobalSearch";
+import { liveBadges } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -230,14 +231,27 @@ export function Shell({
   objectName?: string;
   children: React.ReactNode;
 }) {
+  // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
+  const [b, setB] = useState(badges);
+  const [sb, setSb] = useState(secondaryBadges);
+  const [notifs, setNotifs] = useState(notifications);
+  useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications]);
+  const refreshBadges = useCallback(() => {
+    liveBadges(businessId).then((r) => {
+      setB((cur) => ({ ...cur, chat: r.mine }));
+      setSb({ chat: r.unassigned });
+      setNotifs(r.notifications);
+    }).catch(() => {});
+  }, [businessId]);
+
   return (
     <AppProvider>
       <ToastProvider>
-        <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} />
+        <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
         <div className="app">
-          <NavRail badges={badges} secondaryBadges={secondaryBadges} objectName={objectName} user={user} />
+          <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} />
           <div className="main">
-            <TopBar notifications={notifications} connected={connected} businessId={businessId} />
+            <TopBar notifications={notifs} connected={connected} businessId={businessId} />
             {children}
           </div>
         </div>
