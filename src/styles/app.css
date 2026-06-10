@@ -92,6 +92,16 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Typing indicator ("escribiendo…"). */
+.typing-ind { color: var(--wa, #25d366); font-style: italic; font-weight: 600; }
+
+/* Classic typing bubble (3 bouncing dots) at the bottom of the thread. */
+.typing-bubble { display: inline-flex; align-items: center; gap: 5px; padding: 13px 15px !important; }
+.typing-bubble .td { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint, #9a9a90); animation: td-bounce 1.25s infinite ease-in-out; }
+.typing-bubble .td:nth-child(2) { animation-delay: .18s; }
+.typing-bubble .td:nth-child(3) { animation-delay: .36s; }
+@keyframes td-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
+
 /* Delivery ticks — a touch bolder than other icons. */
 .tick svg path { stroke-width: 2.6; }
 

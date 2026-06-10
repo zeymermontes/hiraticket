@@ -50,9 +50,13 @@ function skeletonDetail(c: ConvListItem): ConvDetail {
     contact: c.contact
       ? { id: c.contact.id, name: c.contact.name, phone: c.contact.phone, tags: c.contact.tags ?? [], avatar_url: c.contact.avatar_url, created_at: null }
       : null,
+    typing_until: c.typing_until,
     messages: [], notes: [], events: [], orders: [],
   };
 }
+
+/** True while the customer is typing (server stamps an 8s window; nil/expired → not typing). */
+const isTyping = (until: string | null | undefined) => !!until && Date.parse(until) > Date.now();
 
 /** Union two message lists by id (later list wins for updated state), sorted oldest→newest. */
 function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
@@ -247,6 +251,15 @@ export function ChatScreen({
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+
+  // Re-render periodically so typing indicators expire on their own (no "paused" event needed).
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const anyTyping = isTyping(detail?.typing_until) || list.some((c) => isTyping(c.typing_until));
+    if (!anyTyping) return;
+    const i = setInterval(() => setNowTick((t) => t + 1), 1500);
+    return () => clearInterval(i);
+  });
 
   // Speed: cache each opened detail, prefetch on hover, and open instantly from cache/skeleton
   // (the URL navigation still refetches fresh data in the background).
@@ -466,7 +479,7 @@ export function ChatScreen({
                       <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
                       <span className="conv-time">{relTime(c.last_message_at, lang)}</span>
                     </div>
-                    <div className="conv-prev truncate">{c.lastOut && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{msgPreview(c, lang)}</div>
+                    <div className="conv-prev truncate">{isTyping(c.typing_until) ? <span className="typing-ind">{lang === "es" ? "escribiendo…" : "typing…"}</span> : <>{c.lastOut && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{msgPreview(c, lang)}</>}</div>
                     <div className="conv-meta">
                       {c.snoozed_until && new Date(c.snoozed_until).getTime() > Date.now()
                         ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>
@@ -657,7 +670,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     else if (atBottomRef.current) el.scrollTop = el.scrollHeight;
     scrollAction.current = "follow";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msgs, extra]);
+  }, [msgs, extra, detail.typing_until]);
 
   // Per-conversation draft: restore unsent text when you reopen a chat (cleared on send).
   const draftKey = (id: string) => "ht_draft_" + id;
@@ -749,7 +762,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
             <span className="pill pill-green" style={{ height: 18, padding: "0 6px" }}><Icon name="whatsapp" size={11} />WhatsApp</span>
           </div>
-          <div className="t-xs muted">{assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
+          <div className="t-xs muted">{isTyping(detail.typing_until) ? <span className="typing-ind">{lang === "es" ? "escribiendo…" : "typing…"}</span> : assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
         </div>
         {onToggleCtx && (
           <button className={"iconbtn" + (ctxVisible ? " active" : "")} title={ctxVisible ? (lang === "es" ? "Ocultar panel" : "Hide panel") : (lang === "es" ? "Mostrar panel" : "Show panel")} onClick={onToggleCtx}>
@@ -847,6 +860,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             </React.Fragment>
           );
         })}
+        {isTyping(detail.typing_until) && (
+          <div className="msg in">
+            <div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div>
+          </div>
+        )}
       </div>
 
       <div className="composer">

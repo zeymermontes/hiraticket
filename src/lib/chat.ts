@@ -53,6 +53,7 @@ export interface ConvListItem {
   lastState: string | null;
   lastType: string;       // text / image / sticker / audio / video / document / location / contact
   lastDeleted: boolean;
+  typing_until: string | null; // customer is typing while this is in the future
 }
 
 export interface ChatMessage {
@@ -111,6 +112,7 @@ export interface ConvDetail {
   snoozed_until: string | null;
   area: { name: string; color: string } | null;
   contact: { id: string; name: string; phone: string | null; tags: string[]; avatar_url: string | null; created_at: string | null } | null;
+  typing_until: string | null;
   messages: ChatMessage[];
   notes: ConvNote[];
   events: ConvEvent[];
@@ -146,16 +148,18 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
 
 export async function getConversationList(businessId: string): Promise<ConvListItem[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("conversations")
-    .select(
-      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state,type,deleted)",
-    )
-    .eq("business_id", businessId)
-    .order("last_message_at", { ascending: false });
+  const cols = (typing: string) =>
+    `id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, ${typing}area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state,type,deleted)`;
+  // typing_until may not exist yet (added by the worker at boot / migration 0027) — fall back.
+  let { data, error } = await supabase
+    .from("conversations").select(cols("typing_until, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
+  if (error) {
+    ({ data, error } = await supabase
+      .from("conversations").select(cols("")).eq("business_id", businessId).order("last_message_at", { ascending: false }));
+  }
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((c: Record<string, unknown>) => {
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
     type LastMsg = { body: string; created_at: string; direction: string; state: string | null; type: string; deleted: boolean };
     const msgs = (c.messages as LastMsg[]) ?? [];
     const last = msgs.reduce<LastMsg | null>(
@@ -177,6 +181,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       lastState: last?.state ?? null,
       lastType: last?.type ?? "text",
       lastDeleted: last?.deleted ?? false,
+      typing_until: (c.typing_until as string | null) ?? null,
     } as ConvListItem;
   });
 }
@@ -216,12 +221,14 @@ export async function getConversationDetail(
 ): Promise<ConvDetail | null> {
   const supabase = await createClient();
 
-  const { data: conv } = await supabase
-    .from("conversations")
-    .select("id, status, assignee_id, contact_id, unread, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)")
-    .eq("id", convId)
-    .maybeSingle();
-  if (!conv) return null;
+  const convCols = (typing: string) =>
+    `id, status, assignee_id, contact_id, unread, hidden, snoozed_until, ${typing}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
+  let convRaw, convErr;
+  ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, ")).eq("id", convId).maybeSingle());
+  if (convErr) ({ data: convRaw } = await supabase.from("conversations").select(convCols("")).eq("id", convId).maybeSingle());
+  if (!convRaw) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const conv = convRaw as any; // dynamic select() string defeats column inference
 
   const [messages, { data: notes }, { data: events }, { data: orders }] =
     await Promise.all([
@@ -256,6 +263,7 @@ export async function getConversationDetail(
     snoozed_until: conv.snoozed_until,
     area: conv.area as unknown as ConvDetail["area"],
     contact: conv.contact as unknown as ConvDetail["contact"],
+    typing_until: ((conv as { typing_until?: string | null }).typing_until) ?? null,
     messages: (messages ?? []) as ChatMessage[],
     notes: (notes ?? []) as ConvNote[],
     events: (events ?? []) as ConvEvent[],

@@ -116,6 +116,11 @@ end $$;`); err != nil {
 		logger.Warnf("create messages index: %v", err)
 	}
 
+	// Typing indicator: when the customer is composing, we stamp a short-lived window here. Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists typing_until timestamptz`); err != nil {
+		logger.Warnf("add typing_until column: %v", err)
+	}
+
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
 	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'`); err != nil {
@@ -550,6 +555,11 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 				SET status='connected', qr=NULL, pairing_code=NULL, phone=$1, device_jid=$2, last_seen=now(), updated_at=now()
 				WHERE id=$3`, phone, jid, s.ID)
 			m.log.Infof("connected %s as %s", s.ID, phone)
+			// Mark ourselves available so WhatsApp delivers the contacts' typing (ChatPresence)
+			// notifications. Note: this also makes the number appear "online" while connected.
+			if perr := client.SendPresence(ctx, types.PresenceAvailable); perr != nil {
+				m.log.Warnf("send presence: %v", perr)
+			}
 			// Auto-heal: give recently-failed sends (usually deploy-window/StreamReplaced casualties)
 			// another shot now that the session is back, so the user doesn't have to hit Retry.
 			if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', send_attempts=0, next_retry_at=NULL
@@ -558,6 +568,21 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 					m.log.Infof("requeued %d recently-failed message(s) after reconnect", n)
 				}
 			}
+		}
+	case *events.ChatPresence:
+		// Customer typing / paused in a 1:1 chat → reflect on the conversation for the live UI.
+		phone := v.Chat.User
+		if phone == "" {
+			return
+		}
+		if v.State == types.ChatPresenceComposing {
+			// 8s window; only write when new or about to expire, to avoid update churn while typing.
+			m.exec(ctx, `UPDATE conversations c SET typing_until = now() + interval '8 seconds'
+				FROM contacts ct WHERE c.contact_id = ct.id AND ct.business_id=$1 AND ct.phone=$2
+				AND c.status<>'resolved' AND (c.typing_until IS NULL OR c.typing_until < now() + interval '4 seconds')`, s.BusinessID, phone)
+		} else {
+			m.exec(ctx, `UPDATE conversations c SET typing_until = NULL
+				FROM contacts ct WHERE c.contact_id = ct.id AND ct.business_id=$1 AND ct.phone=$2 AND c.typing_until IS NOT NULL`, s.BusinessID, phone)
 		}
 	case *events.LoggedOut:
 		m.exec(ctx, `UPDATE whatsapp_sessions SET status='disconnected', qr=NULL, pairing_code=NULL, phone=NULL, device_jid=NULL, updated_at=now() WHERE id=$1`, s.ID)
