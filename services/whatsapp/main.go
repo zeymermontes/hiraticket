@@ -128,11 +128,12 @@ end $$;`); err != nil {
 		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
 	}
 
-	logger.Infof("worker booting")
+	logger.Infof("worker booting (build: pool5+phone-retry+heartbeat)")
 	go m.pollSessions(ctx)
 	go m.pollOutbound(ctx)
 	go m.pollContacts(ctx)
 	go m.pollOps(ctx)
+	go m.pollHeartbeat(ctx)
 
 	// Graceful shutdown: on SIGTERM (Render redeploy) disconnect all WhatsApp clients so this
 	// instance RELEASES the session immediately instead of fighting the new one for it.
@@ -256,6 +257,27 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 			}
 		}
 		time.Sleep(2 * time.Second)
+	}
+}
+
+// pollHeartbeat periodically logs how many outbound messages are stuck, so a recurring problem
+// (queued not draining, anything 'failed') is visible without guessing.
+func (m *Manager) pollHeartbeat(ctx context.Context) {
+	for {
+		time.Sleep(30 * time.Second)
+		var queued, sending, failed int
+		if err := m.db.QueryRowContext(ctx, `SELECT
+			count(*) filter (where state='queued'),
+			count(*) filter (where state='sending'),
+			count(*) filter (where state='failed')
+			FROM messages WHERE direction='out' AND created_at > now() - interval '2 hours'`).Scan(&queued, &sending, &failed); err == nil {
+			if queued+sending+failed > 0 {
+				m.mu.Lock()
+				conn := len(m.byBiz)
+				m.mu.Unlock()
+				m.log.Infof("outbound backlog (2h): queued=%d sending=%d failed=%d  (sessions connected=%d)", queued, sending, failed, conn)
+			}
+		}
 	}
 }
 
@@ -816,6 +838,7 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return false
 	}
+	m.log.Infof("→ sending %s (%s, attempt %d)", o.id, o.mtype, o.attempts)
 
 	var phone sql.NullString
 	if perr := m.db.QueryRowContext(ctx,
