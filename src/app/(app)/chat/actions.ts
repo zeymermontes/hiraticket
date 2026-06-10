@@ -74,6 +74,21 @@ export async function deleteMessage(messageId: string): Promise<void> {
   await supabase.from("messages").update({ pending_op: "delete" }).eq("id", messageId).eq("direction", "out");
 }
 
+/** Forward a message's content into another conversation as a new outbound message. */
+export async function forwardMessage(messageId: string, targetConvId: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const { data: m } = await supabase.from("messages").select("type, body, media_url, media_mime, media_name").eq("id", messageId).maybeSingle();
+  if (!m) return;
+  const businessId = await businessOf(targetConvId);
+  if (!businessId) return;
+  await supabase.from("messages").insert({
+    business_id: businessId, conversation_id: targetConvId, direction: "out",
+    type: m.type, body: m.body, author_id: userId, state: "queued", forwarded: true,
+    media_url: m.media_url, media_mime: m.media_mime, media_name: m.media_name,
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", targetConvId);
+}
+
 /** Queue an outbound media message (file already uploaded to storage). */
 export async function sendMediaMessage(
   convId: string,

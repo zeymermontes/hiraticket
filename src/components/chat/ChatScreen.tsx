@@ -22,8 +22,9 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage,
 } from "@/app/(app)/chat/actions";
+import { useToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages } from "@/app/(app)/chat/live-actions";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -233,7 +234,7 @@ function QuotedBlock({ m }: { m: ChatMessage }) {
   return <div className="truncate" style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240 }}>{label}</div>;
 }
 
-function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void }) {
+function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void }) {
   const { lang } = useApp();
   const { ref, open, rect, toggle, close } = usePopover();
   return (
@@ -245,6 +246,7 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact }: { m: ChatMessag
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, [out ? "right" : "left"]: out ? window.innerWidth - rect.right : rect.left, width: 160, zIndex: 201 }}>
             <button className="menu-item" onClick={() => { const r = rect; close(); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
+            {!m.deleted && (m.type === "text" || !!m.media_url) && <button className="menu-item" onClick={() => { close(); onForward(); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>}
             {out && m.type === "text" && <button className="menu-item" onClick={() => { close(); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {out && <button className="menu-item danger" onClick={() => { close(); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
           </div>
@@ -652,6 +654,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [slashSel, setSlashSel] = useState(0);
   const [slashRect, setSlashRect] = useState<DOMRect | null>(null);
   const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const { push } = useToast();
 
   async function loadCanned() {
     if (canned.length) return;
@@ -949,7 +953,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   </div>
                 )}
                 {!m.deleted && !m.id.startsWith("tmp") && (
-                  <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)}
+                  <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)} onForward={() => setForwarding(m)}
                     onReact={(rect) => setReactTarget({ id: m.id, rect })}
                     onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
                 )}
@@ -1069,6 +1073,56 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         </>
       )}
       {lightbox !== null && imageUrls.length > 0 && <Lightbox urls={imageUrls} index={lightbox} onClose={() => setLightbox(null)} />}
+      {forwarding && (
+        <ForwardPicker businessId={businessId} message={forwarding} onClose={() => setForwarding(null)}
+          onDone={(n) => { setForwarding(null); push({ kind: "success", message: lang === "es" ? `Reenviado a ${n} chat${n > 1 ? "s" : ""}` : `Forwarded to ${n} chat${n > 1 ? "s" : ""}` }); }} />
+      )}
+    </div>
+  );
+}
+
+/** Pick one or more conversations to forward a message into. */
+function ForwardPicker({ businessId, message, onClose, onDone }: { businessId: string; message: ChatMessage; onClose: () => void; onDone: (n: number) => void }) {
+  const { lang } = useApp();
+  const [convs, setConvs] = useState<ConvListItem[]>([]);
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState(false);
+  useEffect(() => { liveList(businessId).then(setConvs).catch(() => {}); }, [businessId]);
+  const view = convs.filter((c) => { const s = q.trim().toLowerCase(); return !s || (c.contact?.name ?? "").toLowerCase().includes(s) || (c.contact?.phone ?? "").includes(s); });
+  const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const doForward = async () => {
+    if (!sel.size) return;
+    setSending(true);
+    try { for (const id of sel) await forwardMessage(message.id, id); onDone(sel.size); }
+    finally { setSending(false); }
+  };
+  const preview = message.body || (message.type !== "text" ? "📎 " + message.type : "");
+  return (
+    <div className="modal-wrap">
+      <div className="scrim" onClick={onClose} />
+      <div className="modal" style={{ width: 420, maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
+        <div className="modal-head"><h3 className="grow">{lang === "es" ? "Reenviar a…" : "Forward to…"}</h3><button className="iconbtn" onClick={onClose}><Icon name="x" /></button></div>
+        <div style={{ padding: "0 16px 10px" }}>
+          {preview && <div className="t-xs muted truncate" style={{ marginBottom: 8, padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8 }}>{preview}</div>}
+          <div className="field field-filled"><Icon name="search" size={15} /><input placeholder={lang === "es" ? "Buscar chat…" : "Search chat…"} value={q} onChange={(e) => setQ(e.target.value)} autoFocus /></div>
+        </div>
+        <div className="scroll" style={{ flex: 1, padding: "0 8px", minHeight: 0 }}>
+          {view.map((c) => (
+            <button key={c.id} className={"menu-item" + (sel.has(c.id) ? " on" : "")} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", height: "auto", padding: "8px 10px" }} onClick={() => toggle(c.id)}>
+              <input type="checkbox" checked={sel.has(c.id)} readOnly style={{ pointerEvents: "none" }} />
+              <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={30} />
+              <span className="grow truncate">{c.contact?.name ?? c.contact?.phone ?? "—"}</span>
+            </button>
+          ))}
+          {view.length === 0 && <div className="muted t-sm" style={{ padding: 14, textAlign: "center" }}>{lang === "es" ? "Sin chats." : "No chats."}</div>}
+        </div>
+        <div className="modal-foot"><span className="grow" />
+          <button className="btn btn-primary" disabled={sending || sel.size === 0} onClick={doForward}>
+            {sending ? <Spinner size={14} /> : <Icon name="forward" size={15} />}{lang === "es" ? "Reenviar" : "Forward"}{sel.size ? ` (${sel.size})` : ""}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
