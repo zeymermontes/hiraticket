@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
+import { Spinner } from "@/components/Spinner";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
@@ -846,14 +847,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); refresh(); })}>
-            <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
+            {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
         <TransferControl detail={detail} agents={agents} areas={areas} />
         {detail.status !== "resolved" ? (
           <button className="iconbtn" title={lang === "es" ? "Resolver" : "Resolve"} style={{ color: "var(--green)" }} disabled={pending}
             onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); })}>
-            <Icon name="check" />
+            {pending ? <Spinner size={15} /> : <Icon name="check" />}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
       </div>

@@ -90,6 +90,7 @@ export function OrderDrawer({
     <>
       <div className="scrim" onClick={onClose} />
       <aside className="drawer">
+        {pending && <div className="drawer-progress" aria-hidden />}
         <div className="drawer-head">
           <span className="t-ic" style={{ width: 40, height: 40, borderRadius: 11, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="orders" /></span>
           <div className="grow" style={{ minWidth: 0 }}>

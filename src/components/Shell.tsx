@@ -7,6 +7,7 @@ import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
+import { NavProgress } from "@/components/NavProgress";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { liveBadges } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
@@ -247,6 +248,7 @@ export function Shell({
   return (
     <AppProvider>
       <ToastProvider>
+        <NavProgress />
         <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
         <div className="app">
           <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} />

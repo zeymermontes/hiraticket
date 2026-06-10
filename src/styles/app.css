@@ -92,6 +92,19 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Top navigation progress bar (shows on section change). */
+.nav-progress { position: fixed; top: 0; left: 0; height: 3px; z-index: 6000; background: var(--brand); box-shadow: 0 0 8px var(--brand); border-radius: 0 3px 3px 0; animation: nav-progress 1.4s ease-out forwards; }
+@keyframes nav-progress { 0% { width: 0; } 40% { width: 55%; } 75% { width: 82%; } 100% { width: 92%; } }
+
+/* Indeterminate loading bar at the top of the order drawer (any pending action). */
+.drawer-progress { position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 5; overflow: hidden; background: var(--brand-50); }
+.drawer-progress::after { content: ""; position: absolute; top: 0; height: 100%; width: 40%; background: var(--brand); border-radius: 3px; animation: drawer-indeterminate 1s ease-in-out infinite; }
+@keyframes drawer-indeterminate { 0% { left: -40%; } 100% { left: 100%; } }
+
+/* Inline button spinner. */
+.spinner { display: inline-block; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: -2px; opacity: .85; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Photo gallery / lightbox */
 .lightbox { position: fixed; inset: 0; z-index: 5000; background: rgba(0,0,0,.9); display: flex; align-items: center; justify-content: center; animation: lb-in .15s ease; }
 @keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
