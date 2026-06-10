@@ -92,6 +92,15 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Link preview card (chat) */
+.link-preview { display: flex; flex-direction: column; margin-top: 6px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); text-decoration: none; color: inherit; max-width: 320px; }
+.link-preview:hover { border-color: var(--border-strong); }
+.link-preview .lp-img { width: 100%; max-height: 160px; object-fit: cover; display: block; background: var(--surface-2); }
+.link-preview .lp-body { padding: 8px 10px; min-width: 0; }
+.link-preview .lp-title { font-weight: 700; font-size: 12.5px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.link-preview .lp-desc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.link-preview .lp-host { font-size: 10.5px; color: var(--text-faint); margin-top: 4px; text-transform: lowercase; }
+
 /* Message emoji reactions */
 .msg-reacts { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
 .msg-react { display: inline-flex; align-items: center; font-size: 13px; line-height: 1; padding: 2px 6px; border-radius: 11px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--sh-sm); cursor: pointer; }

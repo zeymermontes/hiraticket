@@ -24,6 +24,41 @@ import {
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
 } from "@/app/(app)/chat/actions";
 import { liveList, liveMessages, liveConvHeader, liveDetail } from "@/app/(app)/chat/live-actions";
+import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
+
+/** Render text with clickable URLs. */
+function linkify(text: string): React.ReactNode {
+  return text.split(/(https?:\/\/[^\s]+)/g).map((p, i) =>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noreferrer" style={{ color: "var(--blue)", textDecoration: "underline", wordBreak: "break-all" }} onClick={(e) => e.stopPropagation()}>{p}</a>
+      : <React.Fragment key={i}>{p}</React.Fragment>,
+  );
+}
+const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
+
+const _metaCache = new Map<string, LinkMeta>();
+/** Open-Graph preview card for the first link in a message. */
+function LinkPreview({ url }: { url: string }) {
+  const [meta, setMeta] = useState<LinkMeta | null>(_metaCache.get(url) ?? null);
+  useEffect(() => {
+    if (_metaCache.has(url)) { setMeta(_metaCache.get(url)!); return; }
+    let alive = true;
+    fetchLinkMeta(url).then((m) => { _metaCache.set(url, m); if (alive) setMeta(m); }).catch(() => {});
+    return () => { alive = false; };
+  }, [url]);
+  if (!meta || (!meta.title && !meta.image)) return null;
+  let host = url; try { host = new URL(url).hostname.replace(/^www\./, ""); } catch {}
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="link-preview" onClick={(e) => e.stopPropagation()}>
+      {meta.image && <img src={meta.image} alt="" className="lp-img" />}
+      <div className="lp-body">
+        {meta.title && <div className="lp-title">{meta.title}</div>}
+        {meta.description && <div className="lp-desc">{meta.description}</div>}
+        <div className="lp-host">{host}</div>
+      </div>
+    </a>
+  );
+}
 
 /** Targeted refresh for chat mutations — refetches the open conversation + list instead of the
  *  whole route. Provided by ChatScreen; falls back to refresh() outside it (e.g. the
@@ -86,6 +121,23 @@ function MediaBlock({ m }: { m: ChatMessage }) {
       <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
     </a>
   );
+}
+
+/** Conversation-list preview: caption/body, else a label for the media type (or "deleted"). */
+function msgPreview(c: ConvListItem, lang: "es" | "en"): string {
+  if (c.lastDeleted) return lang === "es" ? "🚫 Mensaje eliminado" : "🚫 Message deleted";
+  if (c.preview) return c.preview;
+  const L = (es: string, en: string) => (lang === "es" ? es : en);
+  switch (c.lastType) {
+    case "image": return L("📷 Foto", "📷 Photo");
+    case "sticker": return L("🩷 Sticker", "🩷 Sticker");
+    case "audio": return L("🎤 Audio", "🎤 Audio");
+    case "video": return L("🎥 Video", "🎥 Video");
+    case "document": return L("📄 Documento", "📄 Document");
+    case "location": return L("📍 Ubicación", "📍 Location");
+    case "contact": return L("👤 Contacto", "👤 Contact");
+    default: return "";
+  }
 }
 
 function Tick({ state }: { state: string | null }) {
@@ -378,7 +430,7 @@ export function ChatScreen({
                       <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
                       <span className="conv-time">{relTime(c.last_message_at, lang)}</span>
                     </div>
-                    <div className="conv-prev truncate">{c.lastOut && c.preview && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{c.preview}</div>
+                    <div className="conv-prev truncate">{c.lastOut && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{msgPreview(c, lang)}</div>
                     <div className="conv-meta">
                       {c.snoozed_until && new Date(c.snoozed_until).getTime() > Date.now()
                         ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>
@@ -670,7 +722,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     : (
                       <>
                         {m.media_url && <MediaBlock m={m} />}
-                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
+                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{linkify(m.body)}</div>}
+                        {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} />}
                       </>
                     )}
                 <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}
