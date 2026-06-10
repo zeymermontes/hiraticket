@@ -196,11 +196,19 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 	for {
 		// Self-heal: requeue any 'sending' claim that hung (e.g. a send that never returned).
 		m.exec(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending' AND created_at < now() - interval '2 minutes'`)
+		// In-order delivery: only send a message once every EARLIER outbound message in the same
+		// conversation has left the queue (sent), so a retry/backoff on one can't let a later one
+		// jump ahead. A message that permanently 'failed' (gave up) no longer blocks the rest.
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name, reply_to, send_attempts
-			   FROM messages
-			  WHERE direction='out' AND state='queued' AND (next_retry_at IS NULL OR next_retry_at <= now())
-			  ORDER BY created_at LIMIT 50`)
+			`SELECT m.id, m.business_id, m.conversation_id, m.body, m.type, m.media_url, m.media_mime, m.media_name, m.reply_to, m.send_attempts
+			   FROM messages m
+			  WHERE m.direction='out' AND m.state='queued' AND (m.next_retry_at IS NULL OR m.next_retry_at <= now())
+			    AND NOT EXISTS (
+			      SELECT 1 FROM messages e
+			       WHERE e.conversation_id = m.conversation_id AND e.direction='out'
+			         AND e.created_at < m.created_at AND e.state IN ('queued','sending')
+			    )
+			  ORDER BY m.created_at LIMIT 50`)
 		if err == nil {
 			var pending []outMsg
 			for rows.Next() {
@@ -216,8 +224,16 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			sent := 0
 			for _, o := range pending {
-				m.sendOutbound(ctx, o)
+				if m.sendOutbound(ctx, o) {
+					sent++
+				}
+			}
+			// If we delivered something, loop again right away to send the next in-order
+			// message per conversation instead of waiting a full interval.
+			if sent > 0 {
+				continue
 			}
 		}
 		time.Sleep(2 * time.Second)
@@ -750,22 +766,24 @@ func (m *Manager) retryOrFail(ctx context.Context, o outMsg, reason string) {
 	m.exec(ctx, `UPDATE messages SET state='queued', send_attempts=$2, next_retry_at=now() + ($3 || ' seconds')::interval WHERE id=$1`, o.id, next, backoff)
 }
 
-func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
+// sendOutbound returns true only if the message was actually sent (so the poll loop can drain
+// the next in-order message quickly instead of waiting a full poll interval).
+func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	m.mu.Lock()
 	client := m.byBiz[o.biz]
 	m.mu.Unlock()
 	if client == nil {
-		return // not connected yet — leave queued for the next poll
+		return false // not connected yet — leave queued for the next poll
 	}
 
 	// Claim atomically so a restart can't double-send.
 	res, err := m.db.ExecContext(ctx,
 		`UPDATE messages SET state='sending' WHERE id=$1 AND state='queued'`, o.id)
 	if err != nil {
-		return
+		return false
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return
+		return false
 	}
 
 	var phone sql.NullString
@@ -773,14 +791,14 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, o.conv).
 		Scan(&phone); err != nil || !phone.Valid || digits(phone.String) == "" {
 		m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
-		return
+		return false
 	}
 	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
 
 	waMsg, err := m.buildOutboundMessage(ctx, client, o)
 	if err != nil {
 		m.retryOrFail(ctx, o, "build: "+err.Error())
-		return
+		return false
 	}
 	if o.replyTo != "" {
 		if ci := m.replyContext(ctx, client, jid, o.replyTo); ci != nil {
@@ -791,9 +809,10 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) {
 	resp, err := client.SendMessage(ctx, jid, waMsg)
 	if err != nil {
 		m.retryOrFail(ctx, o, err.Error())
-		return
+		return false
 	}
 	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2, send_attempts=0, next_retry_at=NULL WHERE id=$1`, o.id, resp.ID)
+	return true
 }
 
 func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Client, o outMsg) (*waE2E.Message, error) {
