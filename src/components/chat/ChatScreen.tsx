@@ -866,7 +866,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                           <Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}
                         </button>
                       )}
-                      {relTime(row.created_at, lang)}{out && <Tick state={row.items.some((it) => it.state === "failed") ? "failed" : row.items[row.items.length - 1].state} />}
+                      <span title={fullStamp(row.created_at, lang)}>{clockTime(row.created_at, lang)}</span>{out && <Tick state={row.items.some((it) => it.state === "failed") ? "failed" : row.items[row.items.length - 1].state} />}
                     </div>
                   </div>
                 </div>
@@ -900,7 +900,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   {out && m.state === "failed" && !m.id.startsWith("tmp") && (
                     <button onClick={() => start(async () => { await retryMessage(m.id); refresh(); })} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
                   )}
-                  {relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                  <span title={fullStamp(m.created_at, lang)}>{clockTime(m.created_at, lang)}</span>{out && <Tick state={m.state} />}</div>
                 {!m.deleted && m.reactions?.length > 0 && (
                   <div className="msg-reacts">
                     {m.reactions.map((r, ri) => (
@@ -1344,6 +1344,17 @@ function SnoozeControl({ detail }: { detail: ConvDetail }) {
       )}
     </span>
   );
+}
+
+/** Local clock time a message was sent, e.g. "3:45 p. m." / "3:45 PM". */
+function clockTime(iso: string | null, lang: "es" | "en"): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "numeric", minute: "2-digit" });
+}
+/** Full local date+time, for hover tooltips. */
+function fullStamp(iso: string | null, lang: "es" | "en"): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(lang === "es" ? "es-MX" : "en-US", { dateStyle: "medium", timeStyle: "short" });
 }
 
 function relTime(iso: string | null, lang: "es" | "en"): string {
