@@ -13,6 +13,11 @@ export async function liveMessages(convId: string): Promise<ChatMessage[]> {
   return getConversationMessages(convId);
 }
 
+/** Older messages (one page before `before`), for lazy-loading history as the agent scrolls up. */
+export async function loadOlderMessages(convId: string, before: string): Promise<ChatMessage[]> {
+  return getConversationMessages(convId, { before });
+}
+
 /** The conversation list (preview / unread / order). */
 export async function liveList(businessId: string): Promise<ConvListItem[]> {
   return getConversationList(businessId);

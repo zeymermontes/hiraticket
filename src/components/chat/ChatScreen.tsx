@@ -1,5 +1,5 @@
 "use client";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -23,7 +23,8 @@ import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
 } from "@/app/(app)/chat/actions";
-import { liveList, liveMessages, liveConvHeader, liveDetail } from "@/app/(app)/chat/live-actions";
+import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages } from "@/app/(app)/chat/live-actions";
+import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
 
 /** Render text with clickable URLs. */
@@ -35,6 +36,14 @@ function linkify(text: string): React.ReactNode {
   );
 }
 const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
+
+/** Union two message lists by id (later list wins for updated state), sorted oldest→newest. */
+function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
+  const map = new Map<string, ChatMessage>();
+  for (const m of a) map.set(m.id, m);
+  for (const m of b) map.set(m.id, m);
+  return [...map.values()].sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
+}
 
 const _metaCache = new Map<string, LinkMeta>();
 /** Open-Graph preview card for the first link in a message. */
@@ -141,9 +150,9 @@ function msgPreview(c: ConvListItem, lang: "es" | "en"): string {
 }
 
 function Tick({ state }: { state: string | null }) {
-  if (state === "read") return <span style={{ color: "var(--wa)", display: "inline-flex" }}><Icon name="checks" size={15} /></span>;
-  if (state === "delivered") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="checks" size={15} /></span>;
-  if (state === "sent") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="check" size={13} /></span>;
+  if (state === "read") return <span className="tick" style={{ color: "var(--blue)", display: "inline-flex" }}><Icon name="checks" size={16} /></span>;
+  if (state === "delivered") return <span className="tick" style={{ display: "inline-flex", opacity: 0.6 }}><Icon name="checks" size={16} /></span>;
+  if (state === "sent") return <span className="tick" style={{ display: "inline-flex", opacity: 0.6 }}><Icon name="check" size={14} /></span>;
   if (state === "failed") return <span style={{ color: "var(--red)", display: "inline-flex" }} title="No se pudo enviar"><Icon name="x" size={12} /></span>;
   return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
 }
@@ -559,8 +568,69 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       .replace(/\{\{\s*total\s*\}\}/gi, o ? `$${o.total.toLocaleString("es-MX")}` : "");
   }
 
-  useEffect(() => { setExtra([]); setReplyTo(null); setEditing(null); }, [detail.id, detail.messages.length]);
-  useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; });
+  // Windowed message list: start at the recent tail (detail.messages = last page), lazy-load older
+  // as the agent scrolls up, and merge realtime updates in place (no full reload, no scroll jump).
+  const [msgs, setMsgs] = useState<ChatMessage[]>(detail.messages);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(detail.messages.length >= MSG_PAGE);
+  const lastConvRef = useRef<string | null>(null);
+  const atBottomRef = useRef(true);
+  const scrollAction = useRef<"bottom" | "preserve" | "follow">("bottom");
+  const prevHeight = useRef(0);
+
+  useEffect(() => {
+    if (lastConvRef.current !== detail.id) {
+      lastConvRef.current = detail.id;
+      scrollAction.current = "bottom";
+      setMsgs(detail.messages);
+      setHasMore(detail.messages.length >= MSG_PAGE);
+    } else {
+      scrollAction.current = "follow";
+      setMsgs((prev) => mergeMsgs(prev, detail.messages));
+    }
+  }, [detail.id, detail.messages]);
+
+  async function loadOlder() {
+    if (loadingOlder || !hasMore) return;
+    const oldest = msgs[0]?.created_at;
+    if (!oldest) return;
+    setLoadingOlder(true);
+    try {
+      const older = await loadOlderMessages(detail.id, oldest);
+      if (older.length < MSG_PAGE) setHasMore(false);
+      if (older.length) {
+        prevHeight.current = endRef.current?.scrollHeight ?? 0;
+        scrollAction.current = "preserve";
+        setMsgs((prev) => mergeMsgs(older, prev));
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+  function onThreadScroll() {
+    const el = endRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (el.scrollTop < 80) loadOlder();
+  }
+
+  useEffect(() => { setReplyTo(null); setEditing(null); }, [detail.id]);
+  // Clear the optimistic bubble once the real message lands (msgs grows) or on conversation switch.
+  useEffect(() => { setExtra([]); }, [detail.id, msgs.length]);
+  // Apply the right scroll after messages render: jump to bottom on open, keep position when
+  // prepending history, follow new messages only if already near the bottom.
+  useLayoutEffect(() => {
+    const el = endRef.current;
+    if (!el) return;
+    if (scrollAction.current === "bottom") {
+      el.scrollTop = el.scrollHeight;
+      // Re-pin after late-loading media (images/stickers) grows the thread.
+      setTimeout(() => { if (endRef.current && atBottomRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; }, 200);
+    } else if (scrollAction.current === "preserve") el.scrollTop = el.scrollHeight - prevHeight.current;
+    else if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    scrollAction.current = "follow";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgs, extra]);
 
   // Per-conversation draft: restore unsent text when you reopen a chat (cleared on send).
   const draftKey = (id: string) => "ht_draft_" + id;
@@ -589,8 +659,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }, [text]);
 
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
-  const messages = [...detail.messages, ...extra];
-  const msgMap = useMemo(() => new Map(detail.messages.map((mm) => [mm.id, mm])), [detail.messages]);
+  const messages = [...msgs, ...extra];
+  const msgMap = useMemo(() => new Map(msgs.map((mm) => [mm.id, mm])), [msgs]);
 
   // Group consecutive plain images (same sender) into a WhatsApp-style album.
   type Row = { kind: "album"; dir: string; items: ChatMessage[]; created_at: string } | { kind: "msg"; m: ChatMessage };
@@ -673,7 +743,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
       </div>
 
-      <div className="thread thread-wa-tint scroll" ref={endRef}>
+      <div className="thread thread-wa-tint scroll" ref={endRef} onScroll={onThreadScroll}>
+        {loadingOlder && <div className="t-xs muted" style={{ textAlign: "center", padding: "8px 0" }}>{lang === "es" ? "Cargando mensajes…" : "Loading messages…"}</div>}
         {rows.map((row, i) => {
           const created = row.kind === "album" ? row.created_at : row.m.created_at;
           const prevRow = i > 0 ? rows[i - 1] : null;

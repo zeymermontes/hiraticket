@@ -92,6 +92,9 @@
 /* Ensure the chat grid columns (list / context / thread) scroll independently. */
 .chat { grid-template-rows: minmax(0, 1fr); }
 
+/* Delivery ticks — a touch bolder than other icons. */
+.tick svg path { stroke-width: 2.6; }
+
 /* Link preview card (chat) */
 .link-preview { display: flex; flex-direction: column; margin-top: 6px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); text-decoration: none; color: inherit; max-width: 320px; }
 .link-preview:hover { border-color: var(--border-strong); }

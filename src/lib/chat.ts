@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { MSG_PAGE } from "@/lib/types";
 
 const PUBLIC_MEDIA_MARKER = "/object/public/media/";
 /** Stored media_url → storage path (handles raw paths and legacy full public URLs). */
@@ -183,17 +184,30 @@ export async function getConversationList(businessId: string): Promise<ConvListI
 const MSG_FULL = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";
 const MSG_BASE = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
 
-/** Signed messages for a conversation — the high-frequency realtime read (no notes/events/orders). */
-export async function getConversationMessages(convId: string): Promise<ChatMessage[]> {
+/** Signed messages for a conversation — the high-frequency realtime read (no notes/events/orders).
+ *  Loads the most recent `limit` messages, or (with `before`) the page just older than a cursor,
+ *  so long conversations don't load all at once. Always returned oldest→newest. */
+export async function getConversationMessages(
+  convId: string,
+  opts?: { before?: string; limit?: number },
+): Promise<ChatMessage[]> {
   const supabase = await createClient();
-  const res = await supabase.from("messages").select(MSG_FULL).eq("conversation_id", convId).order("created_at", { ascending: true });
+  const limit = opts?.limit ?? MSG_PAGE;
+  // Fetch the newest `limit` (descending) so we get the tail, then reverse to chronological.
+  const q = (cols: string) => {
+    let b = supabase.from("messages").select(cols).eq("conversation_id", convId).order("created_at", { ascending: false }).limit(limit);
+    if (opts?.before) b = b.lt("created_at", opts.before);
+    return b;
+  };
+  const res = await q(MSG_FULL);
   let messages: ChatMessage[];
   if (res.error) {
-    const base = await supabase.from("messages").select(MSG_BASE).eq("conversation_id", convId).order("created_at", { ascending: true });
-    messages = ((base.data ?? []) as Record<string, unknown>[]).map((m) => ({ ...m, forwarded: false, edited: false, meta: null, reactions: [] })) as unknown as ChatMessage[];
+    const base = await q(MSG_BASE);
+    messages = ((base.data ?? []) as unknown as Record<string, unknown>[]).map((m) => ({ ...m, forwarded: false, edited: false, meta: null, reactions: [] })) as unknown as ChatMessage[];
   } else {
-    messages = ((res.data ?? []) as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
+    messages = ((res.data ?? []) as unknown as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
   }
+  messages.reverse(); // chronological (oldest first)
   return signMedia(messages);
 }
 
