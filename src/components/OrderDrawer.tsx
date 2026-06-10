@@ -48,6 +48,11 @@ export function OrderDrawer({
     if (fresh) setDetail(fresh);
     router.refresh();
   });
+  // Optimistic: reflect the change in the drawer immediately, then run + reconcile in the background.
+  const runOpt = (patch: Partial<OrderDetail>, fn: () => Promise<unknown>) => {
+    setDetail((c) => (c ? { ...c, ...patch } : c));
+    run(fn);
+  };
 
   const DRAWER_W = 560; // width of the order drawer this panel docks against
   useEffect(() => {
@@ -83,7 +88,7 @@ export function OrderDrawer({
   const assignee = detail.assignee_id ? agents.find((a) => a.id === detail.assignee_id) : null;
   const curIdx = stages.findIndex((s) => s.id === detail.stage_id);
   const date = (iso: string) => new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-  const advance = () => { const next = stages[Math.min(curIdx + 1, stages.length - 1)]; if (next) run(() => moveOrderStage(detail.id, next.id)); };
+  const advance = () => { const next = stages[Math.min(curIdx + 1, stages.length - 1)]; if (next) runOpt({ stage_id: next.id, stage: { name: next.name, color: next.color } }, () => moveOrderStage(detail.id, next.id)); };
   const isLast = curIdx >= stages.length - 1;
 
   return (
@@ -107,7 +112,7 @@ export function OrderDrawer({
             <div className="pipe">
               {stages.map((s, i) => {
                 const cls = i < curIdx ? "done" : i === curIdx ? "cur" : "";
-                return <button className={"pipe-step " + cls} key={s.id} disabled={pending || detail.product_stages} onClick={() => run(() => moveOrderStage(detail.id, s.id))}>{s.name}</button>;
+                return <button className={"pipe-step " + cls} key={s.id} disabled={pending || detail.product_stages} onClick={() => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, () => moveOrderStage(detail.id, s.id))}>{s.name}</button>;
               })}
             </div>
           </div>
@@ -137,7 +142,7 @@ export function OrderDrawer({
           <div className="row gap-3" style={{ flexWrap: "wrap" }}>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Agente" : "Agent"}</label>{assignee ? <div className="cust"><Avatar name={assignee.name} initials={deriveInitials(assignee.name)} color={assignee.color} size={24} /><span className="t-sm">{assignee.name}</span></div> : <span className="muted t-sm">—</span>}</div>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Prioridad" : "Priority"}</label>
-              <PriorityPicker value={detail.priority} lang={lang} onChange={(p) => run(() => setOrderPriority(detail.id, p))} />
+              <PriorityPicker value={detail.priority} lang={lang} onChange={(p) => runOpt({ priority: p }, () => setOrderPriority(detail.id, p))} />
             </div>
           </div>
 
@@ -152,7 +157,7 @@ export function OrderDrawer({
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{li.name}</div>
                     <div className="row gap-2" style={{ marginTop: 2 }}>
                       <span className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</span>
-                      {detail.product_stages && <StageChip itemId={li.id} value={li.stage_id} stages={stages} lang={lang} onChange={(sid) => run(() => setItemStage(li.id, sid))} />}
+                      {detail.product_stages && <StageChip itemId={li.id} value={li.stage_id} stages={stages} lang={lang} onChange={(sid) => { const st = stages.find((s) => s.id === sid); runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, stage_id: sid, stage: st ? { name: st.name, color: st.color } : null } : it)) }, () => setItemStage(li.id, sid)); }} />}
                     </div>
                   </div>
                   <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(li.subtotal)}</span>
@@ -235,7 +240,7 @@ export function OrderDrawer({
                 {agents.filter((a) => a.role !== "viewer").map((a) => <button className="menu-item" key={a.id} onClick={() => { setXfer(false); run(() => assignOrder(detail.id, a.id)); }}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
                 <div className="menu-sep" />
                 <div className="menu-label">{lang === "es" ? "A un área" : "To an area"}</div>
-                {areas.map((ar) => <button className="menu-item" key={ar.id} onClick={() => { setXfer(false); run(() => moveOrderArea(detail.id, ar.id)); }}><Pill color={ar.color as PillColor}>{ar.name}</Pill></button>)}
+                {areas.map((ar) => <button className="menu-item" key={ar.id} onClick={() => { setXfer(false); runOpt({ area_id: ar.id, area: { name: ar.name, color: ar.color } }, () => moveOrderArea(detail.id, ar.id)); }}><Pill color={ar.color as PillColor}>{ar.name}</Pill></button>)}
               </div>
             )}
           </span>

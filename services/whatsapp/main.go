@@ -851,7 +851,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
 	} else {
-		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
+		// Outbound — including a reply you sent from your phone. It's been answered, so clear the
+		// unread/pending marker on the conversation.
+		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0 WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
 }
