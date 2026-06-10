@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -20,10 +20,39 @@ function relShort(iso: string | null): string {
   return `${Math.floor(m / 1440)}d`;
 }
 
+/** Soft two-note chime via Web Audio (no asset). Plays after the user has interacted. */
+let _ac: AudioContext | null = null;
+function playChime() {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    _ac = _ac ?? new Ctx();
+    if (_ac.state === "suspended") _ac.resume();
+    const now = _ac.currentTime;
+    for (const [f, t] of [[880, 0], [1174.66, 0.08]] as const) {
+      const o = _ac.createOscillator(), g = _ac.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      o.connect(g); g.connect(_ac.destination);
+      const s = now + t;
+      g.gain.setValueAtTime(0, s);
+      g.gain.linearRampToValueAtTime(0.05, s + 0.02); // low volume = not annoying
+      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.18);
+      o.start(s); o.stop(s + 0.2);
+    }
+  } catch { /* audio unavailable / blocked until first interaction */ }
+}
+
 function Bell({ notifications }: { notifications: Notif[] }) {
   const { lang } = useApp();
   const [open, setOpen] = useState(false);
   const total = notifications.reduce((n, x) => n + (x.unread || 1), 0);
+
+  // Chime when the (assigned-to-you) notification count rises — not on first load.
+  const prev = useRef<number | null>(null);
+  useEffect(() => {
+    if (prev.current != null && total > prev.current) playChime();
+    prev.current = total;
+  }, [total]);
+
   return (
     <span style={{ position: "relative", display: "inline-flex" }}>
       <button className="iconbtn" style={{ position: "relative" }} onClick={() => setOpen((o) => !o)} aria-label="Notifications">

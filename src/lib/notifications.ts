@@ -43,6 +43,7 @@ export async function getNotifications(businessId: string, userId: string, myNam
       .from("conversations")
       .select("id, unread, last_message_at, contact:contacts(name)")
       .eq("business_id", businessId)
+      .eq("assignee_id", userId) // bell = chats assigned to you (+ mentions below)
       .gt("unread", 0)
       .order("last_message_at", { ascending: false })
       .limit(12),
