@@ -378,7 +378,7 @@ export function ChatScreen({
                       <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
                       <span className="conv-time">{relTime(c.last_message_at, lang)}</span>
                     </div>
-                    <div className="conv-prev truncate">{c.preview}</div>
+                    <div className="conv-prev truncate">{c.lastOut && c.preview && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{c.preview}</div>
                     <div className="conv-meta">
                       {c.snoozed_until && new Date(c.snoozed_until).getTime() > Date.now()
                         ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>

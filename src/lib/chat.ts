@@ -48,6 +48,8 @@ export interface ConvListItem {
   area: { name: string; color: string } | null;
   contact: { id: string; name: string; phone: string | null; avatar_url: string | null; tags: string[] | null } | null;
   preview: string;
+  lastOut: boolean;       // last message was outbound (show delivery ticks before the preview)
+  lastState: string | null;
 }
 
 export interface ChatMessage {
@@ -144,15 +146,16 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   const { data, error } = await supabase
     .from("conversations")
     .select(
-      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at)",
+      "id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state)",
     )
     .eq("business_id", businessId)
     .order("last_message_at", { ascending: false });
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((c: Record<string, unknown>) => {
-    const msgs = (c.messages as { body: string; created_at: string }[]) ?? [];
-    const last = msgs.reduce<{ body: string; created_at: string } | null>(
+    type LastMsg = { body: string; created_at: string; direction: string; state: string | null };
+    const msgs = (c.messages as LastMsg[]) ?? [];
+    const last = msgs.reduce<LastMsg | null>(
       (acc, m) => (!acc || m.created_at > acc.created_at ? m : acc),
       null,
     );
@@ -167,6 +170,8 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       area: c.area,
       contact: c.contact,
       preview: last?.body ?? "",
+      lastOut: last?.direction === "out",
+      lastState: last?.state ?? null,
     } as ConvListItem;
   });
 }
