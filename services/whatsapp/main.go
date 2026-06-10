@@ -85,6 +85,17 @@ func main() {
 		panic(err)
 	}
 
+	// Security hardening: whatsmeow's own tables (whatsmeow_*) live in the public schema and
+	// hold the WhatsApp session/encryption keys. Without RLS they'd be reachable via Supabase's
+	// public anon key. Enable RLS (no policy = deny all) so only the service-role worker, which
+	// bypasses RLS, can touch them. Runs every boot; idempotent.
+	if _, err := db.ExecContext(ctx, `do $$ declare t text; begin
+  for t in select tablename from pg_tables where schemaname='public' and tablename like 'whatsmeow\_%'
+  loop execute format('alter table public.%I enable row level security;', t); end loop;
+end $$;`); err != nil {
+		logger.Warnf("rls harden whatsmeow tables: %v", err)
+	}
+
 	m := &Manager{
 		db: db, container: container, log: logger,
 		clients: map[string]*whatsmeow.Client{},
