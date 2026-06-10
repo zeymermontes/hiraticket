@@ -96,6 +96,12 @@ end $$;`); err != nil {
 		logger.Warnf("rls harden whatsmeow tables: %v", err)
 	}
 
+	// Recover messages a previous instance claimed (state='sending') but never finished, so they
+	// get retried instead of being stuck under the clock icon forever.
+	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'`); err != nil {
+		logger.Warnf("requeue stale sending: %v", err)
+	}
+
 	m := &Manager{
 		db: db, container: container, log: logger,
 		clients: map[string]*whatsmeow.Client{},
@@ -181,6 +187,8 @@ func (m *Manager) reap(ctx context.Context, alive map[string]bool) {
 
 func (m *Manager) pollOutbound(ctx context.Context) {
 	for {
+		// Self-heal: requeue any 'sending' claim that hung (e.g. a send that never returned).
+		m.exec(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending' AND created_at < now() - interval '2 minutes'`)
 		rows, err := m.db.QueryContext(ctx,
 			`SELECT id, business_id, conversation_id, body, type, media_url, media_mime, media_name, reply_to
 			   FROM messages

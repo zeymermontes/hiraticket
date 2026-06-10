@@ -44,6 +44,13 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
   revalidatePath("/chat");
 }
 
+/** Re-queue a failed outbound message so the worker tries to send it again. */
+export async function retryMessage(messageId: string): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("messages").update({ state: "queued" }).eq("id", messageId).eq("direction", "out").in("state", ["failed", "sending"]);
+  revalidatePath("/chat");
+}
+
 /** Edit an outbound message (worker re-sends an edit to WhatsApp). */
 export async function editMessage(messageId: string, body: string): Promise<void> {
   const text = body.trim();

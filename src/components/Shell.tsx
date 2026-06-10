@@ -24,6 +24,7 @@ function relShort(iso: string | null): string {
 let _ac: AudioContext | null = null;
 function playChime() {
   try {
+    if (localStorage.getItem("ht_muteNotif") === "1") return; // muted in Settings
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     _ac = _ac ?? new Ctx();
     if (_ac.state === "suspended") _ac.resume();

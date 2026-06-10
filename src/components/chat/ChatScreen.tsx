@@ -21,7 +21,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage,
 } from "@/app/(app)/chat/actions";
 
 function LocationBlock({ m }: { m: ChatMessage }) {
@@ -81,6 +81,7 @@ function Tick({ state }: { state: string | null }) {
   if (state === "read") return <span style={{ color: "var(--wa)", display: "inline-flex" }}><Icon name="checks" size={15} /></span>;
   if (state === "delivered") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="checks" size={15} /></span>;
   if (state === "sent") return <span style={{ display: "inline-flex", opacity: 0.65 }}><Icon name="check" size={13} /></span>;
+  if (state === "failed") return <span style={{ color: "var(--red)", display: "inline-flex" }} title="No se pudo enviar"><Icon name="x" size={12} /></span>;
   return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
 }
 
@@ -618,7 +619,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0 }}>{m.body}</div>}
                       </>
                     )}
-                <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}{relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
+                <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}
+                  {out && m.state === "failed" && !m.id.startsWith("tmp") && (
+                    <button onClick={() => start(async () => { await retryMessage(m.id); router.refresh(); })} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
+                  )}
+                  {relTime(m.created_at, lang)}{out && <Tick state={m.state} />}</div>
                 {!m.deleted && m.reactions?.length > 0 && (
                   <div className="msg-reacts">
                     {m.reactions.map((r, ri) => (

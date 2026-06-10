@@ -100,6 +100,11 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
   const router = useRouter();
   const [, start] = useTransition();
 
+  // Notification sound mute (per-browser preference).
+  const [muted, setMuted] = useState(false);
+  useEffect(() => { try { setMuted(localStorage.getItem("ht_muteNotif") === "1"); } catch {} }, []);
+  const setMute = (v: boolean) => { setMuted(v); try { localStorage.setItem("ht_muteNotif", v ? "1" : "0"); } catch {} };
+
   // Live-refresh while a connection is in progress (worker updates the row).
   const watching = sessions.some((s) => s.status === "connecting" || s.status === "qr" || s.status === "reconnecting");
   useEffect(() => {
@@ -172,6 +177,19 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
                 {[["", "#F5C518"], ["#0E8C82", "#0E8C82"], ["#2563EB", "#2563EB"], ["#7C3AED", "#7C3AED"]].map(([val, col]) => (
                   <button key={col} onClick={() => setBrand(val)} aria-label="brand" style={{ width: 26, height: 26, borderRadius: "50%", background: col, border: (brand === val ? "2px solid var(--text)" : "2px solid var(--border)"), cursor: "pointer" }} />
                 ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="bell" size={16} /><h4>{lang === "es" ? "Notificaciones" : "Notifications"}</h4></div>
+          <div className="ws-block-body col gap-3">
+            <div className="row gap-2">
+              <span className="grow">{lang === "es" ? "Sonido de notificaciones" : "Notification sound"}<span className="t-xs muted" style={{ display: "block" }}>{lang === "es" ? "Tono corto al recibir una notificación asignada a ti" : "Short chime on a notification assigned to you"}</span></span>
+              <div className="seg">
+                <button className={!muted ? "on" : ""} onClick={() => setMute(false)}>{lang === "es" ? "Activado" : "On"}</button>
+                <button className={muted ? "on" : ""} onClick={() => setMute(true)}><Icon name="x" size={13} />{lang === "es" ? "Silenciado" : "Muted"}</button>
               </div>
             </div>
           </div>
