@@ -45,6 +45,8 @@ export function OrderDrawer({
   const [detail, setDetail] = useState(detailProp);
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const [note, setNote] = useState("");
+  const [noteItem, setNoteItem] = useState(""); // selected subtask for a subtask note ("" → first)
+  const [noteFilter, setNoteFilter] = useState<Set<"order" | "subtask">>(new Set()); // empty = all
   const [payAmount, setPayAmount] = useState("");
   const [xfer, setXfer] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -231,14 +233,45 @@ export function OrderDrawer({
           )}
 
           {/* notes */}
+          {(() => {
+            const subLabel = personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items");
+            const ordLabel = personal ? (lang === "es" ? "Tarea" : "Task") : (lang === "es" ? "Pedido" : "Order");
+            const noteTitle = (id: string | null) => id ? (detail.items.find((it) => it.id === id)?.name ?? (personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Artículo" : "Item"))) : ordLabel;
+            const showOrder = noteFilter.size === 0 || noteFilter.has("order");
+            const showSub = noteFilter.size === 0 || noteFilter.has("subtask");
+            const visible = detail.notes.filter((n) => (n.item_id ? showSub : showOrder));
+            const toggle = (k: "order" | "subtask") => setNoteFilter((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+            const postNote = (itemId: string | null) => { if (!note.trim()) return; run(() => addOrderNote(detail.id, note, itemId)); setNote(""); };
+            return (
           <div className="ws-block">
             <div className="ws-block-head"><Icon name="edit" size={16} /><h4 className="grow">{lang === "es" ? "Notas internas" : "Notes"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill></div>
             <div style={{ padding: "12px 14px" }}>
               <MentionTextarea value={note} onChange={setNote} agents={agents} placeholder={lang === "es" ? "Agregar nota… usa @ para mencionar" : "Add a note… use @ to mention"} />
-              {note.trim() && <button className="btn btn-sm btn-primary" style={{ marginTop: 8 }} disabled={pending} onClick={() => { run(() => addOrderNote(detail.id, note)); setNote(""); }}><Icon name="send" size={14} />{lang === "es" ? "Publicar" : "Post"}</button>}
-              {detail.notes.length > 0 && <div style={{ marginTop: 10 }}>{detail.notes.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className="note-body note-yellow"><div className="note-head"><span className="note-author">{au?.name ?? "Agente"}</span><span className="note-time">{date(n.created_at)}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
+              {note.trim() && (
+                <div className="row gap-2" style={{ marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {detail.items.length > 0 && (
+                    <>
+                      <select className="inp-inline" style={{ maxWidth: 180 }} value={noteItem} onChange={(e) => setNoteItem(e.target.value)}>
+                        {detail.items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                      </select>
+                      <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => postNote(noteItem || detail.items[0]?.id || null)}><Icon name="send" size={14} />{lang === "es" ? "Nota de subtarea" : "Subtask note"}</button>
+                    </>
+                  )}
+                  <button className="btn btn-sm" style={{ background: "var(--amber)", color: "#fff" }} disabled={pending} onClick={() => postNote(null)}><Icon name="send" size={14} />{lang === "es" ? "Nota de orden" : "Order note"}</button>
+                </div>
+              )}
+              {detail.notes.length > 0 && (
+                <div className="chip-row" style={{ marginTop: 12 }}>
+                  <button className={"chip" + (noteFilter.size === 0 ? " on" : "")} onClick={() => setNoteFilter(new Set())}>{lang === "es" ? "Todas" : "All"}</button>
+                  <button className={"chip" + (noteFilter.has("order") ? " on" : "")} onClick={() => toggle("order")}>{ordLabel}</button>
+                  <button className={"chip" + (noteFilter.has("subtask") ? " on" : "")} onClick={() => toggle("subtask")}>{subLabel}</button>
+                </div>
+              )}
+              {visible.length > 0 && <div style={{ marginTop: 10 }}>{visible.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className="note-body note-yellow"><div className="note-head"><Pill color={n.item_id ? "brand" : "amber"} dot>{noteTitle(n.item_id)}</Pill><span className="grow" /><span className="note-time">{date(n.created_at)}</span></div><div className="note-head" style={{ marginTop: 2 }}><span className="note-author">{au?.name ?? "Agente"}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
             </div>
           </div>
+            );
+          })()}
 
           {/* activity log */}
           <div className="ws-block">

@@ -376,7 +376,6 @@ export function NewOrderModal({
                     {!personal && <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>}
                     <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
                   </div>
-                  <input className="inp-inline" style={{ fontSize: 12, width: "100%" }} value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} placeholder={personal ? (lang === "es" ? "Nota de la subtarea (opcional)" : "Subtask note (optional)") : (lang === "es" ? "Nota del artículo (opcional)" : "Item note (optional)")} />
                   {onTier && <span className="t-xs row gap-1" style={{ color: "var(--green)" }}><Icon name="layers" size={11} />{lang === "es" ? `Precio por volumen (base $${formatMoney(l.basePrice!)})` : `Volume price (base $${formatMoney(l.basePrice!)})`}</span>}
                 </div>
               );

@@ -3,18 +3,18 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 
-/** Add an internal note to an order. */
-export async function addOrderNote(orderId: string, body: string): Promise<void> {
+/** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
+ *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
+export async function addOrderNote(orderId: string, body: string, itemId?: string | null): Promise<void> {
   const text = body.trim();
   if (!text) return;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
   if (!order) return;
-  await supabase.from("notes").insert({
-    business_id: order.business_id, parent_type: "order", parent_id: orderId,
-    author_id: user?.id ?? null, body: text,
-  });
+  const base = { business_id: order.business_id, parent_type: "order", parent_id: orderId, author_id: user?.id ?? null, body: text };
+  const { error } = await supabase.from("notes").insert({ ...base, item_id: itemId ?? null });
+  if (error) await supabase.from("notes").insert(base); // notes.item_id not added yet (0031)
   revalidatePath("/orders");
 }
 
