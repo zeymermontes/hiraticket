@@ -319,35 +319,51 @@ function AudioPlayer({ url }: { url: string }) {
 function StickerCell({ s, onSend, onFav, lang }: { s: StickerItem; onSend: () => void; onFav: () => void; lang: "es" | "en" }) {
   return (
     <div className="sticker-cell">
-      <button className="sticker-pick" onClick={onSend} title={s.name || (lang === "es" ? "Enviar sticker" : "Send sticker")}><img src={s.url} alt="" loading="lazy" /></button>
-      <button className={"sticker-fav" + (s.fav ? " on" : "")} onClick={(e) => { e.stopPropagation(); onFav(); }} title={s.fav ? (lang === "es" ? "Quitar de favoritos" : "Remove favorite") : (lang === "es" ? "Agregar a favoritos" : "Add to favorites")}>{s.fav ? "★" : "☆"}</button>
+      <button className="sticker-pick" onClick={onSend} title={[s.name, (s.tags ?? []).map((t) => "#" + t).join(" ")].filter(Boolean).join(" · ") || (lang === "es" ? "Enviar sticker" : "Send sticker")}><img src={s.url} alt="" loading="lazy" /></button>
+      <button className={"sticker-fav" + (s.fav ? " on" : "")} onClick={(e) => { e.stopPropagation(); onFav(); }} title={s.fav ? (lang === "es" ? "Editar favorito / tags" : "Edit favorite / tags") : (lang === "es" ? "Agregar a favoritos" : "Add to favorites")}>{s.fav ? "★" : "☆"}</button>
       {s.name && <div className="sticker-name" title={s.name}>{s.name}</div>}
     </div>
   );
 }
 
-/** Name + tags form shown in the tray when adding a sticker to favorites. */
-function SaveFavoriteForm({ s, lang, onSave, onCancel }: { s: StickerItem; lang: "es" | "en"; onSave: (name: string, tags: string[]) => void; onCancel: () => void }) {
+/** Favorite editor shown in the tray: name + tag chips (add/remove), and remove-from-favorites. */
+function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerItem; lang: "es" | "en"; onSave: (name: string, tags: string[]) => void; onRemove?: () => void; onCancel: () => void }) {
   const [name, setName] = useState(s.name ?? "");
-  const [tags, setTags] = useState((s.tags ?? []).join(", "));
-  const submit = () => onSave(name.trim(), tags.split(",").map((t) => t.trim()).filter(Boolean));
+  const [tags, setTags] = useState<string[]>(s.tags ?? []);
+  const [input, setInput] = useState("");
+  const addTag = (raw: string) => { const t = raw.trim().toLowerCase(); if (t && !tags.includes(t)) setTags((ts) => [...ts, t]); setInput(""); };
+  const removeTag = (t: string) => setTags((ts) => ts.filter((x) => x !== t));
+  const onTagKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); if (input.trim()) addTag(input); else onSave(name.trim(), tags); }
+    else if (e.key === "Backspace" && !input && tags.length) removeTag(tags[tags.length - 1]);
+  };
   return (
-    <div className="col gap-2" style={{ padding: 2 }}>
+    <div className="col gap-2 scroll" style={{ padding: 2, overflowY: "auto" }}>
       <div className="row gap-2" style={{ alignItems: "center" }}>
         <span className="sticker-pick" style={{ width: 44, height: 44, flex: "none", padding: 4 }}><img src={s.url} alt="" /></span>
-        <span className="grow" style={{ fontWeight: 700, fontSize: 13 }}>{lang === "es" ? "Guardar en favoritos" : "Save to favorites"}</span>
+        <span className="grow" style={{ fontWeight: 700, fontSize: 13 }}>{s.fav ? (lang === "es" ? "Editar favorito" : "Edit favorite") : (lang === "es" ? "Guardar en favoritos" : "Save to favorites")}</span>
       </div>
       <div className="field field-sm field-filled">
-        <input autoFocus placeholder={lang === "es" ? "Nombre (ej. perro lentes)" : "Name (e.g. dog glasses)"} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+        <input autoFocus placeholder={lang === "es" ? "Nombre (ej. perro lentes)" : "Name (e.g. dog glasses)"} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSave(name.trim(), tags); }} />
       </div>
-      <div className="field field-sm field-filled">
-        <Icon name="tag" size={14} />
-        <input placeholder={lang === "es" ? "Tags, separados por coma" : "Tags, comma separated"} value={tags} onChange={(e) => setTags(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      <div>
+        <div className="lbl" style={{ marginBottom: 4 }}><Icon name="tag" size={12} /> Tags</div>
+        {tags.length > 0 && (
+          <div className="row gap-1" style={{ flexWrap: "wrap", marginBottom: 6 }}>
+            {tags.map((t) => (
+              <span key={t} className="pill pill-brand" style={{ gap: 4 }}>{t}<button onClick={() => removeTag(t)} title={lang === "es" ? "Quitar" : "Remove"} style={{ border: "none", background: "transparent", cursor: "pointer", color: "inherit", display: "inline-flex", padding: 0 }}><Icon name="x" size={11} /></button></span>
+            ))}
+          </div>
+        )}
+        <div className="field field-sm field-filled">
+          <input placeholder={lang === "es" ? "Agregar tag y Enter" : "Add tag, press Enter"} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={onTagKey} onBlur={() => { if (input.trim()) addTag(input); }} />
+        </div>
       </div>
       <div className="row gap-2">
         <button className="btn btn-sm btn-outline grow" onClick={onCancel}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-        <button className="btn btn-sm btn-primary grow" onClick={submit}><Icon name="check" size={14} />{lang === "es" ? "Guardar" : "Save"}</button>
+        <button className="btn btn-sm btn-primary grow" onClick={() => onSave(name.trim(), tags)}><Icon name="check" size={14} />{lang === "es" ? "Guardar" : "Save"}</button>
       </div>
+      {onRemove && <button className="btn btn-sm btn-danger btn-block" onClick={onRemove}><Icon name="trash" size={14} />{lang === "es" ? "Quitar de favoritos" : "Remove from favorites"}</button>}
     </div>
   );
 }
@@ -934,8 +950,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     setStickerTray((t) => ({ recent: t.recent.map((x) => (x.id === s.id ? { ...x, fav: false } : x)), favorites: t.favorites.filter((f) => f.url !== s.url) }));
     start(async () => { await removeStickerFavorite(s.id); await loadStickers(false); });
   }
-  // Star clicked: favorites → remove; others → open the name/tags form.
-  function favSticker(s: StickerItem) { if (s.fav) removeFavorite(s); else setSavingSticker(s); }
+  // Star clicked → open the favorite editor (add for new, view/edit name+tags for existing).
+  function favSticker(s: StickerItem) { setSavingSticker(s); }
 
   async function loadCanned() {
     if (canned.length) return;
@@ -1382,7 +1398,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => { setStickerOpen(false); setSavingSticker(null); }} />
                   <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - stickerRect.top + 6, left: Math.max(8, stickerRect.left - 150), width: 300, height: 360, maxHeight: "70vh", zIndex: 201, padding: 8, display: "flex", flexDirection: "column" }}>
                     {savingSticker ? (
-                      <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} />
+                      <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} onRemove={savingSticker.fav ? () => { removeFavorite(savingSticker); setSavingSticker(null); } : undefined} />
                     ) : (
                       <>
                         <div className="field field-sm field-filled" style={{ marginBottom: 6, flex: "none" }}>
