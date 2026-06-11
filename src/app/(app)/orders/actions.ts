@@ -218,10 +218,17 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
 
   if (order) {
     if (input.dueAt) await supabase.from("orders").update({ due_at: input.dueAt }).eq("id", order.id); // best-effort (0029)
-    await supabase.from("order_items").insert(lines.map((l) => ({
+    const itemRows = lines.map((l) => ({
       order_id: order.id, name: (l.item ?? "").trim() || "Artículo", qty: l.qty || 1,
       unit_price: l.price || 0, subtotal: (l.qty || 1) * (l.price || 0), stage_id: input.stageId,
-    })));
+      note: (l.note ?? "").trim() || null,
+    }));
+    const { error: itemErr } = await supabase.from("order_items").insert(itemRows);
+    if (itemErr) await supabase.from("order_items").insert(itemRows.map(({ note, ...r }) => r)); // 0030 not applied yet
+    // Order-level note (uses the existing notes timeline).
+    if ((input.note ?? "").trim()) {
+      await supabase.from("notes").insert({ business_id: businessId, parent_type: "order", parent_id: order.id, author_id: user?.id ?? null, body: input.note!.trim() });
+    }
     // Event text follows the workspace mode (tasks vs orders); resilient if `mode` isn't there yet.
     const { data: biz } = await supabase.from("businesses").select("mode").eq("id", businessId).maybeSingle();
     const created = (biz as { mode?: string } | null)?.mode === "personal" ? "Tarea creada" : "Pedido creado";

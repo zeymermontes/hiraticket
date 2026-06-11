@@ -128,6 +128,10 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table orders add column if not exists due_at timestamptz`); err != nil {
 		logger.Warnf("add due_at column: %v", err)
 	}
+	// Per-item (product/subtask) note. Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table order_items add column if not exists note text`); err != nil {
+		logger.Warnf("add order_items.note column: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.

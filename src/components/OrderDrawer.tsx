@@ -169,6 +169,7 @@ export function OrderDrawer({
                   <div className="lineitem-thumb" />
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{li.name}</div>
+                    {li.note && <div className="t-xs muted" style={{ marginTop: 1, whiteSpace: "pre-wrap" }}>{li.note}</div>}
                     <div className="row gap-2" style={{ marginTop: 2 }}>
                       {!personal && <span className="t-xs muted mono">{li.qty} × ${formatMoney(li.unit_price)}</span>}
                       {personal && li.qty > 1 && <span className="t-xs muted mono">{li.qty}×</span>}

@@ -296,12 +296,13 @@ export function NewOrderModal({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [contactName, setContactName] = useState(defaultContact ?? "");
-  type Line = { item: string; qty: string; price: string; basePrice?: number; tiers?: PriceTier[] };
+  type Line = { item: string; qty: string; price: string; note?: string; basePrice?: number; tiers?: PriceTier[] };
   const [lines, setLines] = useState<Line[]>([{ item: "", qty: "1", price: "" }]);
   const [priority, setPriority] = useState("normal");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [dueAt, setDueAt] = useState("");
+  const [orderNote, setOrderNote] = useState("");
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
   const hasItem = lines.some((l) => l.item.trim());
 
@@ -333,9 +334,10 @@ export function NewOrderModal({
     start(async () => {
       await createOrder(businessId, {
         contactName,
-        items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0 })),
+        items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0, note: l.note })),
         areaId: areaId || null, stageId: stageId || null, priority,
         dueAt: dueAt ? new Date(dueAt).toISOString() : null,
+        note: orderNote,
       });
       onClose();
       if (onCreated) onCreated(); else router.refresh();
@@ -374,6 +376,7 @@ export function NewOrderModal({
                     {!personal && <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>}
                     <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
                   </div>
+                  <input className="inp-inline" style={{ fontSize: 12, width: "100%" }} value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} placeholder={personal ? (lang === "es" ? "Nota de la subtarea (opcional)" : "Subtask note (optional)") : (lang === "es" ? "Nota del artículo (opcional)" : "Item note (optional)")} />
                   {onTier && <span className="t-xs row gap-1" style={{ color: "var(--green)" }}><Icon name="layers" size={11} />{lang === "es" ? `Precio por volumen (base $${formatMoney(l.basePrice!)})` : `Volume price (base $${formatMoney(l.basePrice!)})`}</span>}
                 </div>
               );
@@ -395,6 +398,9 @@ export function NewOrderModal({
           </div>
           <div className="grow"><label className="lbl">{lang === "es" ? "Fecha límite (opcional)" : "Deadline (optional)"}</label>
             <input type="datetime-local" className="inp-inline" style={{ width: "100%" }} value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+          </div>
+          <div className="grow"><label className="lbl">{personal ? (lang === "es" ? "Nota de la tarea (opcional)" : "Task note (optional)") : (lang === "es" ? "Nota del pedido (opcional)" : "Order note (optional)")}</label>
+            <textarea className="inp-inline" style={{ width: "100%", minHeight: 54, resize: "vertical", paddingTop: 6 }} value={orderNote} onChange={(e) => setOrderNote(e.target.value)} placeholder={lang === "es" ? "Detalles, instrucciones…" : "Details, instructions…"} />
           </div>
           {!personal && (
             <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
