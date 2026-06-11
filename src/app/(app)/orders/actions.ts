@@ -211,9 +211,12 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
       order_id: order.id, name: (l.item ?? "").trim() || "Artículo", qty: l.qty || 1,
       unit_price: l.price || 0, subtotal: (l.qty || 1) * (l.price || 0), stage_id: input.stageId,
     })));
+    // Event text follows the workspace mode (tasks vs orders); resilient if `mode` isn't there yet.
+    const { data: biz } = await supabase.from("businesses").select("mode").eq("id", businessId).maybeSingle();
+    const created = (biz as { mode?: string } | null)?.mode === "personal" ? "Tarea creada" : "Pedido creado";
     await supabase.from("events").insert({
       business_id: businessId, parent_type: "order", parent_id: order.id,
-      actor_id: user?.id ?? null, kind: "plus", text: "Pedido creado",
+      actor_id: user?.id ?? null, kind: "plus", text: created,
     });
   }
 
