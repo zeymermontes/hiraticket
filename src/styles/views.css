@@ -183,6 +183,10 @@
 .note-text { font-size: 13px; color: var(--text); margin-top: 2px; }
 .note-yellow { background: var(--brand-50); border-radius: 9px; padding: 9px 11px; }
 [data-theme="dark"] .note-yellow { background: #221d0c; }
+/* Order-drawer notes: tinted + left accent by scope (subtask = brand, order = amber). */
+.note-subtask { background: var(--brand-50); border-left: 3px solid var(--brand); border-radius: 9px; padding: 9px 11px; }
+[data-theme="dark"] .note-subtask { background: #221d0c; }
+.note-order { background: var(--amber-bg); border-left: 3px solid var(--amber); border-radius: 9px; padding: 9px 11px; }
 
 /* actions grid */
 .actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }

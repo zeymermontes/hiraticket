@@ -267,7 +267,7 @@ export function OrderDrawer({
                   <button className={"chip" + (noteFilter.has("subtask") ? " on" : "")} onClick={() => toggle("subtask")}>{subLabel}</button>
                 </div>
               )}
-              {visible.length > 0 && <div style={{ marginTop: 10 }}>{visible.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className="note-body note-yellow"><div className="note-head"><Pill color={n.item_id ? "brand" : "amber"} dot>{noteTitle(n.item_id)}</Pill><span className="grow" /><span className="note-time">{date(n.created_at)}</span></div><div className="note-head" style={{ marginTop: 2 }}><span className="note-author">{au?.name ?? "Agente"}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
+              {visible.length > 0 && <div style={{ marginTop: 10 }}>{visible.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className={"note-body " + (n.item_id ? "note-subtask" : "note-order")}><div className="note-head"><Pill color={n.item_id ? "brand" : "amber"} dot>{noteTitle(n.item_id)}</Pill><span className="grow" /><span className="note-time">{date(n.created_at)}</span></div><div className="note-head" style={{ marginTop: 2 }}><span className="note-author">{au?.name ?? "Agente"}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
             </div>
           </div>
             );
