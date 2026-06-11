@@ -150,17 +150,20 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
   });
 }
 
-export interface StickerItem { id: string; url: string; fav: boolean } // id = a message to re-send from
+export interface StickerItem { id: string; url: string; fav: boolean; name?: string | null; tags?: string[] } // id = a message to re-send from
 
-/** The send-sticker tray: favorites (pinned) + recent distinct stickers the business has used.
+/** The send-sticker tray: favorites (pinned, with name/tags) + recent distinct stickers used.
  *  Each item carries a message id to re-send the stored WebP from + a signed preview URL. */
 export async function getStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
   const supabase = await createClient();
-  const [recentRes, favRes] = await Promise.all([
+  const favCols = (meta: string) => supabase.from("sticker_favorites").select(`message_id, media_url${meta}`).eq("business_id", businessId).order("created_at", { ascending: false });
+  const [recentRes, favRes0] = await Promise.all([
     supabase.from("messages").select("id, media_url").eq("business_id", businessId).eq("type", "sticker").not("media_url", "is", null).order("created_at", { ascending: false }).limit(120),
-    supabase.from("sticker_favorites").select("message_id, media_url").eq("business_id", businessId).order("created_at", { ascending: false }),
+    favCols(", name, tags"),
   ]);
-  const favRows = (favRes.error ? [] : (favRes.data ?? [])) as { message_id: string; media_url: string }[];
+  // name/tags (0034) may not be applied yet → retry without them.
+  const favRes = favRes0.error ? await favCols("") : favRes0;
+  const favRows = (favRes.error ? [] : (favRes.data ?? [])) as unknown as { message_id: string; media_url: string; name?: string | null; tags?: string[] }[];
   const favPaths = new Set(favRows.map((f) => f.media_url));
 
   // Dedupe recent by stored path (same sticker resent many times → show once).
@@ -170,7 +173,7 @@ export async function getStickerTray(businessId: string): Promise<{ favorites: S
   // Sign favorites + recent together (one signing batch), then split back.
   const favStubs = favRows.map((f) => ({ id: f.message_id, media_url: f.media_url }));
   const signed = await signMedia([...favStubs, ...uniqRecent] as unknown as ChatMessage[]);
-  const favorites = signed.slice(0, favStubs.length).map((s) => ({ id: s.id, url: s.media_url!, fav: true })).filter((s) => !!s.url);
+  const favorites = signed.slice(0, favStubs.length).map((s, i) => ({ id: s.id, url: s.media_url!, fav: true, name: favRows[i].name ?? null, tags: favRows[i].tags ?? [] })).filter((s) => !!s.url);
   const recent = signed.slice(favStubs.length).map((s, i) => ({ id: s.id, url: s.media_url!, fav: favPaths.has(uniqRecent[i].media_url) })).filter((s) => !!s.url);
   return { favorites, recent };
 }

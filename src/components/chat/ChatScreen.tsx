@@ -23,7 +23,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, toggleStickerFavorite,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite,
 } from "@/app/(app)/chat/actions";
 import { useToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
@@ -315,12 +315,39 @@ function AudioPlayer({ url }: { url: string }) {
   );
 }
 
-/** One sticker in the send tray: click to send, star toggles favorite. */
+/** One sticker in the send tray: click to send, star toggles favorite, name shown under favorites. */
 function StickerCell({ s, onSend, onFav, lang }: { s: StickerItem; onSend: () => void; onFav: () => void; lang: "es" | "en" }) {
   return (
     <div className="sticker-cell">
-      <button className="sticker-pick" onClick={onSend} title={lang === "es" ? "Enviar sticker" : "Send sticker"}><img src={s.url} alt="" loading="lazy" /></button>
+      <button className="sticker-pick" onClick={onSend} title={s.name || (lang === "es" ? "Enviar sticker" : "Send sticker")}><img src={s.url} alt="" loading="lazy" /></button>
       <button className={"sticker-fav" + (s.fav ? " on" : "")} onClick={(e) => { e.stopPropagation(); onFav(); }} title={s.fav ? (lang === "es" ? "Quitar de favoritos" : "Remove favorite") : (lang === "es" ? "Agregar a favoritos" : "Add to favorites")}>{s.fav ? "★" : "☆"}</button>
+      {s.name && <div className="sticker-name" title={s.name}>{s.name}</div>}
+    </div>
+  );
+}
+
+/** Name + tags form shown in the tray when adding a sticker to favorites. */
+function SaveFavoriteForm({ s, lang, onSave, onCancel }: { s: StickerItem; lang: "es" | "en"; onSave: (name: string, tags: string[]) => void; onCancel: () => void }) {
+  const [name, setName] = useState(s.name ?? "");
+  const [tags, setTags] = useState((s.tags ?? []).join(", "));
+  const submit = () => onSave(name.trim(), tags.split(",").map((t) => t.trim()).filter(Boolean));
+  return (
+    <div className="col gap-2" style={{ padding: 2 }}>
+      <div className="row gap-2" style={{ alignItems: "center" }}>
+        <span className="sticker-pick" style={{ width: 44, height: 44, flex: "none", padding: 4 }}><img src={s.url} alt="" /></span>
+        <span className="grow" style={{ fontWeight: 700, fontSize: 13 }}>{lang === "es" ? "Guardar en favoritos" : "Save to favorites"}</span>
+      </div>
+      <div className="field field-sm field-filled">
+        <input autoFocus placeholder={lang === "es" ? "Nombre (ej. perro lentes)" : "Name (e.g. dog glasses)"} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      </div>
+      <div className="field field-sm field-filled">
+        <Icon name="tag" size={14} />
+        <input placeholder={lang === "es" ? "Tags, separados por coma" : "Tags, comma separated"} value={tags} onChange={(e) => setTags(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      </div>
+      <div className="row gap-2">
+        <button className="btn btn-sm btn-outline grow" onClick={onCancel}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+        <button className="btn btn-sm btn-primary grow" onClick={submit}><Icon name="check" size={14} />{lang === "es" ? "Guardar" : "Save"}</button>
+      </div>
     </div>
   );
 }
@@ -879,12 +906,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const stickerBtn = useRef<HTMLButtonElement>(null);
   const [stickerTray, setStickerTray] = useState<{ favorites: StickerItem[]; recent: StickerItem[] }>({ favorites: [], recent: [] });
   const [stickerLoading, setStickerLoading] = useState(false);
+  const [stickerQuery, setStickerQuery] = useState("");
+  const [savingSticker, setSavingSticker] = useState<StickerItem | null>(null); // sticker being added to favorites (name/tags form)
   const { push } = useToast();
 
-  async function loadStickers() {
-    setStickerLoading(true);
+  async function loadStickers(showSpinner = true) {
+    if (showSpinner) setStickerLoading(true);
     try { setStickerTray(await loadStickerTray(businessId)); } catch {}
-    setStickerLoading(false);
+    if (showSpinner) setStickerLoading(false);
   }
   // Send a sticker the business already has (re-sends the stored WebP by message reference).
   function pickSticker(s: StickerItem) {
@@ -892,18 +921,21 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "sticker", body: null, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: s.url, media_mime: "image/webp", media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
     start(async () => { await sendSticker(detail.id, s.id); });
   }
-  // Star/unstar from the tray (optimistic).
-  function favSticker(s: StickerItem) {
-    const next = !s.fav;
-    setStickerTray((t) => {
-      const recent = t.recent.map((x) => (x.id === s.id ? { ...x, fav: next } : x));
-      let favorites = t.favorites;
-      if (next && !favorites.some((f) => f.url === s.url)) favorites = [{ ...s, fav: true }, ...favorites];
-      if (!next) favorites = favorites.filter((f) => f.url !== s.url);
-      return { favorites, recent };
-    });
-    start(async () => { await toggleStickerFavorite(s.id); });
+  // Persist the favorite with a name + tags (called from the save form), then reconcile.
+  function commitFavorite(s: StickerItem, name: string, tags: string[]) {
+    setSavingSticker(null);
+    setStickerTray((t) => ({
+      recent: t.recent.map((x) => (x.id === s.id ? { ...x, fav: true } : x)),
+      favorites: t.favorites.some((f) => f.url === s.url) ? t.favorites.map((f) => (f.url === s.url ? { ...f, name, tags } : f)) : [{ ...s, fav: true, name, tags }, ...t.favorites],
+    }));
+    start(async () => { await saveStickerFavorite(s.id, name, tags); await loadStickers(false); });
   }
+  function removeFavorite(s: StickerItem) {
+    setStickerTray((t) => ({ recent: t.recent.map((x) => (x.id === s.id ? { ...x, fav: false } : x)), favorites: t.favorites.filter((f) => f.url !== s.url) }));
+    start(async () => { await removeStickerFavorite(s.id); await loadStickers(false); });
+  }
+  // Star clicked: favorites → remove; others → open the name/tags form.
+  function favSticker(s: StickerItem) { if (s.fav) removeFavorite(s); else setSavingSticker(s); }
 
   async function loadCanned() {
     if (canned.length) return;
@@ -1347,20 +1379,39 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               <button ref={stickerBtn} className="iconbtn" title={lang === "es" ? "Stickers" : "Stickers"} style={{ fontSize: 16 }} onClick={() => { if (!stickerOpen && stickerBtn.current) setStickerRect(stickerBtn.current.getBoundingClientRect()); setStickerOpen((o) => !o); setEmojiOpen(false); setCannedOpen(false); if (!stickerOpen) loadStickers(); }}>🩷</button>
               {stickerOpen && stickerRect && (
                 <>
-                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setStickerOpen(false)} />
-                  <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - stickerRect.top + 6, left: Math.max(8, stickerRect.left - 150), width: 300, maxHeight: 340, zIndex: 201, padding: 8 }}>
-                    {stickerLoading ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>
-                      : (stickerTray.favorites.length === 0 && stickerTray.recent.length === 0) ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Aún no hay stickers. Aparecerán los que recibas o envíes." : "No stickers yet. The ones you receive or send show up here."}</div>
-                        : (
-                          <>
-                            {stickerTray.favorites.length > 0 && <>
-                              <div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div>
-                              <div className="sticker-grid">{stickerTray.favorites.map((s) => <StickerCell key={"f" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
-                            </>}
-                            <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
-                            <div className="sticker-grid">{stickerTray.recent.map((s) => <StickerCell key={"r" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
-                          </>
-                        )}
+                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => { setStickerOpen(false); setSavingSticker(null); }} />
+                  <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - stickerRect.top + 6, left: Math.max(8, stickerRect.left - 150), width: 300, height: 360, maxHeight: "70vh", zIndex: 201, padding: 8, display: "flex", flexDirection: "column" }}>
+                    {savingSticker ? (
+                      <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} />
+                    ) : (
+                      <>
+                        <div className="field field-sm field-filled" style={{ marginBottom: 6, flex: "none" }}>
+                          <Icon name="search" />
+                          <input placeholder={lang === "es" ? "Buscar por nombre o tag…" : "Search by name or tag…"} value={stickerQuery} onChange={(e) => setStickerQuery(e.target.value)} />
+                        </div>
+                        <div className="sticker-tray scroll" style={{ flex: 1, minHeight: 0 }}>
+                          {stickerLoading ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>
+                            : (() => {
+                              const q = stickerQuery.trim().toLowerCase();
+                              const favs = q ? stickerTray.favorites.filter((f) => (f.name ?? "").toLowerCase().includes(q) || (f.tags ?? []).some((t) => t.includes(q))) : stickerTray.favorites;
+                              const recents = q ? [] : stickerTray.recent;
+                              if (favs.length === 0 && recents.length === 0) return <div className="muted t-sm" style={{ padding: 10 }}>{q ? (lang === "es" ? "Sin resultados." : "No matches.") : (lang === "es" ? "Aún no hay stickers. Aparecerán los que recibas o envíes." : "No stickers yet. The ones you receive or send show up here.")}</div>;
+                              return (
+                                <>
+                                  {favs.length > 0 && <>
+                                    <div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div>
+                                    <div className="sticker-grid">{favs.map((s) => <StickerCell key={"f" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                  </>}
+                                  {recents.length > 0 && <>
+                                    <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
+                                    <div className="sticker-grid">{recents.map((s) => <StickerCell key={"r" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                  </>}
+                                </>
+                              );
+                            })()}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </>
               )}

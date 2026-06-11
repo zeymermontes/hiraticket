@@ -145,15 +145,29 @@ export async function sendSticker(convId: string, sourceMessageId: string): Prom
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
 }
 
-/** Star/unstar a sticker (keyed by its stored WebP). Returns the new favorite state. */
-export async function toggleStickerFavorite(messageId: string): Promise<boolean> {
+/** Save a sticker to favorites with an optional name + tags (or update those if already saved). */
+export async function saveStickerFavorite(messageId: string, name: string, tags: string[]): Promise<void> {
   const { supabase, userId } = await ctx();
   const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
-  if (!m?.media_url) return false;
+  if (!m?.media_url) return;
+  const meta = { name: name.trim() || null, tags: tags.map((t) => t.trim().toLowerCase()).filter(Boolean) };
   const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", m.business_id).eq("media_url", m.media_url).maybeSingle();
-  if (existing) { await supabase.from("sticker_favorites").delete().eq("id", existing.id); return false; }
-  await supabase.from("sticker_favorites").insert({ business_id: m.business_id, message_id: messageId, media_url: m.media_url, created_by: userId });
-  return true;
+  if (existing) {
+    const { error } = await supabase.from("sticker_favorites").update(meta).eq("id", existing.id);
+    if (error) await supabase.from("sticker_favorites").update({}).eq("id", existing.id); // name/tags (0034) not applied
+  } else {
+    const base = { business_id: m.business_id, message_id: messageId, media_url: m.media_url, created_by: userId };
+    const { error } = await supabase.from("sticker_favorites").insert({ ...base, ...meta });
+    if (error) await supabase.from("sticker_favorites").insert(base); // name/tags (0034) not applied
+  }
+}
+
+/** Remove a sticker from favorites (keyed by its stored WebP). */
+export async function removeStickerFavorite(messageId: string): Promise<void> {
+  const { supabase } = await ctx();
+  const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
+  if (!m?.media_url) return;
+  await supabase.from("sticker_favorites").delete().eq("business_id", m.business_id).eq("media_url", m.media_url);
 }
 
 /** Queue an outbound media message (file already uploaded to storage). */
