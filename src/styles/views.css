@@ -127,6 +127,18 @@
 .msg.out .bubble { background: #DDF6E3; color: #11331E; border-bottom-right-radius: 5px; }
 [data-theme="dark"] .msg.out .bubble { background: #16432B; color: #DDF6E3; }
 .msg + .msg.in, .msg + .msg.out { margin-top: 2px; }
+/* Audio / voice-note player */
+.aud { display: flex; align-items: center; gap: 8px; min-width: 200px; max-width: 260px; padding: 2px 0; }
+.aud-btn { flex: none; width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: var(--brand); color: var(--on-brand); }
+.aud-btn:hover { background: var(--brand-600); }
+.aud-range { flex: 1; min-width: 0; height: 4px; accent-color: var(--brand); cursor: pointer; }
+.aud-range:disabled { cursor: default; opacity: .6; }
+.aud-time { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.msg.out .aud-btn { background: #0b6b3f; color: #fff; }
+.msg.out .aud-range { accent-color: #0b6b3f; }
+.msg.out .aud-time { color: #4f7d62; }
+[data-theme="dark"] .msg.out .aud-time { color: #8fc5a5; }
+
 .mention { font-weight: 700; color: var(--brand-700); }
 .msg.out .mention { color: #0b6b3f; }
 [data-theme="dark"] .msg.out .mention { color: #7fe0a6; }

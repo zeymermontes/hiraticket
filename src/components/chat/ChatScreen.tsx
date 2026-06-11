@@ -231,6 +231,65 @@ function Lightbox({ items, index, onClose, onForward, onDelete }: { items: ChatM
   );
 }
 
+const fmtTime = (s: number) => { if (!isFinite(s) || s < 0) s = 0; const m = Math.floor(s / 60); const r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, "0")}`; };
+
+/** Voice-note / audio player. WhatsApp ships OGG/Opus voice notes whose duration Chrome
+ *  miscomputes (often ~half, or Infinity), which makes the native <audio controls> stall or stop
+ *  early. We force the browser to scan to the real end once (seek to a huge time → it re-reads the
+ *  last page → durationchange fires with the true length), then drive a small custom UI. */
+function AudioPlayer({ url }: { url: string }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  const [dur, setDur] = useState(0);
+  const [cur, setCur] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const fixing = useRef(false);
+
+  // Accept a finite duration; otherwise kick the one-time "seek to end" scan.
+  const settle = () => {
+    const a = ref.current; if (!a) return;
+    const d = a.duration;
+    if (isFinite(d) && d > 0) {
+      setDur(d);
+      if (fixing.current) { fixing.current = false; try { a.currentTime = 0; } catch {} setCur(0); } // undo the end-seek
+    } else if (!fixing.current) { fixing.current = true; try { a.currentTime = 1e101; } catch {} }
+  };
+  const onTimeUpdate = () => {
+    const a = ref.current; if (!a) return;
+    if (fixing.current) { // the forced end-seek landed → real duration is known now
+      if (isFinite(a.duration) && a.duration > 0) setDur(a.duration);
+      fixing.current = false;
+      try { a.currentTime = 0; } catch {}
+      setCur(0);
+      return;
+    }
+    setCur(a.currentTime);
+  };
+  const toggle = () => {
+    const a = ref.current; if (!a) return;
+    if (a.paused) { a.play().catch(() => {}); } else { a.pause(); }
+  };
+  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const a = ref.current; if (!a || !dur) return;
+    const v = Number(e.target.value); a.currentTime = v; setCur(v);
+  };
+
+  return (
+    <div className="aud">
+      <audio ref={ref} src={url} preload="metadata"
+        onLoadedMetadata={settle} onDurationChange={settle} onTimeUpdate={onTimeUpdate}
+        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setCur(0); }} />
+      <button className="aud-btn" onClick={toggle} aria-label={playing ? "Pause" : "Play"}>
+        {playing
+          ? <svg viewBox="0 0 24 24" width="16" height="16"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" /></svg>
+          : <svg viewBox="0 0 24 24" width="16" height="16"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>}
+      </button>
+      <input className="aud-range" type="range" min={0} max={dur || 0} step="0.01" value={Math.min(cur, dur || 0)} onChange={seek} disabled={!dur} />
+      <span className="aud-time mono">{fmtTime(cur)} / {dur ? fmtTime(dur) : "–:––"}</span>
+    </div>
+  );
+}
+
 function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => void }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
@@ -239,7 +298,7 @@ function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => 
     const box = mediaBox(m, 260, 320, 260, 180);
     return <div className="media-frame" style={box}><video src={url} controls className="media-el" style={{ objectFit: "cover" }} /></div>;
   }
-  if (m.type === "audio") return <audio src={url} controls style={{ maxWidth: 240 }} />;
+  if (m.type === "audio") return <AudioPlayer url={url} />;
   // document / other
   return (
     <a href={url} target="_blank" rel="noreferrer" className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}>
