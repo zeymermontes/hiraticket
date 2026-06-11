@@ -121,7 +121,17 @@ export async function createBusiness(name: string, mode: string = "business"): P
   // Set the workspace mode + default noun (orders→"Pedido" / tasks→"Tarea") on the new business.
   const { data: biz } = await supabase.from("businesses").select("id").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (biz) {
-    await supabase.from("businesses").update({ mode: personal ? "personal" : "business", object_singular: personal ? "Tarea" : "Pedido", product_stages: personal }).eq("id", biz.id as string);
+    const businessId = biz.id as string;
+    await supabase.from("businesses").update({ mode: personal ? "personal" : "business", object_singular: personal ? "Tarea" : "Pedido", product_stages: personal }).eq("id", businessId);
+    if (personal) {
+      // Replace the (business) seeded pipeline with task-oriented stages.
+      await supabase.from("stages").delete().eq("business_id", businessId);
+      const taskStages: [string, string][] = [
+        ["Nueva", "slate"], ["Vista", "blue"], ["En proceso", "amber"],
+        ["Esperando respuesta", "violet"], ["Resuelta", "teal"], ["Cancelada", "red"], ["Notificada", "green"],
+      ];
+      await supabase.from("stages").insert(taskStages.map(([name, color], i) => ({ business_id: businessId, name, color, position: i })));
+    }
   }
   revalidatePath("/", "layout");
 }
