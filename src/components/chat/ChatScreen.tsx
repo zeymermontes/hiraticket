@@ -924,6 +924,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [stickerLoading, setStickerLoading] = useState(false);
   const [stickerQuery, setStickerQuery] = useState("");
   const [savingSticker, setSavingSticker] = useState<StickerItem | null>(null); // sticker being added to favorites (name/tags form)
+  const [confirmSticker, setConfirmSticker] = useState<StickerItem | null>(null); // sticker awaiting send confirmation
   const { push } = useToast();
 
   async function loadStickers(showSpinner = true) {
@@ -933,7 +934,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
   // Send a sticker the business already has (re-sends the stored WebP by message reference).
   function pickSticker(s: StickerItem) {
-    setStickerOpen(false);
+    setStickerOpen(false); setConfirmSticker(null);
     setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "sticker", body: null, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: s.url, media_mime: "image/webp", media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
     start(async () => { await sendSticker(detail.id, s.id); });
   }
@@ -1395,10 +1396,19 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               <button ref={stickerBtn} className="iconbtn" title={lang === "es" ? "Stickers" : "Stickers"} style={{ fontSize: 16 }} onClick={() => { if (!stickerOpen && stickerBtn.current) setStickerRect(stickerBtn.current.getBoundingClientRect()); setStickerOpen((o) => !o); setEmojiOpen(false); setCannedOpen(false); if (!stickerOpen) loadStickers(); }}>🩷</button>
               {stickerOpen && stickerRect && (
                 <>
-                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => { setStickerOpen(false); setSavingSticker(null); }} />
+                  <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => { setStickerOpen(false); setSavingSticker(null); setConfirmSticker(null); }} />
                   <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - stickerRect.top + 6, left: Math.max(8, stickerRect.left - 150), width: 300, height: 360, maxHeight: "70vh", zIndex: 201, padding: 8, display: "flex", flexDirection: "column" }}>
                     {savingSticker ? (
                       <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} onRemove={savingSticker.fav ? () => { removeFavorite(savingSticker); setSavingSticker(null); } : undefined} />
+                    ) : confirmSticker ? (
+                      <div className="col gap-3" style={{ padding: 8, alignItems: "center", justifyContent: "center", flex: 1 }}>
+                        <span className="sticker-pick" style={{ width: 140, height: 140, padding: 8, pointerEvents: "none" }}><img src={confirmSticker.url} alt="" /></span>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{lang === "es" ? "¿Enviar este sticker?" : "Send this sticker?"}</div>
+                        <div className="row gap-2" style={{ width: "100%" }}>
+                          <button className="btn btn-outline grow" onClick={() => setConfirmSticker(null)}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+                          <button className="btn btn-primary grow" onClick={() => pickSticker(confirmSticker)}><Icon name="send" size={15} />{lang === "es" ? "Enviar" : "Send"}</button>
+                        </div>
+                      </div>
                     ) : (
                       <>
                         <div className="field field-sm field-filled" style={{ marginBottom: 6, flex: "none" }}>
@@ -1416,11 +1426,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                                 <>
                                   {favs.length > 0 && <>
                                     <div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div>
-                                    <div className="sticker-grid">{favs.map((s) => <StickerCell key={"f" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                    <div className="sticker-grid">{favs.map((s) => <StickerCell key={"f" + s.id} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
                                   </>}
                                   {recents.length > 0 && <>
                                     <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
-                                    <div className="sticker-grid">{recents.map((s) => <StickerCell key={"r" + s.id} s={s} onSend={() => pickSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                    <div className="sticker-grid">{recents.map((s) => <StickerCell key={"r" + s.id} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
                                   </>}
                                 </>
                               );
