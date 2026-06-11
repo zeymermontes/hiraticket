@@ -12,6 +12,7 @@ import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { OrderDrawer } from "@/components/OrderDrawer";
+import { NewOrderModal } from "@/components/OrdersTable";
 import { loadOrderDetail } from "@/app/(app)/orders/actions";
 import type { OrderDetail } from "@/lib/orders";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
@@ -1234,6 +1235,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   const patch = useChatPatch();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
+  const [showNewTask, setShowNewTask] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState<string | null>(null);
   const [, startLoad] = useTransition();
   const openOrderDrawer = (id: string) => { setLoadingOrder(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingOrder(null); }); };
@@ -1291,7 +1293,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
     orders: (handle) => (
       <>
         <div className="ws-block-head">{grip(handle)}<Icon name="orders" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")} <span className="muted">· {detail.orders.length}</span></h4>
-          <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
+          <button className="btn btn-sm btn-outline" onClick={() => setShowNewTask(true)}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</button>
         </div>
         <div className="ws-block-body col gap-2">
           {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{personal ? (lang === "es" ? "Sin tareas." : "No tasks.") : (lang === "es" ? "Sin pedidos." : "No orders.")}</div> :
@@ -1426,6 +1428,11 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
           convDetail={detail} connected={connected}
           onClose={() => { setOpenOrder(null); refresh(); }} />
+      )}
+      {showNewTask && (
+        <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={[]} contacts={[]}
+          defaultContact={detail.contact?.name ?? ""}
+          onClose={() => setShowNewTask(false)} onCreated={() => { setShowNewTask(false); refresh(); }} />
       )}
     </div>
   );

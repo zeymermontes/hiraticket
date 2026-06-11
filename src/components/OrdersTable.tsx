@@ -275,8 +275,8 @@ export function OrdersTable({
   );
 }
 
-function NewOrderModal({
-  businessId, areas, stages, onClose, defaultContact, products, contacts,
+export function NewOrderModal({
+  businessId, areas, stages, onClose, defaultContact, products, contacts, embedded, onCreated,
 }: {
   businessId: string;
   areas: Area[];
@@ -285,6 +285,8 @@ function NewOrderModal({
   defaultContact?: string;
   products: Product[];
   contacts: { id: string; name: string }[];
+  embedded?: boolean;       // render over the chat center column (keep the thread readable)
+  onCreated?: () => void;   // called after create instead of router.refresh (e.g. soft refresh)
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -330,14 +332,12 @@ function NewOrderModal({
         areaId: areaId || null, stageId: stageId || null, priority,
       });
       onClose();
-      router.refresh();
+      if (onCreated) onCreated(); else router.refresh();
     });
   }
 
-  return (
-    <div className="modal-wrap">
-      <div className="scrim" onClick={onClose} />
-      <div className="modal" role="dialog">
+  const inner = (
+      <div className="modal" role="dialog" style={embedded ? { position: "relative", width: "100%", maxWidth: "100%", maxHeight: "100%", display: "flex", flexDirection: "column" } : undefined}>
         <div className="modal-head">
           <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="orders" /></span>
           <h3 className="grow">{personal ? (lang === "es" ? "Nueva tarea" : "New task") : (lang === "es" ? "Nuevo pedido" : "New order")}</h3>
@@ -364,7 +364,7 @@ function NewOrderModal({
                 <div className="col gap-1" key={i}>
                   <div className="row gap-2" style={{ alignItems: "flex-end" }}>
                     <div className="grow"><input className="inp-inline" style={{ width: "100%" }} value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} placeholder={personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Descripción" : "Description")} /></div>
-                    <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>
+                    {!personal && <div style={{ width: 56 }}><input className="inp-inline" style={{ width: "100%" }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} title={lang === "es" ? "Cantidad" : "Qty"} /></div>}
                     {!personal && <div style={{ width: 84 }}><input className="inp-inline" style={{ width: "100%" }} value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} placeholder="$" title={lang === "es" ? "Precio unit." : "Unit price"} /></div>}
                     <button className="iconbtn sm" disabled={lines.length === 1} title={lang === "es" ? "Quitar" : "Remove"} onClick={() => removeLine(i)} style={{ marginBottom: 1 }}><Icon name="x" size={15} /></button>
                   </div>
@@ -399,6 +399,21 @@ function NewOrderModal({
           <button className="btn btn-primary" disabled={pending || !contactName.trim() || !hasItem} onClick={submit}><Icon name="plus" size={15} />{personal ? (lang === "es" ? "Crear tarea" : "Create task") : (lang === "es" ? "Crear pedido" : "Create order")}</button>
         </div>
       </div>
+  );
+
+  if (embedded) {
+    // Overlay only the center column (parent is position:relative) so the chat thread stays readable.
+    return (
+      <div style={{ position: "absolute", inset: 0, zIndex: 60, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 8 }}>
+        <div style={{ position: "absolute", inset: 0, background: "rgba(20,18,10,.32)" }} onClick={onClose} />
+        {inner}
+      </div>
+    );
+  }
+  return (
+    <div className="modal-wrap">
+      <div className="scrim" onClick={onClose} />
+      {inner}
     </div>
   );
 }
