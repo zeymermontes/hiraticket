@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
+import { moveOrderStage } from "@/app/(app)/actions";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -101,6 +102,15 @@ export async function setItemStage(itemId: string, stageId: string | null): Prom
   revalidatePath("/orders");
   revalidatePath("/kanban");
   revalidatePath("/chat");
+}
+
+/** Move every line item (subtask/product) of an order to one stage, then move the order to it too
+ *  (firing the same events/automations as a manual stage move). Used when advancing an order whose
+ *  items track their own stages and the user chooses to sync the items along. */
+export async function setAllItemStages(orderId: string, stageId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("order_items").update({ stage_id: stageId }).eq("order_id", orderId);
+  await moveOrderStage(orderId, stageId);
 }
 
 /** order.stage_id := the least-advanced (lowest-position) stage among products that have one. */

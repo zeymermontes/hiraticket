@@ -13,7 +13,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment, loadOrderDetail, setOrderDue } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, loadOrderDetail, setOrderDue } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -49,6 +49,8 @@ export function OrderDrawer({
   const [noteFilter, setNoteFilter] = useState<Set<"order" | "subtask">>(new Set()); // empty = all
   const [payAmount, setPayAmount] = useState("");
   const [xfer, setXfer] = useState(false);
+  const [advanceMenu, setAdvanceMenu] = useState(false);
+  const [stagePrompt, setStagePrompt] = useState<Stage | null>(null); // pending target stage awaiting the subtask-sync choice
   const [chatOpen, setChatOpen] = useState(false);
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
@@ -99,8 +101,23 @@ export function OrderDrawer({
   const assignee = detail.assignee_id ? agents.find((a) => a.id === detail.assignee_id) : null;
   const curIdx = stages.findIndex((s) => s.id === detail.stage_id);
   const date = (iso: string) => new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-  const advance = () => { const next = stages[Math.min(curIdx + 1, stages.length - 1)]; if (next) runOpt({ stage_id: next.id, stage: { name: next.name, color: next.color } }, () => moveOrderStage(detail.id, next.id)); };
   const isLast = curIdx >= stages.length - 1;
+  // When the order's items carry their own stage, moving the order stage prompts whether to drag
+  // the items along (sync) or leave them as they are.
+  const hasItemStages = detail.product_stages && detail.items.length > 0;
+  const moveOrderTo = (s: Stage) => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, () => moveOrderStage(detail.id, s.id));
+  const goToStage = (s: Stage | undefined) => {
+    if (!s || s.id === detail.stage_id) return;
+    if (hasItemStages) setStagePrompt(s);
+    else moveOrderTo(s);
+  };
+  // Resolve the subtask-sync choice: sync = move every item to the target too; keep = order only.
+  const applyStage = (s: Stage, sync: boolean) => {
+    setStagePrompt(null);
+    if (sync) runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color }, items: detail.items.map((it) => ({ ...it, stage_id: s.id, stage: { name: s.name, color: s.color } })) }, () => setAllItemStages(detail.id, s.id));
+    else moveOrderTo(s);
+  };
+  const advance = () => goToStage(stages[Math.min(curIdx + 1, stages.length - 1)]);
 
   return (
     <>
@@ -123,7 +140,7 @@ export function OrderDrawer({
             <div className="pipe">
               {stages.map((s, i) => {
                 const cls = i < curIdx ? "done" : i === curIdx ? "cur" : "";
-                return <button className={"pipe-step " + cls} key={s.id} disabled={pending || detail.product_stages} onClick={() => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, () => moveOrderStage(detail.id, s.id))}>{s.name}</button>;
+                return <button className={"pipe-step " + cls} key={s.id} disabled={pending} title={lang === "es" ? "Ir a " + s.name : "Go to " + s.name} onClick={() => goToStage(s)}>{s.name}</button>;
               })}
             </div>
           </div>
@@ -298,10 +315,49 @@ export function OrderDrawer({
             )}
           </span>
           {!isLast
-            ? <button className="btn btn-primary grow" disabled={pending} onClick={advance}><Icon name="arrowr" size={15} />{lang === "es" ? "Avanzar etapa" : "Advance stage"}</button>
+            ? (
+              <span style={{ position: "relative", display: "inline-flex", flex: 1 }}>
+                <button className="btn btn-primary grow" disabled={pending} onClick={advance} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}><Icon name="arrowr" size={15} />{lang === "es" ? "Avanzar etapa" : "Advance stage"}</button>
+                <button className="btn btn-primary" disabled={pending} title={lang === "es" ? "Elegir etapa" : "Pick a stage"} onClick={() => setAdvanceMenu((v) => !v)} style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: "1px solid rgba(255,255,255,.3)", padding: "0 9px" }}><Icon name="chevd" size={15} /></button>
+                {advanceMenu && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 49 }} onClick={() => setAdvanceMenu(false)} />
+                    <div className="menu scroll" style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, width: 220, maxHeight: 300, zIndex: 50 }}>
+                      <div className="menu-label">{lang === "es" ? "Avanzar a la etapa" : "Move to stage"}</div>
+                      {stages.map((s, i) => i === curIdx ? null : (
+                        <button className="menu-item" key={s.id} onClick={() => { setAdvanceMenu(false); goToStage(s); }}>
+                          <Pill color={s.color as PillColor} dot>{s.name}</Pill>{i < curIdx && <span className="muted t-xs" style={{ marginLeft: 4 }}>{lang === "es" ? "(atrás)" : "(back)"}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </span>
+            )
             : <button className="btn btn-dark grow" onClick={onClose}><Icon name="check" size={15} />{lang === "es" ? "Cerrar" : "Close"}</button>}
         </div>
       </aside>
+      {stagePrompt && (
+        <div className="modal-wrap" style={{ zIndex: 120 }}>
+          <div className="scrim" onClick={() => setStagePrompt(null)} />
+          <div className="modal" role="dialog" style={{ maxWidth: 400 }}>
+            <div className="modal-head">
+              <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="swap" /></span>
+              <h3 className="grow">{lang === "es" ? "Avanzar a " : "Move to "}{stagePrompt.name}</h3>
+              <button className="iconbtn" onClick={() => setStagePrompt(null)}><Icon name="x" /></button>
+            </div>
+            <div className="modal-body">
+              <p className="t-sm muted" style={{ lineHeight: 1.5 }}>{personal
+                ? (lang === "es" ? "Esta tarea tiene subtareas con su propia etapa. ¿Mover también las subtareas a esta etapa o conservarlas como están?" : "This task has subtasks with their own stage. Move the subtasks to this stage too, or keep them as they are?")
+                : (lang === "es" ? "Este pedido tiene productos con su propia etapa. ¿Mover también los productos a esta etapa o conservarlos como están?" : "This order has products with their own stage. Move the products to this stage too, or keep them as they are?")}</p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-outline" onClick={() => applyStage(stagePrompt, false)}>{personal ? (lang === "es" ? "Conservar subtareas" : "Keep subtasks") : (lang === "es" ? "Conservar productos" : "Keep products")}</button>
+              <button className="btn btn-primary" onClick={() => applyStage(stagePrompt, true)}><Icon name="checks" size={15} />{personal ? (lang === "es" ? "Sincronizar subtareas" : "Sync subtasks") : (lang === "es" ? "Sincronizar productos" : "Sync products")}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {chatOpen && convDetail && (
         <div style={{ position: "fixed", top: 0, bottom: 0, right: DRAWER_W, width: chatW, maxWidth: `calc(100vw - ${DRAWER_W + 40}px)`, zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
           <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />
