@@ -234,53 +234,77 @@ function Lightbox({ items, index, onClose, onForward, onDelete }: { items: ChatM
 
 const fmtTime = (s: number) => { if (!isFinite(s) || s < 0) s = 0; const m = Math.floor(s / 60); const r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, "0")}`; };
 
-/** Voice-note / audio player. WhatsApp ships OGG/Opus voice notes whose duration Chrome
- *  miscomputes (often ~half, or Infinity), which makes the native <audio controls> stall or stop
- *  early. We force the browser to scan to the real end once (seek to a huge time → it re-reads the
- *  last page → durationchange fires with the true length), then drive a small custom UI. */
+// One shared AudioContext for decoding durations (browsers cap concurrent contexts; decodeAudioData
+// works fine on a suspended one, so we never need to start or close it).
+let _decodeCtx: AudioContext | null = null;
+async function decodeDuration(buf: ArrayBuffer): Promise<number> {
+  const AC: typeof AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return 0;
+  if (!_decodeCtx) _decodeCtx = new AC();
+  const decoded = await _decodeCtx.decodeAudioData(buf);
+  return isFinite(decoded.duration) && decoded.duration > 0 ? decoded.duration : 0;
+}
+
+/** Voice-note / audio player. WhatsApp ships OGG/Opus voice notes whose container duration Chrome
+ *  miscomputes (often ~half, or Infinity) and whose streaming over a signed URL can stall mid-clip.
+ *  We sidestep both: fetch the whole file into a local blob (fully seekable, no range-request
+ *  stalls) and read the TRUE duration via Web Audio decodeAudioData (exact sample count, ignores
+ *  the broken container metadata). Falls back to the direct URL + a seek-to-end scan if any of that
+ *  isn't available (e.g. Safari can't decode Opus, or CORS blocks the fetch). */
 function AudioPlayer({ url }: { url: string }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const [src, setSrc] = useState<string | null>(null);
   const [dur, setDur] = useState(0);
   const [cur, setCur] = useState(0);
   const [playing, setPlaying] = useState(false);
   const fixing = useRef(false);
 
-  // Accept a finite duration; otherwise kick the one-time "seek to end" scan.
+  useEffect(() => {
+    let cancelled = false; let obj: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(url);
+        const buf = await res.arrayBuffer();
+        const ct = res.headers.get("Content-Type") || "audio/ogg";
+        obj = URL.createObjectURL(new Blob([buf], { type: ct })); // local copy → reliable seeking, no network stalls
+        if (!cancelled) setSrc(obj);
+        try { // exact duration, independent of the OGG/Opus container headers
+          const d = await decodeDuration(buf.slice(0));
+          if (!cancelled && d > 0) setDur(d);
+        } catch { /* codec not decodable here → fall back to the element's own duration */ }
+      } catch { if (!cancelled) setSrc(url); } // CORS / network → play the URL directly
+    })();
+    return () => { cancelled = true; if (obj) URL.revokeObjectURL(obj); };
+  }, [url]);
+
+  // Fallback when decodeAudioData didn't give us a duration: accept a finite one, else seek-to-end scan.
   const settle = () => {
-    const a = ref.current; if (!a) return;
+    const a = ref.current; if (!a || dur > 0) return;
     const d = a.duration;
     if (isFinite(d) && d > 0) {
       setDur(d);
-      if (fixing.current) { fixing.current = false; try { a.currentTime = 0; } catch {} setCur(0); } // undo the end-seek
+      if (fixing.current) { fixing.current = false; try { a.currentTime = 0; } catch {} setCur(0); }
     } else if (!fixing.current) { fixing.current = true; try { a.currentTime = 1e101; } catch {} }
   };
   const onTimeUpdate = () => {
     const a = ref.current; if (!a) return;
-    if (fixing.current) { // the forced end-seek landed → real duration is known now
-      if (isFinite(a.duration) && a.duration > 0) setDur(a.duration);
-      fixing.current = false;
-      try { a.currentTime = 0; } catch {}
-      setCur(0);
+    if (fixing.current) {
+      if (isFinite(a.duration) && a.duration > 0 && dur === 0) setDur(a.duration);
+      fixing.current = false; try { a.currentTime = 0; } catch {} setCur(0);
       return;
     }
     setCur(a.currentTime);
   };
-  const toggle = () => {
-    const a = ref.current; if (!a) return;
-    if (a.paused) { a.play().catch(() => {}); } else { a.pause(); }
-  };
-  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const a = ref.current; if (!a || !dur) return;
-    const v = Number(e.target.value); a.currentTime = v; setCur(v);
-  };
+  const toggle = () => { const a = ref.current; if (!a) return; if (a.paused) a.play().catch(() => {}); else a.pause(); };
+  const seek = (e: React.ChangeEvent<HTMLInputElement>) => { const a = ref.current; if (!a || !dur) return; const v = Number(e.target.value); a.currentTime = v; setCur(v); };
 
   return (
     <div className="aud">
-      <audio ref={ref} src={url} preload="metadata"
+      <audio ref={ref} src={src ?? undefined} preload="metadata"
         onLoadedMetadata={settle} onDurationChange={settle} onTimeUpdate={onTimeUpdate}
         onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
         onEnded={() => { setPlaying(false); setCur(0); }} />
-      <button className="aud-btn" onClick={toggle} aria-label={playing ? "Pause" : "Play"}>
+      <button className="aud-btn" onClick={toggle} aria-label={playing ? "Pause" : "Play"} disabled={!src}>
         {playing
           ? <svg viewBox="0 0 24 24" width="16" height="16"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" /></svg>
           : <svg viewBox="0 0 24 24" width="16" height="16"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>}
