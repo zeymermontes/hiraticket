@@ -713,6 +713,16 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		return
 	}
 
+	// Unwrap "view once" (ephemeral) media so we can at least record that it arrived.
+	viewOnce := false
+	if vo := msg.GetViewOnceMessage().GetMessage(); vo != nil {
+		msg, viewOnce = vo, true
+	} else if vo := msg.GetViewOnceMessageV2().GetMessage(); vo != nil {
+		msg, viewOnce = vo, true
+	} else if vo := msg.GetViewOnceMessageV2Extension().GetMessage(); vo != nil {
+		msg, viewOnce = vo, true
+	}
+
 	// Text + media detection.
 	text := msg.GetConversation()
 	if text == "" {
@@ -752,6 +762,16 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		mtype = "contact"
 		text = cm.GetDisplayName()
 		meta = jsonStr(map[string]interface{}{"name": cm.GetDisplayName(), "vcard": cm.GetVcard()})
+	}
+
+	// View-once media isn't stored (ephemeral) — record that a one-time photo/video arrived.
+	if viewOnce {
+		if mtype == "video" {
+			text = "🎥 Video de única vez"
+		} else {
+			text = "📷 Foto de única vez"
+		}
+		mtype, mmime, meta = "text", "", ""
 	}
 
 	ci := getContextInfo(msg)
