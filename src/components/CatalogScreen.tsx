@@ -9,7 +9,7 @@ import type { PriceTier } from "@/lib/types";
 import { createProduct, updateProduct, deleteProduct } from "@/app/(app)/features-actions";
 
 export function CatalogScreen({ businessId, products }: { businessId: string; products: Product[] }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
@@ -22,38 +22,38 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
 
   return (
     <div className="page">
-      <div className="phead"><h1>{lang === "es" ? "Catálogo" : "Catalog"}</h1><Pill color="slate" large>{products.length}</Pill></div>
+      <div className="phead"><h1>{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Catálogo" : "Catalog")}</h1><Pill color="slate" large>{products.length}</Pill></div>
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block">
-          <div className="ws-block-head"><Icon name="store" size={16} /><h4 className="grow">{lang === "es" ? "Productos y servicios" : "Products & services"}</h4>
+          <div className="ws-block-head"><Icon name="store" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Productos y servicios" : "Products & services")}</h4>
             <div className="field field-sm" style={{ width: 180 }}><Icon name="search" /><input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} /></div>
           </div>
           <div className="tablewrap">
             <table className="tbl">
-              <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th><th>{lang === "es" ? "Tipo" : "Type"}</th><th>{lang === "es" ? "Precio" : "Price"}</th><th></th></tr></thead>
+              <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}<th></th></tr></thead>
               <tbody>
                 {view.map((p) => (
                   <React.Fragment key={p.id}>
                   <tr>
                     <td><input className="inp-inline grow" defaultValue={p.name} style={{ width: "100%" }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
-                    <td><Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill></td>
-                    <td><input className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>
+                    {!personal && <td><Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill></td>}
+                    {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>}
                     <td className="row gap-1">
-                      <button className={"iconbtn sm" + (tiersFor === p.id ? " active" : "")} title={lang === "es" ? "Precios por cantidad" : "Quantity pricing"} onClick={() => setTiersFor(tiersFor === p.id ? null : p.id)}>
+                      {!personal && <button className={"iconbtn sm" + (tiersFor === p.id ? " active" : "")} title={lang === "es" ? "Precios por cantidad" : "Quantity pricing"} onClick={() => setTiersFor(tiersFor === p.id ? null : p.id)}>
                         <Icon name="layers" size={15} />{p.price_tiers.length > 0 && <span className="badge badge-soft" style={{ marginLeft: 2 }}>{p.price_tiers.length}</span>}
-                      </button>
-                      <a className="iconbtn sm" href="/orders?new=1" title={lang === "es" ? "A pedido" : "To order"}><Icon name="orders" size={15} /></a>
+                      </button>}
+                      <a className="iconbtn sm" href="/orders?new=1" title={personal ? (lang === "es" ? "A tarea" : "To task") : (lang === "es" ? "A pedido" : "To order")}><Icon name="orders" size={15} /></a>
                       <button className="iconbtn sm" onClick={() => run(() => deleteProduct(p.id))}><Icon name="trash" size={15} /></button>
                     </td>
                   </tr>
-                  {tiersFor === p.id && (
+                  {!personal && tiersFor === p.id && (
                     <tr><td colSpan={4} style={{ background: "var(--surface-2)" }}>
                       <TierEditor product={p} lang={lang} onSave={(tiers) => run(() => updateProduct(p.id, { price_tiers: tiers }))} />
                     </td></tr>
                   )}
                   </React.Fragment>
                 ))}
-                {view.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: 24 }}>{lang === "es" ? "Sin productos." : "No products."}</td></tr>}
+                {view.length === 0 && <tr><td colSpan={personal ? 2 : 4} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -62,14 +62,16 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Nuevo" : "New"}</h4></div>
           <div className="ws-block-body col gap-2">
-            <input className="inp-inline" placeholder={lang === "es" ? "Nombre" : "Name"} value={name} onChange={(e) => setName(e.target.value)} />
-            <div className="row gap-2">
-              <select className="select grow" value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="product">{lang === "es" ? "Producto" : "Product"}</option>
-                <option value="service">{lang === "es" ? "Servicio" : "Service"}</option>
-              </select>
-              <input className="inp-inline mono" style={{ width: 100 }} placeholder="$" value={price} onChange={(e) => setPrice(e.target.value)} />
-            </div>
+            <input className="inp-inline" placeholder={personal ? (lang === "es" ? "Nombre de la tarea" : "Task name") : (lang === "es" ? "Nombre" : "Name")} value={name} onChange={(e) => setName(e.target.value)} />
+            {!personal && (
+              <div className="row gap-2">
+                <select className="select grow" value={kind} onChange={(e) => setKind(e.target.value)}>
+                  <option value="product">{lang === "es" ? "Producto" : "Product"}</option>
+                  <option value="service">{lang === "es" ? "Servicio" : "Service"}</option>
+                </select>
+                <input className="inp-inline mono" style={{ width: 100 }} placeholder="$" value={price} onChange={(e) => setPrice(e.target.value)} />
+              </div>
+            )}
             <button className="btn btn-primary btn-block" disabled={pending || !name.trim()}
               onClick={() => { run(() => createProduct(businessId, { name, kind, price: Number(price) || 0 })); setName(""); setPrice(""); }}>
               <Icon name="plus" size={15} />{lang === "es" ? "Agregar" : "Add"}

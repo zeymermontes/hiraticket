@@ -347,12 +347,12 @@ export function NewOrderModal({
           <label className="lbl">{personal ? (lang === "es" ? "Contacto" : "Contact") : (lang === "es" ? "Cliente" : "Customer")}</label>
           <input className="inp-inline" list="contact-list" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={personal ? (lang === "es" ? "Nombre del contacto" : "Contact name") : (lang === "es" ? "Nombre del cliente" : "Customer name")} />
           <datalist id="contact-list">{contacts.map((c) => <option key={c.id} value={c.name} />)}</datalist>
-          {!personal && products.length > 0 && (
+          {products.length > 0 && (
             <>
-              <label className="lbl">{lang === "es" ? "Agregar del catálogo" : "Add from catalog"}</label>
+              <label className="lbl">{personal ? (lang === "es" ? "Agregar tarea repetitiva" : "Add recurring task") : (lang === "es" ? "Agregar del catálogo" : "Add from catalog")}</label>
               <select className="select" value="" onChange={(e) => { addFromCatalog(e.target.value); e.target.value = ""; }}>
-                <option value="">{lang === "es" ? "— elige un producto —" : "— pick a product —"}</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name} · ${formatMoney(p.price)}</option>)}
+                <option value="">{personal ? (lang === "es" ? "— elige una tarea —" : "— pick a task —") : (lang === "es" ? "— elige un producto —" : "— pick a product —")}</option>
+                {products.map((p) => <option key={p.id} value={p.id}>{p.name}{!personal && ` · $${formatMoney(p.price)}`}</option>)}
               </select>
             </>
           )}

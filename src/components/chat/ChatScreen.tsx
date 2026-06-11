@@ -70,8 +70,9 @@ function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
 }
 
 const _metaCache = new Map<string, LinkMeta>();
-/** Open-Graph preview card for the first link in a message. */
-function LinkPreview({ url }: { url: string }) {
+/** Open-Graph preview card for the first link in a message. onReady fires when the card (or its
+ *  image) appears so the thread can stay pinned to the bottom instead of "popping". */
+function LinkPreview({ url, onReady }: { url: string; onReady?: () => void }) {
   const [meta, setMeta] = useState<LinkMeta | null>(_metaCache.get(url) ?? null);
   useEffect(() => {
     if (_metaCache.has(url)) { setMeta(_metaCache.get(url)!); return; }
@@ -79,14 +80,16 @@ function LinkPreview({ url }: { url: string }) {
     fetchLinkMeta(url).then((m) => { _metaCache.set(url, m); if (alive) setMeta(m); }).catch(() => {});
     return () => { alive = false; };
   }, [url]);
-  if (!meta || (!meta.title && !meta.image)) return null;
+  const hasCard = !!(meta && (meta.title || meta.image));
+  useEffect(() => { if (hasCard) onReady?.(); /* eslint-disable-next-line */ }, [hasCard]);
+  if (!hasCard) return null;
   let host = url; try { host = new URL(url).hostname.replace(/^www\./, ""); } catch {}
   return (
     <a href={url} target="_blank" rel="noreferrer" className="link-preview" onClick={(e) => e.stopPropagation()}>
-      {meta.image && <img src={meta.image} alt="" className="lp-img" />}
+      {meta!.image && <img src={meta!.image} alt="" className="lp-img" onLoad={() => onReady?.()} />}
       <div className="lp-body">
-        {meta.title && <div className="lp-title">{meta.title}</div>}
-        {meta.description && <div className="lp-desc">{meta.description}</div>}
+        {meta!.title && <div className="lp-title">{meta!.title}</div>}
+        {meta!.description && <div className="lp-desc">{meta!.description}</div>}
         <div className="lp-host">{host}</div>
       </div>
     </a>
@@ -773,6 +776,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     if (el.scrollTop < 80) loadOlder();
   }
+  // Re-pin to the bottom when something async grows the thread (e.g. a link preview card loads).
+  const pinBottom = useCallback(() => { const el = endRef.current; if (el && atBottomRef.current) el.scrollTop = el.scrollHeight; }, []);
 
   useEffect(() => { setReplyTo(null); setEditing(null); }, [detail.id]);
   // Clear the optimistic bubble once the real message lands (msgs grows) or on conversation switch.
@@ -975,7 +980,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       <>
                         {m.media_url && <MediaBlock m={m} onImage={openLightbox} />}
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkify(m.body)}</div>}
-                        {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} />}
+                        {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
                     )}
                 <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}

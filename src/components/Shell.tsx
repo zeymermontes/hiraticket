@@ -135,7 +135,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
     return (
       <Link key={it.id} href={it.href} onMouseEnter={() => router.prefetch(it.href)} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
-        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : t(it.labelKey)}</span>
+        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : t(it.labelKey)}</span>
         <span className="rail-badges">
           {badge != null && badge > 0 && (
             <span className={"badge" + (it.red ? " badge-red" : "")} title={lang === "es" ? "Asignados a ti" : "Assigned to you"}>{badge}</span>
@@ -153,7 +153,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
       <div className="rail-logo" title="Hiraticket">H</div>
       <div className="rail-nav">{PRIMARY.map(renderItem)}</div>
       <div className="rail-sep" />
-      <div className="rail-nav">{ADMIN.filter((it) => !(personal && it.id === "catalog")).map(renderItem)}</div>
+      <div className="rail-nav">{ADMIN.map(renderItem)}</div>
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
         <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
           <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={28} presence="online" />
