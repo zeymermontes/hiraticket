@@ -3,10 +3,15 @@
 // only re-queries what changed, not the whole route (layout badges, agents, other sections…).
 import { createClient } from "@/lib/supabase/server";
 import {
-  getConversationMessages, getConversationList, getConversationDetail,
-  type ChatMessage, type ConvListItem, type ConvDetail,
+  getConversationMessages, getConversationList, getConversationDetail, getStickerTray,
+  type ChatMessage, type ConvListItem, type ConvDetail, type StickerItem,
 } from "@/lib/chat";
 import { getChatBadges, getNotifications, type Notif } from "@/lib/notifications";
+
+/** Favorites + recent stickers for the send-sticker tray. */
+export async function loadStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
+  return getStickerTray(businessId);
+}
 
 /** Signed messages for the open conversation (high-frequency: fired on every new message). */
 export async function liveMessages(convId: string): Promise<ChatMessage[]> {

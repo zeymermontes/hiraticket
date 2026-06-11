@@ -1197,6 +1197,16 @@ func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Cl
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
 		}}, nil
+	case "sticker":
+		up, err := client.Upload(ctx, data, whatsmeow.MediaImage)
+		if err != nil {
+			return nil, err
+		}
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+			Mimetype: proto.String("image/webp"),
+			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}, nil
 	default: // document and anything else
 		up, err := client.Upload(ctx, data, whatsmeow.MediaDocument)
 		if err != nil {
@@ -1252,6 +1262,8 @@ func attachContext(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 		msg.AudioMessage.ContextInfo = ci
 	case msg.DocumentMessage != nil:
 		msg.DocumentMessage.ContextInfo = ci
+	case msg.StickerMessage != nil:
+		msg.StickerMessage.ContextInfo = ci
 	}
 }
 

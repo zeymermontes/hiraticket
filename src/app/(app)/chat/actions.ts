@@ -129,6 +129,33 @@ export async function forwardMessage(messageId: string, targetConvId: string): P
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", targetConvId);
 }
 
+/** Send a sticker the business already has (picked from the tray): reuse the stored WebP path so the
+ *  worker re-sends it as a real sticker — no re-upload needed. */
+export async function sendSticker(convId: string, sourceMessageId: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const { data: m } = await supabase.from("messages").select("media_url, media_mime").eq("id", sourceMessageId).eq("type", "sticker").maybeSingle();
+  if (!m?.media_url) return;
+  const businessId = await businessOf(convId);
+  if (!businessId) return;
+  await supabase.from("messages").insert({
+    business_id: businessId, conversation_id: convId, direction: "out",
+    type: "sticker", author_id: userId, state: "queued",
+    media_url: m.media_url, media_mime: m.media_mime || "image/webp",
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+}
+
+/** Star/unstar a sticker (keyed by its stored WebP). Returns the new favorite state. */
+export async function toggleStickerFavorite(messageId: string): Promise<boolean> {
+  const { supabase, userId } = await ctx();
+  const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
+  if (!m?.media_url) return false;
+  const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", m.business_id).eq("media_url", m.media_url).maybeSingle();
+  if (existing) { await supabase.from("sticker_favorites").delete().eq("id", existing.id); return false; }
+  await supabase.from("sticker_favorites").insert({ business_id: m.business_id, message_id: messageId, media_url: m.media_url, created_by: userId });
+  return true;
+}
+
 /** Queue an outbound media message (file already uploaded to storage). */
 export async function sendMediaMessage(
   convId: string,
