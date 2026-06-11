@@ -11,6 +11,7 @@ export interface Business {
   product_stages: boolean;
   show_typing: boolean; // appear "online" to receive customers' typing indicators
   mode: "business" | "personal"; // 'personal' → tasks/subtasks, no prices/payments
+  allow_groups: boolean; // opt-in: show/reply to WhatsApp group chats (chat-only, no orders)
 }
 
 export interface OrderRow {

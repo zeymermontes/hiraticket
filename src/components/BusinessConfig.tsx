@@ -38,7 +38,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
 }
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, mode,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode,
 }: {
   businessId: string;
   businessName: string;
@@ -50,6 +50,7 @@ export function BusinessConfig({
   customFields: string[];
   productStages: boolean;
   showTyping: boolean;
+  allowGroups: boolean;
   mode: "business" | "personal";
 }) {
   const { lang } = useApp();
@@ -159,6 +160,19 @@ export function BusinessConfig({
               </div>
               <button className={"chip" + (showTyping ? " on" : "")} onClick={() => run(() => updateBusinessProfile(businessId, { show_typing: !showTyping }))}>
                 {showTyping ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
+              </button>
+            </div>
+            <div className="row gap-2" style={{ alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Chats de grupo" : "Group chats"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Muestra y permite responder conversaciones de grupos de WhatsApp. Solo para conversar — los grupos no crean ni se vinculan a pedidos." : "Show and reply to WhatsApp group conversations. Chat-only — groups don't create or link to orders."}</div>
+              </div>
+              <button className={"chip" + (allowGroups ? " on" : "")} onClick={() => start(async () => {
+                const r = await updateBusinessProfile(businessId, { allow_groups: !allowGroups });
+                if (!r.ok) { alert(lang === "es" ? "No se pudo activar. Aplica la migración 0032 (o reinicia el worker).\n\n(" + (r.error ?? "") + ")" : "Couldn't toggle. Apply migration 0032 (or restart the worker).\n\n(" + (r.error ?? "") + ")"); return; }
+                router.refresh();
+              })}>
+                {allowGroups ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
               </button>
             </div>
           </div>

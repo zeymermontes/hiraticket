@@ -27,6 +27,7 @@ export default async function BusinessPage() {
       customFields={(business.custom_fields as string[] | null) ?? []}
       productStages={business.product_stages ?? false}
       showTyping={business.show_typing ?? true}
+      allowGroups={business.allow_groups ?? false}
       mode={business.mode ?? "business"}
     />
   );

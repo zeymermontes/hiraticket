@@ -1,5 +1,6 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
+import { getMyBusiness } from "@/lib/queries";
 
 async function ctx() {
   const supabase = await createClient();
@@ -40,6 +41,43 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", convId);
 
+}
+
+/** Start a new 1:1 conversation: find-or-create the contact by phone, ensure an open conversation,
+ *  and queue the first outbound message. Returns the conversation id to navigate to. */
+export async function startConversation(phone: string, firstMessage: string): Promise<{ ok: boolean; convId?: string; error?: string }> {
+  const d = phone.replace(/\D/g, "");
+  if (d.length < 8) return { ok: false, error: "invalid-phone" };
+  const text = firstMessage.trim();
+  if (!text) return { ok: false, error: "empty-message" };
+  const { supabase, userId } = await ctx();
+  const biz = await getMyBusiness();
+  if (!biz) return { ok: false, error: "no-business" };
+  const businessId = biz.id;
+  const normalized = "+" + d;
+
+  // Find-or-create the contact by phone.
+  let { data: contact } = await supabase.from("contacts").select("id").eq("business_id", businessId).eq("phone", normalized).maybeSingle();
+  if (!contact) {
+    const ins = await supabase.from("contacts").insert({ business_id: businessId, name: normalized, phone: normalized }).select("id").single();
+    contact = ins.data;
+  }
+  if (!contact) return { ok: false, error: "contact" };
+
+  // Reuse an open conversation with this contact if one exists, else create it.
+  let { data: conv } = await supabase.from("conversations").select("id").eq("business_id", businessId).eq("contact_id", contact.id).neq("status", "resolved").order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+  if (!conv) {
+    const ins = await supabase.from("conversations").insert({ business_id: businessId, contact_id: contact.id, status: "open", unread: 0 }).select("id").single();
+    conv = ins.data;
+  }
+  if (!conv) return { ok: false, error: "conversation" };
+
+  await supabase.from("messages").insert({
+    business_id: businessId, conversation_id: conv.id, direction: "out", type: "text",
+    body: text, author_id: userId, state: "queued",
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
+  return { ok: true, convId: conv.id };
 }
 
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */

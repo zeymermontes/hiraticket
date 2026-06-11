@@ -132,6 +132,25 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table order_items add column if not exists note text`); err != nil {
 		logger.Warnf("add order_items.note column: %v", err)
 	}
+	// Group chat support (opt-in per business, chat-only — no orders). Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table conversations
+		add column if not exists is_group boolean not null default false,
+		add column if not exists group_jid text,
+		add column if not exists group_subject text`); err != nil {
+		logger.Warnf("add group columns: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `alter table messages
+		add column if not exists sender_name text,
+		add column if not exists sender_jid text`); err != nil {
+		logger.Warnf("add message sender columns: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `alter table businesses add column if not exists allow_groups boolean not null default false`); err != nil {
+		logger.Warnf("add allow_groups column: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `create unique index if not exists conversations_group_jid_uniq
+		on public.conversations (business_id, group_jid) where group_jid is not null`); err != nil {
+		logger.Warnf("create group_jid index: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
@@ -699,8 +718,12 @@ func partnerPhone(info types.MessageInfo) string {
 }
 
 func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsmeow.Client, v *events.Message) {
-	// Only 1:1 chats (skip groups, status@broadcast, newsletters).
-	if v.Info.IsGroup || v.Info.Chat.Server == "broadcast" || v.Info.Chat.Server == "newsletter" {
+	// status@broadcast / newsletters are never handled.
+	if v.Info.Chat.Server == "broadcast" || v.Info.Chat.Server == "newsletter" {
+		return
+	}
+	// Group chats are opt-in per business (chat-only; they never create or link orders). Off → skip.
+	if v.Info.IsGroup && !m.allowGroups(ctx, s.BusinessID) {
 		return
 	}
 
@@ -799,48 +822,86 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		return
 	}
 
-	// The conversation partner is the other side of the chat (Info.Chat),
-	// whether the message is inbound or one you sent from your phone.
-	partner := partnerPhone(v.Info)
 	dir, state := "in", "delivered"
 	if v.Info.IsFromMe {
 		dir, state = "out", "sent"
 	}
-	name := partner
-	if !v.Info.IsFromMe && v.Info.PushName != "" {
-		name = v.Info.PushName
-	}
 
-	var contactID string
-	err := m.db.QueryRowContext(ctx,
-		`SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, partner).Scan(&contactID)
-	if err == sql.ErrNoRows {
-		if err = m.db.QueryRowContext(ctx,
-			`INSERT INTO contacts (business_id, name, phone) VALUES ($1,$2,$3) RETURNING id`,
-			s.BusinessID, name, partner).Scan(&contactID); err != nil {
-			m.log.Errorf("contact insert: %v", err)
-			return
-		}
-	} else if err != nil {
-		return
-	}
-
-	var convID string
+	var contactID, convID, partner string
 	var unread int
-	err = m.db.QueryRowContext(ctx,
-		`SELECT id, unread FROM conversations
-		  WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved'
-		  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread)
-	if err == sql.ErrNoRows {
-		if err = m.db.QueryRowContext(ctx,
-			`INSERT INTO conversations (business_id, contact_id, status, unread)
-			 VALUES ($1,$2,'open',0) RETURNING id`, s.BusinessID, contactID).Scan(&convID); err != nil {
-			m.log.Errorf("conv insert: %v", err)
+	// Sender identity — only set for group messages, so the UI can show a color-coded name per
+	// participant above each bubble. Empty for 1:1 chats (the conversation header already names them).
+	senderName, senderJID := "", ""
+
+	if v.Info.IsGroup {
+		// One synthetic contact + conversation per group, keyed by the group JID.
+		groupJID := v.Info.Chat.String()
+		partner = groupJID // for the trailing log line
+		gerr := m.db.QueryRowContext(ctx,
+			`SELECT id, contact_id, unread FROM conversations WHERE business_id=$1 AND group_jid=$2 LIMIT 1`,
+			s.BusinessID, groupJID).Scan(&convID, &contactID, &unread)
+		if gerr == sql.ErrNoRows {
+			subject := m.groupSubject(ctx, client, v.Info.Chat)
+			if ierr := m.db.QueryRowContext(ctx,
+				`INSERT INTO contacts (business_id, name, is_group) VALUES ($1,$2,true) RETURNING id`,
+				s.BusinessID, subject).Scan(&contactID); ierr != nil {
+				m.log.Errorf("group contact insert: %v", ierr)
+				return
+			}
+			if ierr := m.db.QueryRowContext(ctx,
+				`INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject)
+				 VALUES ($1,$2,'open',0,true,$3,$4) RETURNING id`,
+				s.BusinessID, contactID, groupJID, subject).Scan(&convID); ierr != nil {
+				m.log.Errorf("group conv insert: %v", ierr)
+				return
+			}
+			unread = 0
+		} else if gerr != nil {
 			return
 		}
-		unread = 0
-	} else if err != nil {
-		return
+		// Who in the group sent it (your own messages render on the right with no name).
+		if !v.Info.IsFromMe {
+			senderName = v.Info.PushName
+			if senderName == "" {
+				senderName = "+" + v.Info.Sender.User
+			}
+			senderJID = v.Info.Sender.String()
+		}
+	} else {
+		// The conversation partner is the other side of the chat (Info.Chat),
+		// whether the message is inbound or one you sent from your phone.
+		partner = partnerPhone(v.Info)
+		name := partner
+		if !v.Info.IsFromMe && v.Info.PushName != "" {
+			name = v.Info.PushName
+		}
+		err := m.db.QueryRowContext(ctx,
+			`SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, partner).Scan(&contactID)
+		if err == sql.ErrNoRows {
+			if err = m.db.QueryRowContext(ctx,
+				`INSERT INTO contacts (business_id, name, phone) VALUES ($1,$2,$3) RETURNING id`,
+				s.BusinessID, name, partner).Scan(&contactID); err != nil {
+				m.log.Errorf("contact insert: %v", err)
+				return
+			}
+		} else if err != nil {
+			return
+		}
+		err = m.db.QueryRowContext(ctx,
+			`SELECT id, unread FROM conversations
+			  WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved'
+			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread)
+		if err == sql.ErrNoRows {
+			if err = m.db.QueryRowContext(ctx,
+				`INSERT INTO conversations (business_id, contact_id, status, unread)
+				 VALUES ($1,$2,'open',0) RETURNING id`, s.BusinessID, contactID).Scan(&convID); err != nil {
+				m.log.Errorf("conv insert: %v", err)
+				return
+			}
+			unread = 0
+		} else if err != nil {
+			return
+		}
 	}
 
 	// Download + store media (if any).
@@ -872,9 +933,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		}
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo)
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID))
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
@@ -884,6 +945,23 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0 WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
+}
+
+// allowGroups reports whether the business has opted into group chats (default off).
+func (m *Manager) allowGroups(ctx context.Context, businessID string) bool {
+	allow := false
+	if err := m.db.QueryRowContext(ctx, `SELECT coalesce(allow_groups, false) FROM businesses WHERE id=$1`, businessID).Scan(&allow); err != nil {
+		return false
+	}
+	return allow
+}
+
+// groupSubject resolves a group's display name, falling back to the JID's local part.
+func (m *Manager) groupSubject(ctx context.Context, client *whatsmeow.Client, jid types.JID) string {
+	if gi, err := client.GetGroupInfo(ctx, jid); err == nil && gi.Name != "" {
+		return gi.Name
+	}
+	return "Grupo " + jid.User
 }
 
 func nullIf(s string) interface{} {
@@ -993,20 +1071,35 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 	}
 	m.log.Infof("→ sending %s (%s, attempt %d)", o.id, o.mtype, o.attempts)
 
-	var phone sql.NullString
+	var phone, groupJID sql.NullString
+	var isGroup bool
 	if perr := m.db.QueryRowContext(ctx,
-		`SELECT c.phone FROM conversations cv JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, o.conv).
-		Scan(&phone); perr != nil {
+		`SELECT c.phone, cv.group_jid, cv.is_group FROM conversations cv LEFT JOIN contacts c ON c.id = cv.contact_id WHERE cv.id=$1`, o.conv).
+		Scan(&phone, &groupJID, &isGroup); perr != nil {
 		// Transient DB hiccup (pooler) — retry with backoff instead of silently failing.
 		m.retryOrFail(ctx, o, "phone lookup: "+perr.Error())
 		return false
 	}
-	if !phone.Valid || digits(phone.String) == "" {
-		m.log.Errorf("send %s failed: no phone on conversation %s", o.id, o.conv)
-		m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='no phone on conversation' WHERE id=$1`, o.id)
-		return false
+	var jid types.JID
+	if isGroup {
+		if !groupJID.Valid || groupJID.String == "" {
+			m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='group conversation missing JID' WHERE id=$1`, o.id)
+			return false
+		}
+		parsed, jerr := types.ParseJID(groupJID.String)
+		if jerr != nil {
+			m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='bad group JID' WHERE id=$1`, o.id)
+			return false
+		}
+		jid = parsed
+	} else {
+		if !phone.Valid || digits(phone.String) == "" {
+			m.log.Errorf("send %s failed: no phone on conversation %s", o.id, o.conv)
+			m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='no phone on conversation' WHERE id=$1`, o.id)
+			return false
+		}
+		jid = types.NewJID(digits(phone.String), types.DefaultUserServer)
 	}
-	jid := types.NewJID(digits(phone.String), types.DefaultUserServer)
 
 	waMsg, err := m.buildOutboundMessage(ctx, client, o)
 	if err != nil {

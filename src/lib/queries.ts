@@ -7,16 +7,18 @@ export async function getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`)
     .order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (error) {
-    const r = await supabase.from("businesses").select(BASE)
+    // allow_groups (0032) may not be applied yet — retry without it before the BASE fallback.
+    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`)
       .order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (r.error) r = await supabase.from("businesses").select(BASE).order("created_at", { ascending: true }).limit(1).maybeSingle();
     data = r.data as typeof data;
   }
   if (!data) return null;
   const d = data as Record<string, unknown>;
-  return { ...d, product_stages: (d.product_stages as boolean) ?? false, show_typing: (d.show_typing as boolean) ?? true, mode: ((d.mode as string) === "personal" ? "personal" : "business") } as Business;
+  return { ...d, product_stages: (d.product_stages as boolean) ?? false, show_typing: (d.show_typing as boolean) ?? true, mode: ((d.mode as string) === "personal" ? "personal" : "business"), allow_groups: (d.allow_groups as boolean) ?? false } as Business;
 }
 
 export async function getOrders(businessId: string): Promise<OrderRow[]> {

@@ -23,7 +23,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation,
 } from "@/app/(app)/chat/actions";
 import { useToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages } from "@/app/(app)/chat/live-actions";
@@ -40,6 +40,15 @@ function linkify(text: string): React.ReactNode {
 }
 const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
 
+// Stable color per group participant, hashed from their JID/name. Mid-tone hues stay legible on
+// both light and dark message bubbles.
+const SENDER_COLORS = ["#EA580C", "#0891B2", "#8B5CF6", "#E11D48", "#16A34A", "#2563EB", "#CA8A04", "#A855F7", "#DC2626", "#059669", "#6366F1", "#0D9488"];
+function senderColor(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return SENDER_COLORS[h % SENDER_COLORS.length];
+}
+
 // Session cache of opened conversation details, so switching chats can render instantly while
 // fresh data loads in the background. Populated on open + on hover-prefetch.
 const _detailCache = new Map<string, ConvDetail>();
@@ -54,6 +63,7 @@ function skeletonDetail(c: ConvListItem): ConvDetail {
       ? { id: c.contact.id, name: c.contact.name, phone: c.contact.phone, tags: c.contact.tags ?? [], avatar_url: c.contact.avatar_url, created_at: null }
       : null,
     typing_until: c.typing_until,
+    is_group: c.is_group,
     messages: [], notes: [], events: [], orders: [],
   };
 }
@@ -334,6 +344,7 @@ export function ChatScreen({
   const { lang } = useApp();
   const router = useRouter();
   const [show360, setShow360] = useState(false);
+  const [showCompose, setShowCompose] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
 
   // Local copies kept live by targeted realtime refetches; re-seeded when the server sends new props.
@@ -553,9 +564,12 @@ export function ChatScreen({
               </button>
             ))}
           </div>
-          <div className="field field-sm field-filled">
-            <Icon name="search" />
-            <input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="row gap-2">
+            <div className="field field-sm field-filled grow">
+              <Icon name="search" />
+              <input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <button className="btn btn-sm btn-primary" title={lang === "es" ? "Nueva conversación" : "New conversation"} onClick={() => setShowCompose(true)}><Icon name="plus" size={15} /></button>
           </div>
           <div className="chip-row">
             <button className={"chip" + (!statusF && !unreadOnly ? " on" : "")} onClick={() => { setStatusF(null); setUnreadOnly(false); }}>
@@ -595,7 +609,7 @@ export function ChatScreen({
                   <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">
-                      <span className="conv-name truncate">{c.contact?.name ?? "—"}</span>
+                      <span className="conv-name truncate">{c.is_group && <span style={{ display: "inline-flex", verticalAlign: "-2px", marginRight: 4, opacity: 0.6 }} title={lang === "es" ? "Grupo" : "Group"}><Icon name="agents" size={13} /></span>}{c.contact?.name ?? "—"}</span>
                       <span className="conv-time">{relTime(c.last_message_at, lang)}</span>
                     </div>
                     <div className="conv-prev truncate">{isTyping(c.typing_until) ? <span className="typing-ind">{lang === "es" ? "escribiendo…" : "typing…"}</span> : <>{c.lastOut && <span style={{ marginRight: 3, verticalAlign: "middle" }}><Tick state={c.lastState} /></span>}{msgPreview(c, lang)}</>}</div>
@@ -633,9 +647,61 @@ export function ChatScreen({
           </div>
         </div>
       )}
+      {showCompose && <NewConversationModal lang={lang} onClose={() => setShowCompose(false)} onStarted={(id) => { setShowCompose(false); router.push(`/chat?c=${id}`); router.refresh(); }} />}
     </div>
     </ChatPatchContext.Provider>
     </ChatRefreshContext.Provider>
+  );
+}
+
+/* ---------- New conversation (compose) ---------- */
+function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en"; onClose: () => void; onStarted: (convId: string) => void }) {
+  const [phone, setPhone] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const submit = () => {
+    setErr(null);
+    start(async () => {
+      const r = await startConversation(phone, msg);
+      if (!r.ok || !r.convId) {
+        setErr(
+          r.error === "invalid-phone" ? (lang === "es" ? "Número inválido — incluye el código de país." : "Invalid number — include the country code.")
+            : r.error === "empty-message" ? (lang === "es" ? "Escribe un primer mensaje." : "Type a first message.")
+              : (lang === "es" ? "No se pudo iniciar la conversación." : "Couldn't start the conversation."),
+        );
+        return;
+      }
+      onStarted(r.convId);
+    });
+  };
+  return (
+    <div className="modal-wrap">
+      <div className="scrim" onClick={onClose} />
+      <div className="modal" role="dialog" style={{ maxWidth: 440 }}>
+        <div className="modal-head">
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="whatsapp" /></span>
+          <h3 className="grow">{lang === "es" ? "Nueva conversación" : "New conversation"}</h3>
+          <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
+        </div>
+        <div className="modal-body col gap-3">
+          <div className="col gap-1">
+            <label className="lbl">{lang === "es" ? "Número de WhatsApp" : "WhatsApp number"}</label>
+            <input className="inp-inline" autoFocus value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={lang === "es" ? "+52 55 1234 5678" : "+1 555 123 4567"} />
+            <span className="t-xs muted">{lang === "es" ? "Incluye el código de país. El número debe tener WhatsApp." : "Include the country code. The number must be on WhatsApp."}</span>
+          </div>
+          <div className="col gap-1">
+            <label className="lbl">{lang === "es" ? "Primer mensaje" : "First message"}</label>
+            <textarea className="inp-inline" style={{ minHeight: 80, resize: "vertical", paddingTop: 6 }} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={lang === "es" ? "Hola 👋" : "Hi 👋"} />
+          </div>
+          {err && <div className="t-sm" style={{ color: "var(--red)" }}>{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+          <button className="btn btn-primary" disabled={pending || !phone.trim() || !msg.trim()} onClick={submit}><Icon name="send" size={15} />{pending ? (lang === "es" ? "Iniciando…" : "Starting…") : (lang === "es" ? "Iniciar" : "Start")}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -863,7 +929,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       return;
     }
     const rt = replyTo?.id;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [] }]);
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
     setText(""); setReplyTo(null);
     // Optimistic bubble shows instantly; the realtime echo replaces it with the stored message.
     start(async () => { await sendMessage(detail.id, body, rt); });
@@ -970,6 +1036,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <div className={"msg " + (out ? "out" : "in")}>
               <div className="bubble">
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
+                {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
                 {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
                 {m.deleted ? (
@@ -1295,7 +1362,12 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   );
 
   const blockContent: Record<string, (handle: { onPointerDown: (e: React.PointerEvent) => void }) => React.ReactNode> = {
-    orders: (handle) => (
+    orders: (handle) => detail.is_group ? (
+      <>
+        <div className="ws-block-head">{grip(handle)}<Icon name="agents" size={16} /><h4 className="grow">{lang === "es" ? "Grupo" : "Group"}</h4></div>
+        <div className="ws-block-body"><div className="muted t-sm" style={{ padding: "6px 2px", lineHeight: 1.5 }}>{lang === "es" ? "Chat de grupo — solo para conversar. Los grupos no crean ni se vinculan a pedidos." : "Group chat — conversation only. Groups don't create or link to orders."}</div></div>
+      </>
+    ) : (
       <>
         <div className="ws-block-head">{grip(handle)}<Icon name="orders" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")} <span className="muted">· {detail.orders.length}</span></h4>
           <button className="btn btn-sm btn-outline" onClick={() => setShowNewTask(true)}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</button>
