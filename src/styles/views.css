@@ -127,6 +127,9 @@
 .msg.out .bubble { background: #DDF6E3; color: #11331E; border-bottom-right-radius: 5px; }
 [data-theme="dark"] .msg.out .bubble { background: #16432B; color: #DDF6E3; }
 .msg + .msg.in, .msg + .msg.out { margin-top: 2px; }
+.mention { font-weight: 700; color: var(--brand-700); }
+.msg.out .mention { color: #0b6b3f; }
+[data-theme="dark"] .msg.out .mention { color: #7fe0a6; }
 .bubble-meta { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 3px; font-size: 10.5px; color: var(--text-faint); }
 .msg.out .bubble-meta { color: #4f7d62; }
 [data-theme="dark"] .msg.out .bubble-meta { color: #8fc5a5; }

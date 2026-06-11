@@ -18,7 +18,7 @@ async function businessOf(convId: string): Promise<string | null> {
   return (data?.business_id as string) ?? null;
 }
 
-export async function sendMessage(convId: string, text: string, replyTo?: string): Promise<void> {
+export async function sendMessage(convId: string, text: string, replyTo?: string, mentions?: { jid: string; name: string }[]): Promise<void> {
   const body = text.trim();
   if (!body) return;
   const { supabase, userId } = await ctx();
@@ -35,6 +35,8 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
     // 'queued' → the WhatsApp worker picks it up and sends it, then flips to 'sent'.
     state: "queued",
     reply_to: replyTo ?? null,
+    // Group @mentions: worker reads meta.mentions → ContextInfo.MentionedJID; UI renders names.
+    meta: mentions && mentions.length ? { mentions } : null,
   });
   await supabase
     .from("conversations")

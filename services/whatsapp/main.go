@@ -263,7 +263,7 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 		// conversation has left the queue (sent), so a retry/backoff on one can't let a later one
 		// jump ahead. A message that permanently 'failed' (gave up) no longer blocks the rest.
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT m.id, m.business_id, m.conversation_id, m.body, m.type, m.media_url, m.media_mime, m.media_name, m.reply_to, m.send_attempts
+			`SELECT m.id, m.business_id, m.conversation_id, m.body, m.type, m.media_url, m.media_mime, m.media_name, m.reply_to, m.meta, m.send_attempts
 			   FROM messages m
 			  WHERE m.direction='out' AND m.state='queued' AND (m.next_retry_at IS NULL OR m.next_retry_at <= now())
 			    AND NOT EXISTS (
@@ -276,13 +276,14 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 			var pending []outMsg
 			for rows.Next() {
 				var o outMsg
-				var body, murl, mmime, mname, replyTo sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &o.attempts) == nil {
+				var body, murl, mmime, mname, replyTo, meta sql.NullString
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &meta, &o.attempts) == nil {
 					o.body = body.String
 					o.murl = murl.String
 					o.mmime = mmime.String
 					o.mname = mname.String
 					o.replyTo = replyTo.String
+					o.meta = meta.String
 					pending = append(pending, o)
 				}
 			}
@@ -865,7 +866,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			if senderName == "" {
 				senderName = "+" + v.Info.Sender.User
 			}
-			senderJID = v.Info.Sender.String()
+			senderJID = v.Info.Sender.ToNonAD().String() // strip device → stable key for @mentions
 		}
 	} else {
 		// The conversation partner is the other side of the chat (Info.Chat),
@@ -1025,8 +1026,31 @@ func (m *Manager) handleProtocol(ctx context.Context, s session, pm *waE2E.Proto
 }
 
 type outMsg struct {
-	id, biz, conv, body, mtype, murl, mmime, mname, replyTo string
-	attempts                                                int
+	id, biz, conv, body, mtype, murl, mmime, mname, replyTo, meta string
+	attempts                                                      int
+}
+
+// mentionJIDs extracts the participant JIDs to @mention from a message's meta JSON
+// ({"mentions":[{"jid":"123@s.whatsapp.net","name":"Ana"}]}). Empty if none / unparseable.
+func mentionJIDs(meta string) []string {
+	if meta == "" {
+		return nil
+	}
+	var m struct {
+		Mentions []struct {
+			JID string `json:"jid"`
+		} `json:"mentions"`
+	}
+	if err := json.Unmarshal([]byte(meta), &m); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.Mentions))
+	for _, mn := range m.Mentions {
+		if mn.JID != "" {
+			out = append(out, mn.JID)
+		}
+	}
+	return out
 }
 
 const maxSendAttempts = 6
@@ -1106,10 +1130,19 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 		m.retryOrFail(ctx, o, "build: "+err.Error())
 		return false
 	}
+	// Combine a reply context (if any) with @mentions (group chats) into one ContextInfo.
+	var ci *waE2E.ContextInfo
 	if o.replyTo != "" {
-		if ci := m.replyContext(ctx, client, jid, o.replyTo); ci != nil {
-			attachContext(waMsg, ci)
+		ci = m.replyContext(ctx, client, jid, o.replyTo)
+	}
+	if mentions := mentionJIDs(o.meta); len(mentions) > 0 {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
 		}
+		ci.MentionedJID = mentions
+	}
+	if ci != nil {
+		attachContext(waMsg, ci)
 	}
 
 	resp, err := client.SendMessage(ctx, jid, waMsg)

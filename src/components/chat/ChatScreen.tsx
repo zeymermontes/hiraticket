@@ -49,6 +49,21 @@ function senderColor(key: string): string {
   return SENDER_COLORS[h % SENDER_COLORS.length];
 }
 
+/** A message's stored @mentions ({jid,name}), if any (group outbound). */
+function metaMentions(m: ChatMessage): { jid: string; name: string }[] {
+  const mn = (m.meta as { mentions?: { jid: string; name: string }[] } | null)?.mentions;
+  return Array.isArray(mn) ? mn : [];
+}
+
+/** Render group text: clickable URLs + @<number> mentions resolved to participant names. */
+function renderRichText(text: string, nameForNum: (num: string) => string | undefined): React.ReactNode {
+  return text.split(/(https?:\/\/[^\s]+|@\d{5,})/g).map((p, i) => {
+    if (/^https?:\/\//.test(p)) return <a key={i} href={p} target="_blank" rel="noreferrer" style={{ color: "var(--blue)", textDecoration: "underline", wordBreak: "break-all" }} onClick={(e) => e.stopPropagation()}>{p}</a>;
+    if (/^@\d{5,}$/.test(p)) { const num = p.slice(1); return <span key={i} className="mention">@{nameForNum(num) ?? num}</span>; }
+    return <React.Fragment key={i}>{p}</React.Fragment>;
+  });
+}
+
 // Session cache of opened conversation details, so switching chats can render instantly while
 // fresh data loads in the background. Populated on open + on hover-prefetch.
 const _detailCache = new Map<string, ConvDetail>();
@@ -713,6 +728,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
   const [extra, setExtra] = useState<ChatMessage[]>([]);
+  const [mentions, setMentions] = useState<{ name: string; jid: string }[]>([]); // pending group @mentions
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionRect, setMentionRect] = useState<DOMRect | null>(null);
+  const mentionBtn = useRef<HTMLButtonElement>(null);
   const [staged, setStaged] = useState<File[]>([]);
   const [caption, setCaption] = useState("");
   const [sending, setSending] = useState(false);
@@ -868,6 +887,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const textConvRef = useRef(detail.id);
   useEffect(() => {
     textConvRef.current = detail.id;
+    setMentions([]);
     try { setText(localStorage.getItem(draftKey(detail.id)) ?? ""); } catch { setText(""); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.id]);
@@ -891,6 +911,23 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
 
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
   const messages = [...msgs, ...extra];
+
+  // Group @mentions: who has spoken in this group (the pickable participants) + number→name lookup.
+  const participants = useMemo(() => {
+    const seen = new Map<string, { jid: string; name: string }>();
+    for (const mm of msgs) if (mm.sender_jid && mm.sender_name && !seen.has(mm.sender_jid)) seen.set(mm.sender_jid, { jid: mm.sender_jid, name: mm.sender_name });
+    return [...seen.values()];
+  }, [msgs]);
+  const roster = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of participants) { const num = p.jid.split("@")[0]; if (num && !map.has(num)) map.set(num, p.name); }
+    return map;
+  }, [participants]);
+  // Resolve a mentioned number to a name: the message's own stored mentions first, then the roster.
+  const nameForNum = useCallback((m: ChatMessage, num: string): string | undefined => {
+    const own = metaMentions(m).find((x) => x.jid.split("@")[0] === num);
+    return own?.name ?? roster.get(num);
+  }, [roster]);
   const msgMap = useMemo(() => new Map(msgs.map((mm) => [mm.id, mm])), [msgs]);
   // Photo gallery (lightbox) over every image/sticker in the loaded thread.
   const [lightbox, setLightbox] = useState<number | null>(null);
@@ -929,10 +966,20 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       return;
     }
     const rt = replyTo?.id;
-    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
-    setText(""); setReplyTo(null);
+    // Resolve @mentions (group): turn each "@Name" into WhatsApp's "@<number>" token + collect JIDs.
+    let sendBody = body;
+    const used: { jid: string; name: string }[] = [];
+    if (detail.is_group) {
+      for (const mn of mentions) {
+        const tag = "@" + mn.name;
+        if (sendBody.includes(tag)) { sendBody = sendBody.split(tag).join("@" + mn.jid.split("@")[0]); used.push(mn); }
+      }
+    }
+    const optMeta = used.length ? { mentions: used } : null;
+    setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body: sendBody, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: rt ?? null, deleted: false, forwarded: false, edited: false, meta: optMeta, reactions: [], sender_name: null, sender_jid: null }]);
+    setText(""); setReplyTo(null); setMentions([]);
     // Optimistic bubble shows instantly; the realtime echo replaces it with the stored message.
-    start(async () => { await sendMessage(detail.id, body, rt); });
+    start(async () => { await sendMessage(detail.id, sendBody, rt, used.length ? used : undefined); });
   }
 
   if (!connected) {
@@ -1046,7 +1093,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     : (
                       <>
                         {m.media_url && <MediaBlock m={m} onImage={openLightbox} />}
-                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkify(m.body)}</div>}
+                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
                     )}
@@ -1123,6 +1170,30 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <input ref={fileRef} type="file" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
             <button className="iconbtn" onClick={() => fileRef.current?.click()} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
+            {detail.is_group && participants.length > 0 && (
+              <span style={{ display: "inline-flex" }}>
+                <button ref={mentionBtn} className="iconbtn" title={lang === "es" ? "Mencionar" : "Mention"} style={{ fontWeight: 800, fontSize: 16 }} onClick={() => { if (!mentionOpen && mentionBtn.current) setMentionRect(mentionBtn.current.getBoundingClientRect()); setMentionOpen((o) => !o); setEmojiOpen(false); setCannedOpen(false); }}>@</button>
+                {mentionOpen && mentionRect && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setMentionOpen(false)} />
+                    <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - mentionRect.top + 6, left: mentionRect.left, width: 220, maxHeight: 280, zIndex: 201 }}>
+                      <div className="menu-label">{lang === "es" ? "Mencionar a" : "Mention"}</div>
+                      {participants.map((p) => (
+                        <button key={p.jid} className="menu-item" style={{ textAlign: "left" }} onClick={() => {
+                          setText((v) => (v && !v.endsWith(" ") && v.length ? v + " " : v) + "@" + p.name + " ");
+                          setMentions((m) => (m.some((x) => x.jid === p.jid) ? m : [...m, p]));
+                          setMentionOpen(false);
+                          taRef.current?.focus();
+                        }}>
+                          <span style={{ display: "inline-flex", color: senderColor(p.jid) }}><Icon name="user" size={14} /></span>
+                          <span className="truncate">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </span>
+            )}
             <span style={{ display: "inline-flex" }}>
               <button ref={emojiBtn} className="iconbtn" onClick={() => { if (!emojiOpen && emojiBtn.current) setEmojiRect(emojiBtn.current.getBoundingClientRect()); setEmojiOpen((o) => !o); setCannedOpen(false); }} title="Emoji" style={{ fontSize: 16 }}>😀</button>
               {emojiOpen && emojiRect && (
