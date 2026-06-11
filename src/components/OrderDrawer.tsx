@@ -108,7 +108,7 @@ export function OrderDrawer({
         <div className="drawer-body scroll">
           {/* pipeline */}
           <div>
-            <label className="lbl">{lang === "es" ? "Etapa del pedido" : "Order stage"}{detail.product_stages && <span className="muted" style={{ fontWeight: 400 }}> · {lang === "es" ? "derivada de los productos" : "rolled up from products"}</span>}</label>
+            <label className="lbl">{personal ? (lang === "es" ? "Etapa de la tarea" : "Task stage") : (lang === "es" ? "Etapa del pedido" : "Order stage")}{detail.product_stages && <span className="muted" style={{ fontWeight: 400 }}> · {personal ? (lang === "es" ? "derivada de las subtareas" : "rolled up from subtasks") : (lang === "es" ? "derivada de los productos" : "rolled up from products")}</span>}</label>
             <div className="pipe">
               {stages.map((s, i) => {
                 const cls = i < curIdx ? "done" : i === curIdx ? "cur" : "";

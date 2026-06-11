@@ -1294,7 +1294,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
           <Link className="btn btn-sm btn-outline" href={`/orders?new=1&contact=${encodeURIComponent(detail.contact?.name ?? "")}`}><Icon name="plus" size={14} />{lang === "es" ? "Nuevo" : "New"}</Link>
         </div>
         <div className="ws-block-body col gap-2">
-          {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{lang === "es" ? "Sin pedidos." : "No orders."}</div> :
+          {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{personal ? (lang === "es" ? "Sin tareas." : "No tasks.") : (lang === "es" ? "Sin pedidos." : "No orders.")}</div> :
             detail.orders.map((o) => (
               <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
                 <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>

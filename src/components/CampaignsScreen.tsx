@@ -14,12 +14,12 @@ export function CampaignsScreen({
   campaigns: Campaign[];
   cannedTitles: string[];
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [template, setTemplate] = useState(cannedTitles[0] ?? "");
-  const [audience, setAudience] = useState(lang === "es" ? "Todos los clientes" : "All customers");
+  const [audience, setAudience] = useState(personal ? (lang === "es" ? "Todos los contactos" : "All contacts") : (lang === "es" ? "Todos los clientes" : "All customers"));
 
   const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" }) : "—";
 

@@ -66,9 +66,9 @@ export function BusinessConfig({
   return (
     <div className="page">
       <div className="phead">
-        <h1>{lang === "es" ? "Negocio" : "Business"}</h1>
+        <h1>{mode === "personal" ? (lang === "es" ? "Espacio" : "Workspace") : (lang === "es" ? "Negocio" : "Business")}</h1>
         <Pill color="slate" large>{businessName}</Pill>
-        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Configura tu vertical, etapas y áreas" : "Configure your vertical, stages and areas"}</span>
+        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Configura tus etapas y áreas" : "Configure your stages and areas"}</span>
       </div>
 
       <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
@@ -100,7 +100,7 @@ export function BusinessConfig({
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
           <div className="ws-block-head"><Icon name="sliders" size={16} /><h4>{lang === "es" ? "Campos personalizados" : "Custom fields"}</h4></div>
           <div className="ws-block-body col gap-2">
-            <p className="muted t-sm">{lang === "es" ? "Datos extra que capturas por pedido (ej. Placa, Mascota, Tipo de papel)." : "Extra data captured per order (e.g. Plate, Pet, Paper type)."}</p>
+            <p className="muted t-sm">{mode === "personal" ? (lang === "es" ? "Datos extra que capturas por tarea." : "Extra data captured per task.") : (lang === "es" ? "Datos extra que capturas por pedido (ej. Placa, Mascota, Tipo de papel)." : "Extra data captured per order (e.g. Plate, Pet, Paper type).")}</p>
             <div className="row gap-2" style={{ flexWrap: "wrap" }}>
               {customFields.length === 0 && <span className="muted t-sm">—</span>}
               {customFields.map((f, i) => (
@@ -119,14 +119,14 @@ export function BusinessConfig({
 
         {/* Stages */}
         <section className="ws-block">
-          <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{lang === "es" ? "Etapas del pedido" : "Order stages"}</h4>
-            <button className={"chip" + (productStages ? " on" : "")} title={lang === "es" ? "Cada producto avanza por su propia etapa; el pedido muestra la menos avanzada" : "Each product moves through its own stage; the order shows the least-advanced one"}
+          <div className="ws-block-head"><Icon name="dot" size={16} /><h4 className="grow">{mode === "personal" ? (lang === "es" ? "Etapas de la tarea" : "Task stages") : (lang === "es" ? "Etapas del pedido" : "Order stages")}</h4>
+            <button className={"chip" + (productStages ? " on" : "")} title={mode === "personal" ? (lang === "es" ? "Cada subtarea avanza por su propia etapa; la tarea muestra la menos avanzada" : "Each subtask moves through its own stage; the task shows the least-advanced one") : (lang === "es" ? "Cada producto avanza por su propia etapa; el pedido muestra la menos avanzada" : "Each product moves through its own stage; the order shows the least-advanced one")}
               onClick={() => start(async () => {
                 const r = await updateBusinessProfile(businessId, { product_stages: !productStages });
                 if (!r.ok) { alert(lang === "es" ? "No se pudo activar. Aplica las migraciones 0019 y 0020 con el pooler.\n\n(" + (r.error ?? "") + ")" : "Couldn't toggle. Apply migrations 0019 and 0020.\n\n(" + (r.error ?? "") + ")"); return; }
                 router.refresh();
               })}>
-              <Icon name="layers" size={13} />{lang === "es" ? "Etapas por producto" : "Per-product stages"}
+              <Icon name="layers" size={13} />{mode === "personal" ? (lang === "es" ? "Etapas por subtarea" : "Per-subtask stages") : (lang === "es" ? "Etapas por producto" : "Per-product stages")}
             </button>
           </div>
           <div className="ws-block-body col gap-2">

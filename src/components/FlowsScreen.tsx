@@ -17,6 +17,8 @@ const TRIGGERS: Record<string, { es: string; en: string }> = {
 const TRIGGER_ICON: Record<string, string> = {
   order_stage: "orders", conversation_status: "chat", conversation_new: "bell",
 };
+const triggerLabel = (key: string, personal: boolean, lang: "es" | "en") =>
+  key === "order_stage" && personal ? (lang === "es" ? "Una tarea cambia de etapa" : "A task changes stage") : (TRIGGERS[key]?.[lang] ?? key);
 
 const CONV_STATUS: Record<string, { es: string; en: string }> = {
   open: { es: "Abierto", en: "Open" },
@@ -33,7 +35,7 @@ const ACTIONS: Record<string, { es: string; en: string; icon: string }> = {
 };
 
 function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; stages: Stage[]; agents: Agent[] }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
@@ -59,7 +61,7 @@ function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; 
           <span className="t-xs muted"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>{w.runs.toLocaleString("es-MX")}</span> {lang === "es" ? "ejecuciones" : "runs"}</span>
         </div>
         <div className="flow-line">
-          <span className="flow-node when"><Icon name={TRIGGER_ICON[w.trigger_type] ?? "bolt"} size={14} />{lang === "es" ? "Cuando" : "When"} {(TRIGGERS[w.trigger_type]?.[lang] ?? w.trigger_type).toLowerCase()}</span>
+          <span className="flow-node when"><Icon name={TRIGGER_ICON[w.trigger_type] ?? "bolt"} size={14} />{lang === "es" ? "Cuando" : "When"} {triggerLabel(w.trigger_type, personal, lang).toLowerCase()}</span>
           {triggerVal && <span className="pill pill-slate">{triggerVal}</span>}
           <span className="flow-arrow"><Icon name="arrowr" size={16} /></span>
           <span className="flow-node then"><Icon name={act.icon} size={14} />{act[lang]}</span>
@@ -84,7 +86,7 @@ export function FlowsScreen({
   stages: Stage[];
   agents: Agent[];
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [q, setQ] = useState("");
@@ -148,7 +150,7 @@ export function FlowsScreen({
               <p className="muted t-sm">{lang === "es" ? "Crea tu primer flujo para automatizar respuestas y transferencias." : "Create your first flow to automate replies and transfers."}</p>
             </div>
           ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} agents={agents} />)}
-          {filtered.length > 0 && <div className="t-xs muted" style={{ padding: "8px 4px" }}>{lang === "es" ? "Pruébalo: avanza un pedido a “Listo” y se envía la plantilla automáticamente." : "Try it: advance an order to “Ready” and the template is sent automatically."}</div>}
+          {filtered.length > 0 && <div className="t-xs muted" style={{ padding: "8px 4px" }}>{personal ? (lang === "es" ? "Pruébalo: avanza una tarea a “Listo” y se envía la plantilla automáticamente." : "Try it: advance a task to “Ready” and the template is sent automatically.") : (lang === "es" ? "Pruébalo: avanza un pedido a “Listo” y se envía la plantilla automáticamente." : "Try it: advance an order to “Ready” and the template is sent automatically.")}</div>}
         </div>
 
         <section className="ws-block">
@@ -158,7 +160,7 @@ export function FlowsScreen({
 
             <label className="lbl">{lang === "es" ? "Cuando" : "When"}</label>
             <select className="select" value={trigger} onChange={(e) => setTrigger(e.target.value)}>
-              {Object.keys(TRIGGERS).map((k) => <option key={k} value={k}>{TRIGGERS[k][lang]}</option>)}
+              {Object.keys(TRIGGERS).map((k) => <option key={k} value={k}>{triggerLabel(k, personal, lang)}</option>)}
             </select>
             {trigger === "order_stage" && (
               <select className="select" value={stageId} onChange={(e) => setStageId(e.target.value)}>

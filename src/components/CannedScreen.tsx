@@ -27,6 +27,15 @@ const CATEGORIES: { key: string; es: string; en: string }[] = [
 ];
 const catLabel = (k: string, lang: string) => CATEGORIES.find((c) => c.key === k)?.[lang as "es" | "en"] ?? k;
 
+// In personal mode: drop the money variable + payment category, relabel order/customer wording.
+function variablesFor(personal: boolean) {
+  if (!personal) return VARIABLES;
+  return VARIABLES.filter((v) => v.key !== "total").map((v) =>
+    v.key === "order_number" ? { ...v, es: "Número de tarea", en: "Task number" }
+      : v.key === "name" ? { ...v, es: "Nombre del contacto", en: "Contact name" } : v);
+}
+const categoriesFor = (personal: boolean) => (personal ? CATEGORIES.filter((c) => c.key !== "payment") : CATEGORIES);
+
 /** Render a template body with {{vars}} highlighted as chips. */
 function TemplatePreview({ body }: { body: string }) {
   const parts = body.split(/(\{\{\s*\w+\s*\}\})/g);
@@ -45,7 +54,7 @@ function VariableTextarea({
   placeholder?: string;
   rows?: number;
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [menu, setMenu] = useState<{ q: string; at: number } | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -66,7 +75,7 @@ function VariableTextarea({
   }
 
   const filtered = menu
-    ? VARIABLES.filter((va) => {
+    ? variablesFor(personal).filter((va) => {
         const q = menu.q.toLowerCase();
         return va.key.includes(q) || va[lang as Lang].toLowerCase().includes(q);
       })
@@ -150,7 +159,7 @@ function CannedRow({ item }: { item: CannedMessage }) {
 }
 
 export function CannedScreen({ businessId, items }: { businessId: string; items: CannedMessage[] }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [title, setTitle] = useState("");
@@ -180,7 +189,7 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
           <section className="ws-block">
             <div className="ws-block-head"><Icon name="sparkles" size={16} /><h4 className="grow">{lang === "es" ? "Variables disponibles" : "Available variables"}</h4><span className="t-xs muted">{lang === "es" ? "se llenan solas al insertar" : "auto-filled on insert"}</span></div>
             <div className="ws-block-body row gap-2" style={{ flexWrap: "wrap" }}>
-              {VARIABLES.map((v) => <span key={v.key} className="mono" title={v[lang]} style={{ padding: "3px 8px", borderRadius: 6, background: "var(--brand-50)", color: "var(--brand-700)", border: "1px solid var(--brand-300)", fontSize: 12, fontWeight: 600 }}>{`{{${v.key}}}`}</span>)}
+              {variablesFor(personal).map((v) => <span key={v.key} className="mono" title={v[lang]} style={{ padding: "3px 8px", borderRadius: 6, background: "var(--brand-50)", color: "var(--brand-700)", border: "1px solid var(--brand-300)", fontSize: 12, fontWeight: 600 }}>{`{{${v.key}}}`}</span>)}
             </div>
           </section>
 
@@ -204,7 +213,7 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
               <input className="inp-inline" style={{ width: 96 }} placeholder="/atajo" value={shortcut} onChange={(e) => setShortcut(e.target.value)} />
             </div>
             <select className="select" style={{ width: "100%" }} value={category} onChange={(e) => setCategory(e.target.value)}>
-              {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c[lang]}</option>)}
+              {categoriesFor(personal).map((c) => <option key={c.key} value={c.key}>{c[lang]}</option>)}
             </select>
             <VariableTextarea value={body} onChange={setBody} rows={4}
               placeholder={lang === "es" ? "Cuerpo… escribe @ para insertar variables" : "Body… type @ to insert variables"} />

@@ -36,7 +36,7 @@ function hl(text: string, q: string): React.ReactNode {
 }
 
 export function GlobalSearch({ businessId }: { businessId: string }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -120,7 +120,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
     <div className="gsearch">
       <div className="field field-sm" style={{ width: 280 }}>
         <Icon name="search" />
-        <input ref={inputRef} value={q} placeholder={lang === "es" ? "Buscar chats, pedidos, clientes…" : "Search chats, orders, customers…"}
+        <input ref={inputRef} value={q} placeholder={personal ? (lang === "es" ? "Buscar chats, tareas, contactos…" : "Search chats, tasks, contacts…") : (lang === "es" ? "Buscar chats, pedidos, clientes…" : "Search chats, orders, customers…")}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onKeyDown={onKeyDown} />
         <kbd className="gs-kbd">⌘K</kbd>
       </div>
@@ -133,7 +133,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
             {!loading && flat.length === 0 && (
               <div className="gs-empty">
                 <div style={{ fontWeight: 600 }}>{lang === "es" ? `Sin resultados para «${q}»` : `No results for “${q}”`}</div>
-                <div className="t-xs muted" style={{ marginTop: 4 }}>{lang === "es" ? "Prueba con un nombre, teléfono o código de pedido." : "Try a name, phone or order code."}</div>
+                <div className="t-xs muted" style={{ marginTop: 4 }}>{personal ? (lang === "es" ? "Prueba con un nombre, teléfono o código de tarea." : "Try a name, phone or task code.") : (lang === "es" ? "Prueba con un nombre, teléfono o código de pedido." : "Try a name, phone or order code.")}</div>
               </div>
             )}
 
@@ -146,7 +146,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
               <Pill color={STATUS[c.status]?.color ?? "slate"} dot>{STATUS[c.status]?.[lang] ?? c.status}</Pill>,
             ))}
 
-            {res.orders.length > 0 && <div className="gs-group">{lang === "es" ? "Pedidos" : "Orders"}</div>}
+            {res.orders.length > 0 && <div className="gs-group">{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")}</div>}
             {res.orders.map((o) => row(
               { kind: "order", data: o },
               <span className="gs-ic-sq"><Icon name="orders" size={16} /></span>,
@@ -155,7 +155,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
               o.status ? <Pill color={o.color as PillColor} dot>{o.status}</Pill> : null,
             ))}
 
-            {res.customers.length > 0 && <div className="gs-group">{lang === "es" ? "Clientes" : "Customers"}</div>}
+            {res.customers.length > 0 && <div className="gs-group">{personal ? (lang === "es" ? "Contactos" : "Contacts") : (lang === "es" ? "Clientes" : "Customers")}</div>}
             {res.customers.map((c) => row(
               { kind: "customer", data: c },
               <Avatar name={c.name} initials={deriveInitials(c.name || c.phone || "?")} color={avatarColor(c.phone)} size={34} />,

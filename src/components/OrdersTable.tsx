@@ -104,8 +104,14 @@ export function OrdersTable({
     });
 
   function exportCsv() {
-    const head = ["Code", "Customer", "Stage", "Area", "Agent", "Priority", "Total", "Created", "Updated"];
-    const lines = sortedAll.map((o) => [o.code, o.contact?.name ?? "", o.stage?.name ?? "", o.area?.name ?? "", (o.assignee_id && agentMap.get(o.assignee_id)?.name) || "", o.priority, o.total, o.created_at ?? "", o.updated_at].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const head = personal
+      ? ["Code", "Contact", "Stage", "Area", "Agent", "Priority", "Created", "Updated"]
+      : ["Code", "Customer", "Stage", "Area", "Agent", "Priority", "Total", "Created", "Updated"];
+    const lines = sortedAll.map((o) => {
+      const base = [o.code, o.contact?.name ?? "", o.stage?.name ?? "", o.area?.name ?? "", (o.assignee_id && agentMap.get(o.assignee_id)?.name) || "", o.priority];
+      const tail = [o.created_at ?? "", o.updated_at];
+      return [...base, ...(personal ? [] : [o.total]), ...tail].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",");
+    });
     const csv = [head.join(","), ...lines].join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "pedidos.csv"; a.click(); URL.revokeObjectURL(url);
@@ -165,8 +171,8 @@ export function OrdersTable({
           <thead>
             <tr>
               <th style={{ width: 32 }}><input type="checkbox" title={lang === "es" ? "Seleccionar todos los filtrados" : "Select all filtered"} checked={sortedAll.length > 0 && sortedAll.every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(sortedAll.map((o) => o.id)) : new Set())} /></th>
-              <Sort k="code">{t("col_order")}</Sort>
-              <th>{t("col_customer")}</th>
+              <Sort k="code">{personal ? (lang === "es" ? "Tarea" : "Task") : t("col_order")}</Sort>
+              <th>{personal ? (lang === "es" ? "Contacto" : "Contact") : t("col_customer")}</th>
               <th>{t("col_status")}</th>
               <th>{t("col_area")}</th>
               <th>{lang === "es" ? "Agente" : "Agent"}</th>
@@ -205,7 +211,7 @@ export function OrdersTable({
             {view.length === 0 && (
               <tr>
                 <td colSpan={11} className="muted" style={{ textAlign: "center", padding: 40 }}>
-                  {t("empty_orders")}
+                  {personal ? (lang === "es" ? "No hay tareas todavía." : "No tasks yet.") : t("empty_orders")}
                 </td>
               </tr>
             )}
@@ -338,8 +344,8 @@ function NewOrderModal({
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
         <div className="modal-body col gap-2">
-          <label className="lbl">{lang === "es" ? "Cliente" : "Customer"}</label>
-          <input className="inp-inline" list="contact-list" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={lang === "es" ? "Nombre del cliente" : "Customer name"} />
+          <label className="lbl">{personal ? (lang === "es" ? "Contacto" : "Contact") : (lang === "es" ? "Cliente" : "Customer")}</label>
+          <input className="inp-inline" list="contact-list" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder={personal ? (lang === "es" ? "Nombre del contacto" : "Contact name") : (lang === "es" ? "Nombre del cliente" : "Customer name")} />
           <datalist id="contact-list">{contacts.map((c) => <option key={c.id} value={c.name} />)}</datalist>
           {!personal && products.length > 0 && (
             <>
@@ -390,7 +396,7 @@ function NewOrderModal({
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={pending || !contactName.trim() || !hasItem} onClick={submit}><Icon name="plus" size={15} />{lang === "es" ? "Crear pedido" : "Create order"}</button>
+          <button className="btn btn-primary" disabled={pending || !contactName.trim() || !hasItem} onClick={submit}><Icon name="plus" size={15} />{personal ? (lang === "es" ? "Crear tarea" : "Create task") : (lang === "es" ? "Crear pedido" : "Create order")}</button>
         </div>
       </div>
     </div>

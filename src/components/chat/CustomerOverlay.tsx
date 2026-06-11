@@ -9,12 +9,15 @@ import type { Area, Stage } from "@/lib/business";
 import type { OrderDetail } from "@/lib/orders";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { loadOrderDetail } from "@/app/(app)/orders/actions";
+import { useApp } from "@/components/AppContext";
 
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
 export function CustomerOverlay({ detail, agents, areas, stages, businessId, connected, onClose }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onClose: () => void }) {
   const router = useRouter();
+  const { personal } = useApp();
+  const ORDERS = personal ? "Tareas" : "Pedidos";
   const [tab, setTab] = useState<"orders" | "history" | "notes">("orders");
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -45,20 +48,20 @@ export function CustomerOverlay({ detail, agents, areas, stages, businessId, con
 
       <div className="cust360-body scroll">
         <div className="c360-stats">
-          <div className="c360-stat"><div className="lbl2"><Icon name="orders" size={14} />Total gastado</div><div className="val2 mono">{money(lifetime)}</div></div>
-          <div className="c360-stat"><div className="lbl2"><Icon name="orders" size={14} />Pedidos</div><div className="val2">{orders.length}</div></div>
+          {!personal && <div className="c360-stat"><div className="lbl2"><Icon name="orders" size={14} />Total gastado</div><div className="val2 mono">{money(lifetime)}</div></div>}
+          <div className="c360-stat"><div className="lbl2"><Icon name="orders" size={14} />{ORDERS}</div><div className="val2">{orders.length}</div></div>
           <div className="c360-stat"><div className="lbl2"><Icon name="clock" size={14} />Abiertos</div><div className="val2">{openCount}</div></div>
           <div className="c360-stat"><div className="lbl2"><Icon name="calendar" size={14} />Primer contacto</div><div className="val2" style={{ fontSize: 18 }}>{date(c?.created_at ?? null)}</div></div>
         </div>
 
         <div className="seg c360-tabs">
-          {([["orders", "Pedidos", orders.length], ["history", "Historial", detail.events.length], ["notes", "Notas", notes.length]] as const).map(([id, lbl, n]) => (
+          {([["orders", ORDERS, orders.length], ["history", "Historial", detail.events.length], ["notes", "Notas", notes.length]] as const).map(([id, lbl, n]) => (
             <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{lbl}{n > 0 && <span className="badge badge-soft">{n}</span>}</button>
           ))}
         </div>
 
         {tab === "orders" && (
-          orders.length === 0 ? <div className="empty"><div className="empty-art"><Icon name="orders" /></div><p>Sin pedidos.</p></div> :
+          orders.length === 0 ? <div className="empty"><div className="empty-art"><Icon name="orders" /></div><p>{personal ? "Sin tareas." : "Sin pedidos."}</p></div> :
             <div className="c360-orders">
               {orders.map((o) => {
                 const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null;
@@ -70,9 +73,9 @@ export function CustomerOverlay({ detail, agents, areas, stages, businessId, con
                       {stages.map((s, i) => <span key={s.id} className={"pipe-step " + (i < curIdx ? "done" : i === curIdx ? "cur" : "")} style={{ cursor: "default", fontSize: 10 }}>{s.name}</span>)}
                     </div>
                     <div className="o360-items">
-                      {o.items.map((li, i) => <div className="o360-item" key={i}><span className="nm truncate">{li.name}</span><span className="t-xs muted mono">×{li.qty}</span><span className="mono" style={{ fontWeight: 700 }}>{money(li.subtotal)}</span></div>)}
+                      {o.items.map((li, i) => <div className="o360-item" key={i}><span className="nm truncate">{li.name}</span><span className="t-xs muted mono">×{li.qty}</span>{!personal && <span className="mono" style={{ fontWeight: 700 }}>{money(li.subtotal)}</span>}</div>)}
                     </div>
-                    <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" /><span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span></div>
+                    <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" />{!personal && <span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span>}</div>
                     <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} />}<button className="btn btn-sm btn-outline" disabled={loadingId === o.id} onClick={() => openDrawer(o.id)}>{loadingId === o.id ? "…" : "Abrir"}<Icon name="arrowr" size={13} /></button></div>
                   </div>
                 );

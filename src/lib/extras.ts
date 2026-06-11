@@ -71,7 +71,9 @@ export interface ReportData {
   orderCount: number;
   resolvedConvs: number;
   avgTicket: number;
+  completedCount: number; // orders/tasks in the final stage
   salesTrend: { label: string; value: number }[];
+  createdTrend: { label: string; value: number }[]; // count created per day (last 7 days)
   byStage: { name: string; color: string; count: number }[];
   byArea: { name: string; color: string; count: number }[];
   byAgent: { name: string; color: string; count: number; id: string }[];
@@ -90,22 +92,28 @@ export async function getReports(businessId: string): Promise<ReportData> {
     items: T[], key: "stage_id" | "area_id",
   ) => items.map((it) => ({ name: it.name, color: it.color, count: rows.filter((o) => o[key] === it.id).length }));
 
-  // Last 7 days of sales.
+  // Last 7 days — sales (sum of total) and created count, per day.
   const trend: { label: string; value: number }[] = [];
+  const created: { label: string; value: number }[] = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const key = d.toDateString();
-    const value = rows.filter((o) => o.created_at && new Date(o.created_at as string).toDateString() === key).reduce((n, o) => n + Number(o.total ?? 0), 0);
-    trend.push({ label: d.toLocaleDateString("es-MX", { weekday: "short" }), value });
+    const dayRows = rows.filter((o) => o.created_at && new Date(o.created_at as string).toDateString() === key);
+    const label = d.toLocaleDateString("es-MX", { weekday: "short" });
+    trend.push({ label, value: dayRows.reduce((n, o) => n + Number(o.total ?? 0), 0) });
+    created.push({ label, value: dayRows.length });
   }
 
   const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
+  const lastStage = stages.length ? stages[stages.length - 1] : null;
   return {
     totalSales: total,
     orderCount: rows.length,
     resolvedConvs: resolved ?? 0,
     avgTicket: rows.length ? Math.round(total / rows.length) : 0,
+    completedCount: lastStage ? rows.filter((o) => o.stage_id === lastStage.id).length : 0,
     salesTrend: trend,
+    createdTrend: created,
     byStage: countBy(stages, "stage_id"),
     byArea: countBy(areas, "area_id"),
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),

@@ -25,7 +25,7 @@ export function KanbanBoard({
   connected: boolean;
   productStages?: boolean;
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
@@ -83,8 +83,8 @@ export function KanbanBoard({
         <span className="grow" />
         {productStages && (
           <div className="seg" style={{ marginRight: 8 }}>
-            <button className={view === "orders" ? "on" : ""} onClick={() => setView("orders")}><Icon name="orders" size={14} />{lang === "es" ? "Pedidos" : "Orders"}</button>
-            <button className={view === "products" ? "on" : ""} onClick={() => setView("products")}><Icon name="layers" size={14} />{lang === "es" ? "Productos" : "Products"}</button>
+            <button className={view === "orders" ? "on" : ""} onClick={() => setView("orders")}><Icon name="orders" size={14} />{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")}</button>
+            <button className={view === "products" ? "on" : ""} onClick={() => setView("products")}><Icon name="layers" size={14} />{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Productos" : "Products")}</button>
           </div>
         )}
         {!products && <>
@@ -173,7 +173,7 @@ export function KanbanBoard({
                       <div className="kcard-foot">
                         {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null; })()}
                         <span className="grow" />
-                        <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>
+                        {!personal && <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}
                         <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === o.id}
                           onClick={(e) => { e.stopPropagation(); openDrawer(o.id); }} onPointerDown={(e) => e.stopPropagation()}>
                           {loadingId === o.id ? "…" : (lang === "es" ? "Abrir" : "Open")}<Icon name="arrowr" size={13} />

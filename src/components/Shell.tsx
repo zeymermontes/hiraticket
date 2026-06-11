@@ -135,7 +135,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
     return (
       <Link key={it.id} href={it.href} onMouseEnter={() => router.prefetch(it.href)} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
-        <span className="rl">{it.id === "orders" ? objectName : t(it.labelKey)}</span>
+        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : t(it.labelKey)}</span>
         <span className="rail-badges">
           {badge != null && badge > 0 && (
             <span className={"badge" + (it.red ? " badge-red" : "")} title={lang === "es" ? "Asignados a ti" : "Assigned to you"}>{badge}</span>
