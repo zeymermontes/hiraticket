@@ -506,6 +506,11 @@ export function ChatScreen({
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+  // Realtime health (channel SUBSCRIBED?) + a handle to the resync fn, shared between the realtime
+  // subscription and the adaptive poll below.
+  const realtimeHealthyRef = useRef(false);
+  const resyncRef = useRef<() => void>(() => {});
+  const [realtimeDown, setRealtimeDown] = useState(false); // realtime channel dropped → show a reload banner
   const patchDetail = useCallback((patch: Partial<ConvDetail>) => setDetail((c) => (c ? { ...c, ...patch } : c)), []);
 
   // Re-render periodically so typing indicators expire on their own (no "paused" event needed).
@@ -543,7 +548,7 @@ export function ChatScreen({
   // Live updates via targeted refetches (no full route refresh — only what changed).
   useEffect(() => {
     const supabase = createClient();
-    let tl: ReturnType<typeof setTimeout>, tm: ReturnType<typeof setTimeout>, th: ReturnType<typeof setTimeout>;
+    let tl: ReturnType<typeof setTimeout>, tm: ReturnType<typeof setTimeout>, th: ReturnType<typeof setTimeout>, down: ReturnType<typeof setTimeout>;
     const softList = () => { clearTimeout(tl); tl = setTimeout(() => { liveList(businessId).then(setList).catch(() => {}); }, 250); };
     const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {}); }, 120); };
     const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
@@ -560,16 +565,37 @@ export function ChatScreen({
         softList();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, () => { softHeader(); softList(); })
-      .subscribe();
-    return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); supabase.removeChannel(ch); };
+      .subscribe((status) => {
+        // Drive realtime health: the open chat updates live while SUBSCRIBED; if the channel errors/
+        // closes we surface a "reload" banner (instead of background polling). Debounced so a brief
+        // token-refresh reconnect doesn't flash the banner.
+        if (status === "SUBSCRIBED") {
+          const was = realtimeHealthyRef.current;
+          realtimeHealthyRef.current = true;
+          clearTimeout(down); // a blip shorter than the debounce never trips the banner
+          // Note: if the banner already showed (a real 6s+ outage), we keep it — you may have missed
+          // messages during the gap, so reload is the way to catch up.
+          if (!was) resyncRef.current?.(); // reconnected → catch up once (no-op while polling is disabled)
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          realtimeHealthyRef.current = false;
+          clearTimeout(down); down = setTimeout(() => setRealtimeDown(true), 6000);
+        }
+      });
+    return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); clearTimeout(down); supabase.removeChannel(ch); };
   }, [businessId]);
 
-  // Safety net: realtime can drop an event (token refresh, brief socket reconnect). Re-sync the
-  // open conversation + list periodically (only while the tab is visible) and whenever the tab
-  // regains focus, so nothing stays stale until you reopen the chat.
+  // Safety-net poll — DISABLED. We rely on realtime for live updates and show a "reload" banner when
+  // the channel drops (cheaper than steady background polling). Kept here, gated behind the flag, so
+  // it can be turned back on (e.g. per-business) without rewriting it. When enabled it's adaptive:
+  // it only fetches while realtime is unhealthy, with a slow 30s backstop, plus catch-up on (re)connect
+  // and tab focus.
+  const ENABLE_SAFETY_POLL = false;
   useEffect(() => {
+    if (!ENABLE_SAFETY_POLL) return;
+    let last = 0;
     const resync = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      last = Date.now();
       const id = detailIdRef.current;
       if (id) {
         liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {});
@@ -577,11 +603,16 @@ export function ChatScreen({
       }
       liveList(businessId).then(setList).catch(() => {});
     };
-    const i = setInterval(resync, 5000);
+    resyncRef.current = resync;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (!realtimeHealthyRef.current || Date.now() - last >= 30000) resync(); // poll only while down; 30s backstop
+    };
+    const i = setInterval(tick, 4000);
     const onFocus = () => resync();
     document.addEventListener("visibilitychange", onFocus);
     window.addEventListener("focus", onFocus);
-    return () => { clearInterval(i); document.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
+    return () => { clearInterval(i); resyncRef.current = () => {}; document.removeEventListener("visibilitychange", onFocus); window.removeEventListener("focus", onFocus); };
   }, [businessId]);
 
   // Mark a conversation read when it's open and it has unread (incl. messages that arrive while open).
@@ -705,6 +736,14 @@ export function ChatScreen({
           : `${listW}px minmax(300px,1fr)`,
       }}
     >
+      {realtimeDown && (
+        <div className="rt-banner">
+          <Icon name="wifioff" size={15} />
+          <span className="grow">{lang === "es" ? "Se pausaron las actualizaciones en vivo. Recarga para ver lo más reciente." : "Live updates paused. Reload to see the latest."}</span>
+          <button className="btn btn-sm btn-dark" onClick={() => window.location.reload()}><Icon name="refresh" size={13} />{lang === "es" ? "Recargar" : "Reload"}</button>
+          <button className="rt-banner-x" onClick={() => setRealtimeDown(false)} aria-label={lang === "es" ? "Descartar" : "Dismiss"}><Icon name="x" size={14} /></button>
+        </div>
+      )}
       {/* list column */}
       <div className="chatcol list" style={{ position: "relative" }}>
         <div className="col-resizer" onPointerDown={startListResize} title="" />

@@ -127,6 +127,12 @@
 .msg.out .bubble { background: #DDF6E3; color: #11331E; border-bottom-right-radius: 5px; }
 [data-theme="dark"] .msg.out .bubble { background: #16432B; color: #DDF6E3; }
 .msg + .msg.in, .msg + .msg.out { margin-top: 2px; }
+/* Realtime-dropped reload banner */
+.rt-banner { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 120; display: flex; align-items: center; gap: 10px; max-width: 560px; width: calc(100% - 32px); padding: 9px 12px; border-radius: var(--r-md); background: var(--amber-bg); color: var(--text); border: 1px solid var(--amber-bd); box-shadow: var(--sh-lg); font-size: 13px; }
+.rt-banner > svg { color: var(--amber); flex: none; }
+.rt-banner-x { border: none; background: transparent; cursor: pointer; color: var(--text-faint); display: inline-flex; padding: 2px; flex: none; }
+.rt-banner-x:hover { color: var(--text); }
+
 /* Sticker tray */
 .sticker-tray { overflow-y: auto; overflow-x: hidden; }
 .sticker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 6px 2px 8px; }
