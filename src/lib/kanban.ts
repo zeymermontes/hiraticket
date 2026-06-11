@@ -5,6 +5,7 @@ export interface KanbanOrder {
   code: string;
   total: number;
   priority: string;
+  due_at: string | null;
   stage_id: string | null;
   area_id: string | null;
   assignee_id: string | null;
@@ -16,13 +17,13 @@ export interface KanbanOrder {
 
 export async function getKanbanOrders(businessId: string): Promise<KanbanOrder[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id, code, total, priority, stage_id, area_id, assignee_id, contact:contacts(name), stage:stages(name,color), area:areas(name,color), items:order_items(name)")
-    .eq("business_id", businessId)
-    .order("updated_at", { ascending: false });
+  const cols = (due: string) => `id, code, total, priority, ${due}stage_id, area_id, assignee_id, contact:contacts(name), stage:stages(name,color), area:areas(name,color), items:order_items(name)`;
+  // due_at may not exist yet (migration 0029) — fall back.
+  let { data, error } = await supabase
+    .from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false });
+  if (error) ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as KanbanOrder[];
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as KanbanOrder[];
 }
 
 export interface KanbanItem {

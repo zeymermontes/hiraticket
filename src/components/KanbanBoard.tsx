@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type PillColor, priorityColor, PRIORITY_LABEL as PRIO } from "@/lib/types";
+import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO } from "@/lib/types";
 import type { KanbanOrder, KanbanItem } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
@@ -34,6 +34,7 @@ export function KanbanBoard({
   const openDrawer = (id: string) => { setLoadingId(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingId(null); }); };
   const [view, setView] = useState<"orders" | "products">("orders");
   const [group, setGroup] = useState<"status" | "area">("status");
+  const [sortDue, setSortDue] = useState(false);
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
   const [assigneeF, setAssigneeF] = useState("");
@@ -53,8 +54,11 @@ export function KanbanBoard({
     if (assigneeF && o.assignee_id !== assigneeF) return false;
     return true;
   });
-  const colOrders = (colId: string) =>
-    pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
+  const colOrders = (colId: string) => {
+    const l = pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
+    if (sortDue) l.sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999")); // soonest first, none last
+    return l;
+  };
 
   const itemPool = items.filter((it) => {
     if (q && !(it.order_code + " " + it.name + " " + (it.contact?.name ?? "")).toLowerCase().includes(q.toLowerCase())) return false;
@@ -93,6 +97,7 @@ export function KanbanBoard({
             <button className={group === "status" ? "on" : ""} onClick={() => setGroup("status")}><Icon name="kanban" size={14} />{lang === "es" ? "Etapa" : "Stage"}</button>
             <button className={group === "area" ? "on" : ""} onClick={() => setGroup("area")}><Icon name="layers" size={14} />{lang === "es" ? "Área" : "Area"}</button>
           </div>
+          <button className={"chip" + (sortDue ? " on" : "")} onClick={() => setSortDue((v) => !v)} title={lang === "es" ? "Ordenar por fecha límite" : "Sort by deadline"}><Icon name="calendar" size={13} />{lang === "es" ? "Por fecha" : "By date"}</button>
         </>}
       </div>
 
@@ -173,6 +178,7 @@ export function KanbanBoard({
                       <div className="kcard-foot">
                         {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null; })()}
                         <span className="grow" />
+                        {o.due_at && (() => { const od = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name); return <span className="row gap-1" style={{ color: od ? "var(--red)" : "var(--text-muted)", fontWeight: od ? 700 : 500, fontSize: 11.5 }}><Icon name={od ? "clock" : "calendar"} size={11} />{new Date(o.due_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>; })()}
                         {!personal && <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}
                         <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === o.id}
                           onClick={(e) => { e.stopPropagation(); openDrawer(o.id); }} onPointerDown={(e) => e.stopPropagation()}>

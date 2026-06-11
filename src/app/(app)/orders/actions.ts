@@ -128,6 +128,14 @@ export async function setOrderPriority(orderId: string, priority: string): Promi
   revalidatePath("/kanban");
 }
 
+/** Set/clear an order's deadline (ISO string or null). */
+export async function setOrderDue(orderId: string, dueAt: string | null): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("orders").update({ due_at: dueAt }).eq("id", orderId);
+  revalidatePath("/orders");
+  revalidatePath("/kanban");
+}
+
 /** Add a tag to an order's contact. */
 export async function addOrderTag(orderId: string, tag: string): Promise<void> {
   const clean = tag.trim();
@@ -156,13 +164,15 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
   revalidatePath("/orders");
 }
 
-interface NewOrderItem { item: string; qty: number; price: number }
+interface NewOrderItem { item: string; qty: number; price: number; note?: string }
 interface NewOrder {
   contactName: string;
   items: NewOrderItem[];
   areaId: string | null;
   stageId: string | null;
   priority?: string;
+  dueAt?: string | null;
+  note?: string;
 }
 
 /** Create an order (and its contact if new) from the New Order modal. */
@@ -207,6 +217,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   }).select("id").single();
 
   if (order) {
+    if (input.dueAt) await supabase.from("orders").update({ due_at: input.dueAt }).eq("id", order.id); // best-effort (0029)
     await supabase.from("order_items").insert(lines.map((l) => ({
       order_id: order.id, name: (l.item ?? "").trim() || "Artículo", qty: l.qty || 1,
       unit_price: l.price || 0, subtotal: (l.qty || 1) * (l.price || 0), stage_id: input.stageId,

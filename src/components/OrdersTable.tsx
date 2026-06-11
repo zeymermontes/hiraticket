@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type OrderRow, type PillColor, type PriceTier, priorityColor, formatMoney, tierPrice, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
+import { type OrderRow, type PillColor, type PriceTier, priorityColor, formatMoney, tierPrice, isOverdue, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { OrderDetail } from "@/lib/orders";
@@ -15,7 +15,7 @@ import { TransferModal } from "@/components/TransferModal";
 import { createOrder, assignOrder, addOrderNote } from "@/app/(app)/orders/actions";
 import { moveOrderArea } from "@/app/(app)/actions";
 
-type SortKey = "code" | "total" | "updated_at" | "created_at";
+type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 
 function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
   return <Pill color={priorityColor(p as never)}><Icon name="flag" size={11} />{PRIO_LABEL[p]?.[lang] ?? p}</Pill>;
@@ -73,6 +73,7 @@ export function OrdersTable({
       if (sortKey === "total") { av = a.total; bv = b.total; }
       else if (sortKey === "updated_at") { av = a.updated_at; bv = b.updated_at; }
       else if (sortKey === "created_at") { av = a.created_at ?? a.updated_at; bv = b.created_at ?? b.updated_at; }
+      else if (sortKey === "due_at") { av = a.due_at ?? "9999"; bv = b.due_at ?? "9999"; } // no deadline sorts last
       else { av = a.code; bv = b.code; }
       const r = av < bv ? -1 : av > bv ? 1 : 0;
       return dir === "asc" ? r : -r;
@@ -179,6 +180,7 @@ export function OrdersTable({
               <th>{lang === "es" ? "Prioridad" : "Priority"}</th>
               <th>{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items")}</th>
               {!personal && <Sort k="total">{t("col_total")}</Sort>}
+              <Sort k="due_at">{lang === "es" ? "Fecha límite" : "Deadline"}</Sort>
               <Sort k="created_at">{lang === "es" ? "Creado" : "Created"}</Sort>
               <Sort k="updated_at">{t("col_updated")}</Sort>
             </tr>
@@ -187,6 +189,7 @@ export function OrdersTable({
             {view.map((o) => {
               const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null;
               const item0 = o.items?.[0]?.name;
+              const overdue = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name);
               return (
               <tr key={o.id} style={{ cursor: "pointer" }} className={sel.has(o.id) ? "sel-row" : ""} onClick={() => router.push(`/orders?order=${o.id}`, { scroll: false })}>
                 <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} /></td>
@@ -203,6 +206,7 @@ export function OrdersTable({
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
                 <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
                 {!personal && <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>}
+                <td className="t-sm">{o.due_at ? <span className="row gap-1" style={{ color: overdue ? "var(--red)" : "var(--text-muted)", fontWeight: overdue ? 700 : 400 }}>{overdue && <Icon name="clock" size={12} />}{relDate(o.due_at)}</span> : <span className="muted">—</span>}</td>
                 <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
                 <td className="muted t-sm">{relDate(o.updated_at)}</td>
               </tr>
@@ -210,7 +214,7 @@ export function OrdersTable({
             })}
             {view.length === 0 && (
               <tr>
-                <td colSpan={11} className="muted" style={{ textAlign: "center", padding: 40 }}>
+                <td colSpan={personal ? 11 : 12} className="muted" style={{ textAlign: "center", padding: 40 }}>
                   {personal ? (lang === "es" ? "No hay tareas todavía." : "No tasks yet.") : t("empty_orders")}
                 </td>
               </tr>
@@ -297,6 +301,7 @@ export function NewOrderModal({
   const [priority, setPriority] = useState("normal");
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
+  const [dueAt, setDueAt] = useState("");
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
   const hasItem = lines.some((l) => l.item.trim());
 
@@ -330,6 +335,7 @@ export function NewOrderModal({
         contactName,
         items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0 })),
         areaId: areaId || null, stageId: stageId || null, priority,
+        dueAt: dueAt ? new Date(dueAt).toISOString() : null,
       });
       onClose();
       if (onCreated) onCreated(); else router.refresh();
@@ -386,6 +392,9 @@ export function NewOrderModal({
                 {(["low", "normal", "high", "urgent"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
               </select>
             </div>
+          </div>
+          <div className="grow"><label className="lbl">{lang === "es" ? "Fecha límite (opcional)" : "Deadline (optional)"}</label>
+            <input type="datetime-local" className="inp-inline" style={{ width: "100%" }} value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
           </div>
           {!personal && (
             <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>

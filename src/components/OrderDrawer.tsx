@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import { type PillColor, priorityColor, formatMoney, tagColor } from "@/lib/types";
+import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
 import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
@@ -13,13 +13,22 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment, loadOrderDetail } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, addPayment, deletePayment, loadOrderDetail, setOrderDue } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
   high: { es: "Alta", en: "High" }, urgent: { es: "Urgente", en: "Urgent" },
 };
+
+/** ISO → "YYYY-MM-DDTHH:mm" in local time, for a datetime-local input. */
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 export function OrderDrawer({
   detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected,
@@ -143,6 +152,11 @@ export function OrderDrawer({
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Agente" : "Agent"}</label>{assignee ? <div className="cust"><Avatar name={assignee.name} initials={deriveInitials(assignee.name)} color={assignee.color} size={24} /><span className="t-sm">{assignee.name}</span></div> : <span className="muted t-sm">—</span>}</div>
             <div className="col gap-1"><label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Prioridad" : "Priority"}</label>
               <PriorityPicker value={detail.priority} lang={lang} onChange={(p) => runOpt({ priority: p }, () => setOrderPriority(detail.id, p))} />
+            </div>
+            <div className="col gap-1" style={{ minWidth: 190 }}>
+              <label className="lbl row gap-1" style={{ margin: 0 }}>{lang === "es" ? "Fecha límite" : "Deadline"}{isOverdue(detail.due_at, isLast) && <Pill color="red" dot>{lang === "es" ? "Vencida" : "Overdue"}</Pill>}</label>
+              <input type="datetime-local" className="inp-inline" style={{ colorScheme: "light" }} value={toLocalInput(detail.due_at)}
+                onChange={(e) => { const v = e.target.value ? new Date(e.target.value).toISOString() : null; runOpt({ due_at: v }, () => setOrderDue(detail.id, v)); }} />
             </div>
           </div>
 

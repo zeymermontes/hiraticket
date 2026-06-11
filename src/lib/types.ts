@@ -21,11 +21,17 @@ export interface OrderRow {
   total: number;
   updated_at: string;
   created_at: string;
+  due_at: string | null;
   assignee_id: string | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   contact: { name: string } | null;
   items: { name: string }[];
+}
+
+/** A deadline that has passed and the work isn't done yet. */
+export function isOverdue(dueAt: string | null | undefined, done?: boolean): boolean {
+  return !!dueAt && !done && Date.parse(dueAt) < Date.now();
 }
 
 const PRIORITY_COLOR: Record<OrderRow["priority"], PillColor> = {

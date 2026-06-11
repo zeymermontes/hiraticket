@@ -124,6 +124,10 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table businesses add column if not exists show_typing boolean not null default true`); err != nil {
 		logger.Warnf("add show_typing column: %v", err)
 	}
+	// Deadline (due date) for orders/tasks. Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table orders add column if not exists due_at timestamptz`); err != nil {
+		logger.Warnf("add due_at column: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.

@@ -13,6 +13,7 @@ export interface OrderDetail {
   pay_status: string;
   created_at: string;
   updated_at: string;
+  due_at: string | null;
   stage_id: string | null;
   area_id: string | null;
   assignee_id: string | null;
@@ -30,14 +31,13 @@ export interface OrderDetail {
 
 export async function getOrderDetail(orderId: string): Promise<OrderDetail | null> {
   const supabase = await createClient();
-  const ORDER_BASE = "id, code, total, priority, pay_status, created_at, updated_at, stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)";
-  // Try with the businesses(product_stages) join (migration 0019); fall back if not applied.
-  let { data: order, error: orderErr } = await supabase
-    .from("orders").select(`${ORDER_BASE}, business:businesses(product_stages)`).eq("id", orderId).maybeSingle();
-  if (orderErr) {
-    const r = await supabase.from("orders").select(ORDER_BASE).eq("id", orderId).maybeSingle();
-    order = r.data as typeof order;
-  }
+  const base = (due: string) => `id, code, total, priority, pay_status, created_at, updated_at, ${due}stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)`;
+  // Cascade fallbacks: product_stages join (0019) and due_at (0029) may not be applied yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let order: any, orderErr: unknown;
+  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ")).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order } = await supabase.from("orders").select(base("")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
   const [itemsRes, { data: notes }, { data: events }, payRes] = await Promise.all([
@@ -58,6 +58,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
 
   return {
     ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "paid" | "contact" | "stage" | "area">),
+    due_at: ((order as { due_at?: string | null }).due_at) ?? null,
     contact: order.contact as unknown as OrderDetail["contact"],
     stage: order.stage as unknown as OrderDetail["stage"],
     area: order.area as unknown as OrderDetail["area"],
