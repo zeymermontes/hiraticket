@@ -745,7 +745,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		return
 	}
 
-	// Unwrap "view once" (ephemeral) media so we can at least record that it arrived.
+	// Unwrap "view once" (ephemeral) media so we can at least record that it arrived. It arrives two
+	// ways: wrapped in a ViewOnceMessage* container, OR (newer/common) as a normal image/video/audio
+	// message with the viewOnce flag set — catch both.
 	viewOnce := false
 	if vo := msg.GetViewOnceMessage().GetMessage(); vo != nil {
 		msg, viewOnce = vo, true
@@ -753,6 +755,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		msg, viewOnce = vo, true
 	} else if vo := msg.GetViewOnceMessageV2Extension().GetMessage(); vo != nil {
 		msg, viewOnce = vo, true
+	}
+	if msg.GetImageMessage().GetViewOnce() || msg.GetVideoMessage().GetViewOnce() || msg.GetAudioMessage().GetViewOnce() {
+		viewOnce = true
 	}
 
 	// Text + media detection.
@@ -796,11 +801,14 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		meta = jsonStr(map[string]interface{}{"name": cm.GetDisplayName(), "vcard": cm.GetVcard()})
 	}
 
-	// View-once media isn't stored (ephemeral) — record that a one-time photo/video arrived.
+	// View-once media isn't stored (ephemeral) — record that a one-time photo/video/audio arrived.
 	if viewOnce {
-		if mtype == "video" {
+		switch mtype {
+		case "video":
 			text = "🎥 Video de única vez"
-		} else {
+		case "audio":
+			text = "🎤 Audio de única vez"
+		default:
 			text = "📷 Foto de única vez"
 		}
 		mtype, mmime, meta = "text", "", ""
