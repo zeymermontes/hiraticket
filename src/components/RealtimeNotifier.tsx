@@ -38,9 +38,12 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, () => notify())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, (payload) => {
         // RLS only delivers internal messages in channels this user can read (team + their DMs).
-        const m = payload.new as { author_id?: string; body?: string };
+        const m = payload.new as { author_id?: string; body?: string; mentions?: string[] };
         if (m.author_id === userId) return; // not your own send
-        push({ kind: "info", title: "💬 Mensaje interno", message: (m.body ?? "").slice(0, 90), href: "/internal" });
+        const mentionedMe = Array.isArray(m.mentions) && m.mentions.includes(userId);
+        push(mentionedMe
+          ? { kind: "mention", title: "📣 Te mencionaron (equipo)", message: (m.body ?? "").slice(0, 90), href: "/internal" }
+          : { kind: "info", title: "💬 Mensaje interno", message: (m.body ?? "").slice(0, 90), href: "/internal" });
         notify();
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "notes", filter: `business_id=eq.${businessId}` }, (payload) => {

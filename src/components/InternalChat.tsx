@@ -1,11 +1,11 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { linkify, firstUrl, LinkPreview } from "@/components/chat/ChatScreen";
+import { firstUrl, LinkPreview } from "@/components/chat/ChatScreen";
 import { menuStyle } from "@/lib/popover";
 import type { Agent } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
@@ -19,6 +19,17 @@ import type { StickerItem } from "@/lib/chat";
 const QUICK = ["👍", "❤️", "😂", "🙌", "✅", "🔥"];
 function clock(iso: string, lang: "es" | "en") {
   return new Date(iso).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Render internal body text: clickable URLs + highlighted @member mentions (names from the msg). */
+function renderBody(body: string, mentionNames: string[]) {
+  const esc = mentionNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const mentionRe = esc.length ? new RegExp("(@(?:" + esc.join("|") + "))", "g") : null;
+  return body.split(/(https?:\/\/[^\s]+)/g).map((part, i) => {
+    if (/^https?:\/\//.test(part)) return <a key={i} href={part} target="_blank" rel="noreferrer" style={{ color: "var(--blue)", textDecoration: "underline", wordBreak: "break-all" }} onClick={(e) => e.stopPropagation()}>{part}</a>;
+    if (!mentionRe) return <Fragment key={i}>{part}</Fragment>;
+    return part.split(mentionRe).map((seg, j) => (/^@/.test(seg) && mentionNames.includes(seg.slice(1)) ? <span key={`${i}-${j}`} className="mention">{seg}</span> : <Fragment key={`${i}-${j}`}>{seg}</Fragment>));
+  });
 }
 
 export function InternalChat({ initial, businessId }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string }) {
@@ -35,7 +46,10 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [stickerRect, setStickerRect] = useState<DOMRect | null>(null);
   const [stickerTray, setStickerTray] = useState<{ favorites: StickerItem[]; recent: StickerItem[] }>({ favorites: [], recent: [] });
   const [uploading, setUploading] = useState(false);
+  const [mention, setMention] = useState<{ q: string; at: number; rect: DOMRect } | null>(null);
+  const [mentionSel, setMentionSel] = useState(0);
   const stickerBtn = useRef<HTMLButtonElement>(null);
+  const mentionMatches = useMemo(() => (mention ? initial.agents.filter((a) => a.id !== initial.meId && a.name.toLowerCase().includes(mention.q.toLowerCase())).slice(0, 6) : []), [mention, initial.agents, initial.meId]);
   const [, start] = useTransition();
   const meId = initial.meId;
   const agentMap = useMemo(() => new Map(initial.agents.map((a) => [a.id, a])), [initial.agents]);
@@ -74,15 +88,31 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
 
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [msgs]);
 
+  // @mention autocomplete in the composer.
+  const onComposerChange = (v: string, caret: number) => {
+    setText(v);
+    const m = v.slice(0, caret).match(/(?:^|\s)@([\p{L}\d]*)$/u);
+    if (m) { setMentionSel(0); setMention({ q: m[1], at: caret - m[1].length - 1, rect: taRef.current?.getBoundingClientRect() ?? new DOMRect() }); }
+    else setMention(null);
+  };
+  const insertMention = (a: Agent) => {
+    const el = taRef.current; if (!el || !mention) return;
+    const caret = el.selectionStart; const ins = "@" + a.name + " ";
+    const next = text.slice(0, mention.at) + ins + text.slice(caret);
+    setText(next); setMention(null);
+    requestAnimationFrame(() => { el.focus(); const p = mention.at + ins.length; el.setSelectionRange(p, p); });
+  };
+
   function submit() {
     const body = text.trim();
     if (!body) return;
     if (editing) { const id = editing.id; setEditing(null); setText(""); start(async () => { await editInternalMessage(id, body); refreshMsgs(selRef.current); }); return; }
     const ch = sel; const rt = reply?.id ?? null;
-    setText(""); setReply(null);
-    const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body, mentions: [], created_at: new Date().toISOString(), reply_to: rt, edited: false, deleted: false, reactions: [], type: "text", media_url: null, media_mime: null, media_name: null, forwarded: false };
+    const mentioned = initial.agents.filter((a) => a.id !== meId && body.includes("@" + a.name)).map((a) => a.id);
+    setText(""); setReply(null); setMention(null);
+    const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body, mentions: mentioned, created_at: new Date().toISOString(), reply_to: rt, edited: false, deleted: false, reactions: [], type: "text", media_url: null, media_mime: null, media_name: null, forwarded: false };
     setMsgs((m) => [...m, opt]);
-    start(async () => { await sendInternalMessage(ch, body, rt); refreshThreads(); });
+    start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshThreads(); });
   }
   async function onPickFiles(files: FileList) {
     const ch = sel; setUploading(true);
@@ -175,7 +205,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                           <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
                         </a>
                       )}
-                      {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{linkify(m.body)}</div>}
+                      {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderBody(m.body, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</div>}
                       {url && <LinkPreview url={url} />}
                     </>
                   )}
@@ -207,9 +237,29 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
           )}
           <div className="composer-box">
             <div className="composer-input">
-              <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Mensaje interno…" : "Internal message…"} value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} />
+              <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Mensaje interno… usa @ para mencionar" : "Internal message… use @ to mention"} value={text}
+                onChange={(e) => onComposerChange(e.target.value, e.target.selectionStart)}
+                onBlur={() => setTimeout(() => setMention(null), 150)}
+                onKeyDown={(e) => {
+                  if (mention && mentionMatches.length) {
+                    if (e.key === "ArrowDown") { e.preventDefault(); setMentionSel((s) => (s + 1) % mentionMatches.length); return; }
+                    if (e.key === "ArrowUp") { e.preventDefault(); setMentionSel((s) => (s - 1 + mentionMatches.length) % mentionMatches.length); return; }
+                    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(mentionMatches[mentionSel]); return; }
+                    if (e.key === "Escape") { setMention(null); return; }
+                  }
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+                }} />
+              {mention && mentionMatches.length > 0 && (
+                <div className="menu scroll" style={menuStyle(mention.rect, { width: 240, height: 240, align: "left" })}>
+                  <div className="menu-label">{lang === "es" ? "Mencionar" : "Mention"}</div>
+                  {mentionMatches.map((a, i) => (
+                    <button type="button" key={a.id} className={"menu-item" + (i === mentionSel ? " on" : "")} style={i === mentionSel ? { background: "var(--surface-2)" } : undefined}
+                      onMouseEnter={() => setMentionSel(i)} onMouseDown={(e) => { e.preventDefault(); insertMention(a); }}>
+                      <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={22} />{a.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="composer-actions">
               <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { if (e.target.files?.length) onPickFiles(e.target.files); e.target.value = ""; }} />
