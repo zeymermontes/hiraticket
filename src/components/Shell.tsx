@@ -9,7 +9,7 @@ import { ToastProvider } from "@/components/Toast";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import { NavProgress } from "@/components/NavProgress";
 import { GlobalSearch } from "@/components/GlobalSearch";
-import { liveBadges } from "@/app/(app)/chat/live-actions";
+import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -44,9 +44,19 @@ function playChime() {
   } catch { /* audio unavailable / blocked until first interaction */ }
 }
 
+function notifIcon(kind: Notif["kind"]) {
+  if (kind === "chat") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>;
+  const name = kind === "internal" ? "chat" : "at";
+  return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={name} size={15} /></span>;
+}
+
 function Bell({ notifications }: { notifications: Notif[] }) {
   const { lang } = useApp();
   const [open, setOpen] = useState(false);
+  const [items, setItems] = useState(notifications);
+  const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => { setItems(notifications); setDone(false); }, [notifications]);
   const total = notifications.reduce((n, x) => n + (x.unread || 1), 0);
 
   // Chime when the (assigned-to-you) notification count rises — not on first load.
@@ -55,6 +65,16 @@ function Bell({ notifications }: { notifications: Notif[] }) {
     if (prev.current != null && total > prev.current) playChime();
     prev.current = total;
   }, [total]);
+
+  const loadMore = () => {
+    if (loading || done) return;
+    const last = items[items.length - 1];
+    setLoading(true);
+    loadNotificationFeed(last?.at ?? undefined, "all", true).then((r) => {
+      setItems((prev2) => { const seen = new Set(prev2.map((x) => x.id)); return [...prev2, ...r.filter((x) => !seen.has(x.id))]; });
+      if (r.length < 20) setDone(true);
+    }).finally(() => setLoading(false));
+  };
 
   return (
     <span style={{ position: "relative", display: "inline-flex" }}>
@@ -65,20 +85,22 @@ function Bell({ notifications }: { notifications: Notif[] }) {
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="menu scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 320, maxHeight: 400, zIndex: 50 }}>
+          <div className="menu scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 320, maxHeight: 440, overflowY: "auto", zIndex: 50 }}
+            onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) loadMore(); }}>
             <div className="menu-label">{lang === "es" ? "Notificaciones" : "Notifications"}</div>
-            {notifications.length === 0 && <div className="muted t-sm" style={{ padding: "8px 10px" }}>{lang === "es" ? "Sin novedades" : "Nothing new"}</div>}
-            {notifications.map((no) => (
+            {items.length === 0 && <div className="muted t-sm" style={{ padding: "8px 10px" }}>{lang === "es" ? "Sin novedades" : "Nothing new"}</div>}
+            {items.map((no) => (
               <Link key={no.id} href={no.href} className="menu-item" style={{ alignItems: "flex-start" }} onClick={() => setOpen(false)}>
-                {no.kind === "mention"
-                  ? <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="at" size={15} /></span>
-                  : <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>}
+                {notifIcon(no.kind)}
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontWeight: 600, whiteSpace: "normal" }}>{no.text ?? ((lang === "es" ? "Nuevo mensaje de " : "New message from ") + no.name)}</span>
                   <span className="t-xs muted">{relShort(no.at)}{no.kind === "chat" && no.unread > 1 ? ` · ${no.unread}` : ""}</span>
                 </span>
               </Link>
             ))}
+            {loading && <div className="muted t-xs" style={{ padding: "6px 10px" }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>}
+            <div className="menu-sep" />
+            <Link href="/notifications" className="menu-item" style={{ justifyContent: "center", fontWeight: 600 }} onClick={() => setOpen(false)}>{lang === "es" ? "Ver todas" : "See all"}</Link>
           </div>
         </>
       )}
@@ -99,7 +121,8 @@ const PRIMARY: NavItem[] = [
   { id: "chat", href: "/chat", icon: "chat", labelKey: "nav_chat", red: true },
   { id: "orders", href: "/orders", icon: "orders", labelKey: "nav_orders" },
   { id: "kanban", href: "/kanban", icon: "kanban", labelKey: "nav_kanban" },
-  { id: "contacts", href: "/contacts", icon: "agents", labelKey: "nav_contacts" },
+  { id: "contacts", href: "/contacts", icon: "user", labelKey: "nav_contacts" },
+  { id: "internal", href: "/internal", icon: "agents", labelKey: "nav_internal" },
   { id: "agenda", href: "/agenda", icon: "calendar", labelKey: "nav_agenda" },
 ];
 

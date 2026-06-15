@@ -6,7 +6,19 @@ import {
   getConversationMessages, getConversationList, getConversationDetail, getStickerTray,
   type ChatMessage, type ConvListItem, type ConvDetail, type StickerItem,
 } from "@/lib/chat";
-import { getChatBadges, getNotifications, type Notif } from "@/lib/notifications";
+import { getChatBadges, getNotifications, getNotificationFeed, type Notif, type NotifFilter } from "@/lib/notifications";
+import { getMyBusiness } from "@/lib/queries";
+
+/** Paginated notification feed for the bell + /notifications page (infinite scroll). */
+export async function loadNotificationFeed(before?: string, filter: NotifFilter = "all", unreadOnly = false): Promise<Notif[]> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const biz = await getMyBusiness();
+  if (!user || !biz) return [];
+  const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+  const myName = (prof?.full_name as string) || (user.email ? user.email.split("@")[0] : "");
+  return getNotificationFeed(biz.id, user.id, myName, { before, filter, unreadOnly });
+}
 
 /** Favorites + recent stickers for the send-sticker tray. */
 export async function loadStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
