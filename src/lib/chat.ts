@@ -55,6 +55,7 @@ export interface ConvListItem {
   lastDeleted: boolean;
   typing_until: string | null; // customer is typing while this is in the future
   is_group: boolean; // WhatsApp group chat (chat-only — no orders)
+  muted: boolean; // "stop listening" — incoming messages are dropped by the worker
 }
 
 export interface ChatMessage {
@@ -117,6 +118,7 @@ export interface ConvDetail {
   contact: { id: string; name: string; phone: string | null; tags: string[]; avatar_url: string | null; created_at: string | null } | null;
   typing_until: string | null;
   is_group: boolean; // WhatsApp group chat (chat-only — no orders)
+  muted: boolean; // "stop listening" — incoming messages are dropped by the worker
   messages: ChatMessage[];
   notes: ConvNote[];
   events: ConvEvent[];
@@ -184,7 +186,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
     `id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state,type,deleted)`;
   // typing_until (0027) / is_group (0032) may not exist yet — fall back to the base columns.
   let { data, error } = await supabase
-    .from("conversations").select(cols("typing_until, is_group, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
+    .from("conversations").select(cols("typing_until, is_group, muted, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
   if (error) {
     ({ data, error } = await supabase
       .from("conversations").select(cols("")).eq("business_id", businessId).order("last_message_at", { ascending: false }));
@@ -215,6 +217,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       lastDeleted: last?.deleted ?? false,
       typing_until: (c.typing_until as string | null) ?? null,
       is_group: (c.is_group as boolean) ?? false,
+      muted: (c.muted as boolean) ?? false,
     } as ConvListItem;
   });
 }
@@ -263,7 +266,7 @@ export async function getConversationDetail(
   const convCols = (opt: string) =>
     `id, status, assignee_id, contact_id, unread, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
   let convRaw, convErr;
-  ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, is_group, ")).eq("id", convId).maybeSingle());
+  ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, is_group, muted, ")).eq("id", convId).maybeSingle());
   if (convErr) ({ data: convRaw } = await supabase.from("conversations").select(convCols("")).eq("id", convId).maybeSingle());
   if (!convRaw) return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -304,6 +307,7 @@ export async function getConversationDetail(
     contact: conv.contact as unknown as ConvDetail["contact"],
     typing_until: ((conv as { typing_until?: string | null }).typing_until) ?? null,
     is_group: ((conv as { is_group?: boolean }).is_group) ?? false,
+    muted: ((conv as { muted?: boolean }).muted) ?? false,
     messages: (messages ?? []) as ChatMessage[],
     notes: (notes ?? []) as ConvNote[],
     events: (events ?? []) as ConvEvent[],

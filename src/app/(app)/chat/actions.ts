@@ -352,6 +352,12 @@ export async function setConvHidden(convId: string, hidden: boolean): Promise<vo
   await supabase.from("conversations").update({ hidden }).eq("id", convId);
 }
 
+/** "Stop listening": when muted, the worker drops incoming messages for this conversation. */
+export async function setConvMuted(convId: string, muted: boolean): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("conversations").update({ muted }).eq("id", convId);
+}
+
 /** Snooze (postpone) a conversation until `untilISO`, or pass null to un-snooze. */
 export async function snoozeConv(convId: string, untilISO: string | null): Promise<void> {
   const { supabase, userId } = await ctx();

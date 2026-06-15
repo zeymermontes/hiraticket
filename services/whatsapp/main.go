@@ -151,6 +151,10 @@ end $$;`); err != nil {
 		on public.conversations (business_id, group_jid) where group_jid is not null`); err != nil {
 		logger.Warnf("create group_jid index: %v", err)
 	}
+	// "Stop listening": when a conversation is muted, incoming messages are dropped (not stored). Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists muted boolean not null default false`); err != nil {
+		logger.Warnf("add muted column: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
@@ -838,6 +842,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 
 	var contactID, convID, partner string
 	var unread int
+	var muted bool // when the conversation is muted ("stop listening"), drop the message
 	// Sender identity — only set for group messages, so the UI can show a color-coded name per
 	// participant above each bubble. Empty for 1:1 chats (the conversation header already names them).
 	senderName, senderJID := "", ""
@@ -847,8 +852,8 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		groupJID := v.Info.Chat.String()
 		partner = groupJID // for the trailing log line
 		gerr := m.db.QueryRowContext(ctx,
-			`SELECT id, contact_id, unread FROM conversations WHERE business_id=$1 AND group_jid=$2 LIMIT 1`,
-			s.BusinessID, groupJID).Scan(&convID, &contactID, &unread)
+			`SELECT id, contact_id, unread, muted FROM conversations WHERE business_id=$1 AND group_jid=$2 LIMIT 1`,
+			s.BusinessID, groupJID).Scan(&convID, &contactID, &unread, &muted)
 		if gerr == sql.ErrNoRows {
 			subject := m.groupSubject(ctx, client, v.Info.Chat)
 			if ierr := m.db.QueryRowContext(ctx,
@@ -897,9 +902,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			return
 		}
 		err = m.db.QueryRowContext(ctx,
-			`SELECT id, unread FROM conversations
+			`SELECT id, unread, muted FROM conversations
 			  WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved'
-			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread)
+			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted)
 		if err == sql.ErrNoRows {
 			if err = m.db.QueryRowContext(ctx,
 				`INSERT INTO conversations (business_id, contact_id, status, unread)
@@ -911,6 +916,12 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		} else if err != nil {
 			return
 		}
+	}
+
+	// "Stop listening": the conversation is muted → drop this message (don't store it).
+	if muted {
+		m.log.Infof("muted conv %s — dropping %s message", convID, dir)
+		return
 	}
 
 	// Download + store media (if any).

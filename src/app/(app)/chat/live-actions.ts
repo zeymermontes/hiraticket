@@ -40,7 +40,7 @@ export async function liveConvHeader(convId: string): Promise<Partial<ConvDetail
   const cols = (typing: string) =>
     `id, status, assignee_id, unread, hidden, snoozed_until, ${typing}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
   let convRaw, error;
-  ({ data: convRaw, error } = await supabase.from("conversations").select(cols("typing_until, ")).eq("id", convId).maybeSingle());
+  ({ data: convRaw, error } = await supabase.from("conversations").select(cols("typing_until, muted, ")).eq("id", convId).maybeSingle());
   if (error) ({ data: convRaw } = await supabase.from("conversations").select(cols("")).eq("id", convId).maybeSingle());
   if (!convRaw) return null;
   const conv = convRaw as unknown as Record<string, unknown>;
@@ -53,6 +53,7 @@ export async function liveConvHeader(convId: string): Promise<Partial<ConvDetail
     area: conv.area as unknown as ConvDetail["area"],
     contact: conv.contact as unknown as ConvDetail["contact"],
     typing_until: ((conv as { typing_until?: string | null }).typing_until) ?? null,
+    muted: ((conv as { muted?: boolean }).muted) ?? false,
   };
 }
 

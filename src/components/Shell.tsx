@@ -99,6 +99,7 @@ const PRIMARY: NavItem[] = [
   { id: "chat", href: "/chat", icon: "chat", labelKey: "nav_chat", red: true },
   { id: "orders", href: "/orders", icon: "orders", labelKey: "nav_orders" },
   { id: "kanban", href: "/kanban", icon: "kanban", labelKey: "nav_kanban" },
+  { id: "contacts", href: "/contacts", icon: "agents", labelKey: "nav_contacts" },
   { id: "agenda", href: "/agenda", icon: "calendar", labelKey: "nav_agenda" },
 ];
 
@@ -135,7 +136,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
     return (
       <Link key={it.id} href={it.href} onMouseEnter={() => router.prefetch(it.href)} className={"rail-item" + (on ? " on" : "")}>
         <Icon name={it.icon} />
-        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : t(it.labelKey)}</span>
+        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : it.id === "contacts" && personal ? (lang === "es" ? "Contactos" : "Contacts") : t(it.labelKey)}</span>
         <span className="rail-badges">
           {badge != null && badge > 0 && (
             <span className={"badge" + (it.red ? " badge-red" : "")} title={lang === "es" ? "Asignados a ti" : "Assigned to you"}>{badge}</span>

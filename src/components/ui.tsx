@@ -9,14 +9,16 @@ export function Pill({
   children,
   dot,
   large,
+  title,
 }: {
   color?: PillColor;
   children: React.ReactNode;
   dot?: boolean;
   large?: boolean;
+  title?: string;
 }) {
   return (
-    <span className={"pill pill-" + color + (large ? " pill-lg" : "")}>
+    <span className={"pill pill-" + color + (large ? " pill-lg" : "")} title={title}>
       {dot && <span className="dot" />}
       {children}
     </span>

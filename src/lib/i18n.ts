@@ -15,6 +15,7 @@ export const STRINGS = {
   nav_flows: { es: "Flujos", en: "Flows" },
   nav_agents: { es: "Agentes", en: "Agents" },
   nav_canned: { es: "Plantillas", en: "Templates" },
+  nav_contacts: { es: "Clientes", en: "Customers" },
   nav_business: { es: "Negocio", en: "Business" },
   nav_settings: { es: "Ajustes", en: "Settings" },
 
