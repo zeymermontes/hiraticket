@@ -15,6 +15,10 @@ export interface InternalMsg {
   body: string;
   mentions: string[];
   created_at: string;
+  reply_to: string | null;
+  edited: boolean;
+  deleted: boolean;
+  reactions: { emoji: string; by: string }[];
 }
 
 export interface InternalThread {
@@ -70,10 +74,10 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
 export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; limit?: number }): Promise<InternalMsg[]> {
   const supabase = await createClient();
   const limit = opts?.limit ?? MSG_PAGE;
-  let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
+  let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
   if (opts?.before) q = q.lt("created_at", opts.before);
   const { data } = await q;
-  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, mentions: Array.isArray(m.mentions) ? m.mentions : [] }));
+  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
   msgs.reverse();
   return msgs;
 }

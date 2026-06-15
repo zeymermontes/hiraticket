@@ -24,16 +24,45 @@ export async function loadInternalMessages(channel: string, before?: string): Pr
   return getInternalMessages(businessId, channel, { before });
 }
 
-export async function sendInternalMessage(channel: string, body: string, mentions?: string[]): Promise<void> {
+export async function sendInternalMessage(channel: string, body: string, replyTo?: string | null, mentions?: string[]): Promise<void> {
   const text = body.trim();
   if (!text) return;
   const { supabase, userId, businessId } = await ctx();
   if (!userId || !businessId) return;
   await supabase.from("internal_messages").insert({
-    business_id: businessId, channel, author_id: userId, body: text, mentions: mentions ?? [],
+    business_id: businessId, channel, author_id: userId, body: text, mentions: mentions ?? [], reply_to: replyTo ?? null,
   });
   // Author has implicitly "read" their own send.
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
+}
+
+/** Edit your own internal message. */
+export async function editInternalMessage(id: string, body: string): Promise<void> {
+  const text = body.trim();
+  if (!text) return;
+  const { supabase, userId } = await ctx();
+  if (!userId) return;
+  await supabase.from("internal_messages").update({ body: text, edited: true }).eq("id", id).eq("author_id", userId);
+}
+
+/** Delete (soft) your own internal message. */
+export async function deleteInternalMessage(id: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  if (!userId) return;
+  await supabase.from("internal_messages").update({ deleted: true, body: "" }).eq("id", id).eq("author_id", userId);
+}
+
+/** Toggle a reaction (one emoji per user) on an internal message. */
+export async function reactInternalMessage(id: string, emoji: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  if (!userId) return;
+  const { data: m } = await supabase.from("internal_messages").select("reactions").eq("id", id).maybeSingle();
+  const cur = (Array.isArray(m?.reactions) ? m!.reactions : []) as { emoji: string; by: string }[];
+  const mine = cur.find((r) => r.by === userId);
+  let next: { emoji: string; by: string }[];
+  if (mine && mine.emoji === emoji) next = cur.filter((r) => r.by !== userId); // tap same → remove
+  else next = [...cur.filter((r) => r.by !== userId), { emoji, by: userId }];  // replace mine
+  await supabase.from("internal_messages").update({ reactions: next }).eq("id", id);
 }
 
 export async function markInternalRead(channel: string): Promise<void> {
