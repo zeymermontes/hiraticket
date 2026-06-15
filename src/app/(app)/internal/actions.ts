@@ -47,6 +47,19 @@ export async function sendInternalMedia(channel: string, input: { type: string; 
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
 }
 
+/** Send a sticker (picked from the tray) into an internal channel — reuses the stored WebP. */
+export async function sendInternalSticker(channel: string, sourceMessageId: string): Promise<void> {
+  const { supabase, userId, businessId } = await ctx();
+  if (!userId || !businessId) return;
+  const { data: m } = await supabase.from("messages").select("media_url, media_mime").eq("id", sourceMessageId).eq("type", "sticker").maybeSingle();
+  if (!m?.media_url) return;
+  await supabase.from("internal_messages").insert({
+    business_id: businessId, channel, author_id: userId, body: "", type: "sticker",
+    media_url: m.media_url, media_mime: (m.media_mime as string) || "image/webp",
+  });
+  await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
+}
+
 /** Forward an internal message (text or media) to another internal channel. */
 export async function forwardInternalMessage(messageId: string, toChannel: string): Promise<void> {
   const { supabase, userId, businessId } = await ctx();

@@ -10,9 +10,11 @@ import { menuStyle } from "@/lib/popover";
 import type { Agent } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
 import {
-  loadInternalThreads, loadInternalMessages, sendInternalMessage, sendInternalMedia, forwardInternalMessage,
+  loadInternalThreads, loadInternalMessages, sendInternalMessage, sendInternalMedia, forwardInternalMessage, sendInternalSticker,
   markInternalRead, editInternalMessage, deleteInternalMessage, reactInternalMessage,
 } from "@/app/(app)/internal/actions";
+import { loadStickerTray } from "@/app/(app)/chat/live-actions";
+import type { StickerItem } from "@/lib/chat";
 
 const QUICK = ["👍", "❤️", "😂", "🙌", "✅", "🔥"];
 function clock(iso: string, lang: "es" | "en") {
@@ -32,7 +34,10 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [canned, setCanned] = useState<{ id: string; title: string; body: string }[]>([]);
   const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [fwdTarget, setFwdTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [stickerRect, setStickerRect] = useState<DOMRect | null>(null);
+  const [stickerTray, setStickerTray] = useState<{ favorites: StickerItem[]; recent: StickerItem[] }>({ favorites: [], recent: [] });
   const [uploading, setUploading] = useState(false);
+  const stickerBtn = useRef<HTMLButtonElement>(null);
   const [, start] = useTransition();
   const meId = initial.meId;
   const agentMap = useMemo(() => new Map(initial.agents.map((a) => [a.id, a])), [initial.agents]);
@@ -105,6 +110,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const del = (m: InternalMsg) => { if (!confirm(lang === "es" ? "¿Eliminar este mensaje?" : "Delete this message?")) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
+  const openStickers = () => { setEmojiRect(null); setCannedRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };
+  const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setMsgs((m) => [...m, opt]); start(async () => { await sendInternalSticker(ch, s.id); refreshThreads(); }); };
 
   const selThread = threads.find((t) => t.key === sel);
 
@@ -167,8 +174,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                     <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
                   ) : (
                     <>
+                      {m.media_url && m.type === "sticker" && <img src={m.media_url} alt="" style={{ width: 130, height: 130, objectFit: "contain", display: "block" }} />}
                       {m.media_url && m.type === "image" && <a href={m.media_url} target="_blank" rel="noreferrer"><img src={m.media_url} alt="" style={{ maxWidth: 240, maxHeight: 280, borderRadius: 10, display: "block" }} /></a>}
-                      {m.media_url && m.type !== "image" && (
+                      {m.media_url && m.type !== "image" && m.type !== "sticker" && (
                         <a href={m.media_url} target="_blank" rel="noreferrer" className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}>
                           <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
                           <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
@@ -225,6 +233,25 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                     <div className="menu scroll" style={menuStyle(cannedRect, { width: 300, height: 320, align: "left", gap: 6 })}>
                       {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div>
                         : canned.map((c) => <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }} onClick={() => { setText((v) => (v ? v + " " : "") + c.body); setCannedRect(null); taRef.current?.focus(); }}><div style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</div><div className="muted t-xs truncate">{c.body}</div></button>)}
+                    </div>
+                  </>
+                )}
+              </span>
+              <span style={{ display: "inline-flex" }}>
+                <button ref={stickerBtn} className="iconbtn" title="Stickers" style={{ fontSize: 16 }} onClick={openStickers}>🩷</button>
+                {stickerRect && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setStickerRect(null)} />
+                    <div className="menu" style={{ ...menuStyle(stickerRect, { width: 300, height: 340, align: "left" }), padding: 8 }}>
+                      {stickerTray.favorites.length === 0 && stickerTray.recent.length === 0
+                        ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Aún no hay stickers." : "No stickers yet."}</div>
+                        : (
+                          <>
+                            {stickerTray.favorites.length > 0 && <><div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div><div className="sticker-grid">{stickerTray.favorites.map((s) => <button key={"f" + s.id} className="sticker-pick" onClick={() => pickSticker(s)}><img src={s.url} alt="" loading="lazy" /></button>)}</div></>}
+                            <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
+                            <div className="sticker-grid">{stickerTray.recent.map((s) => <button key={"r" + s.id} className="sticker-pick" onClick={() => pickSticker(s)}><img src={s.url} alt="" loading="lazy" /></button>)}</div>
+                          </>
+                        )}
                     </div>
                   </>
                 )}
