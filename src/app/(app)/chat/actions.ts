@@ -82,6 +82,24 @@ export async function startConversation(phone: string, firstMessage: string): Pr
   return { ok: true, convId: conv.id };
 }
 
+/** Empty the chat "trash": permanently delete conversations with no activity in 90+ days, plus their
+ *  messages (FK cascade) and conversation notes/events — to free DB space. The CONTACT is kept on
+ *  purpose, so if they message again we still have their info. */
+export async function emptyChatTrash(businessId: string): Promise<{ deleted: number }> {
+  const { supabase } = await ctx();
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: convs } = await supabase.from("conversations").select("id").eq("business_id", businessId).lt("last_message_at", cutoff);
+  const ids = (convs ?? []).map((c) => c.id as string);
+  if (!ids.length) return { deleted: 0 };
+  // notes/events use a generic parent_id (no FK cascade) → clear them explicitly. Best-effort.
+  await supabase.from("notes").delete().eq("parent_type", "conversation").in("parent_id", ids);
+  await supabase.from("events").delete().eq("parent_type", "conversation").in("parent_id", ids);
+  // Deleting the conversations cascades their messages (messages.conversation_id ON DELETE CASCADE).
+  // Contacts are intentionally NOT touched.
+  await supabase.from("conversations").delete().in("id", ids);
+  return { deleted: ids.length };
+}
+
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
 export async function retryMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();

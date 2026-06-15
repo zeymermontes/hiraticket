@@ -23,7 +23,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash,
 } from "@/app/(app)/chat/actions";
 import { useToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
@@ -462,6 +462,13 @@ function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boole
   return c.hidden || (c.snoozed_until ? new Date(c.snoozed_until).getTime() > Date.now() : false);
 }
 
+// Chats with no activity in 90+ days drop into the "trash" view (and can be bulk-deleted there).
+const STALE_DAYS = 90;
+const STALE_MS = STALE_DAYS * 24 * 60 * 60 * 1000;
+function isStale(c: { last_message_at: string | null }): boolean {
+  return c.last_message_at ? Date.now() - new Date(c.last_message_at).getTime() > STALE_MS : false;
+}
+
 function snoozeShortcuts(lang: "es" | "en"): { label: string; iso: string }[] {
   const mk = (fn: (d: Date) => void) => { const d = new Date(); fn(d); return d.toISOString(); };
   return [
@@ -677,32 +684,38 @@ export function ChatScreen({
     window.addEventListener("pointerup", onUp);
   };
   const [q, setQ] = useState("");
-  const [statusF, setStatusF] = useState<string | null>(null);
+  const [statusF, setStatusF] = useState<string | null>("active"); // default: open + pending
   const [showArchived, setShowArchived] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [areaF, setAreaF] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const areaNames = useMemo(() => [...new Set(list.map((c) => c.area?.name).filter(Boolean))] as string[], [list]);
 
+  const trashView = statusF === "trash";
   const filtered = useMemo(() => {
     return list.filter((c) => {
-      // Snoozed/hidden live in a separate view; active list excludes them.
-      if (isArchived(c) !== showArchived) return false;
       if (tab === "mine" && c.assignee_id !== meId) return false;
       if (tab === "unassigned" && c.assignee_id != null) return false;
-      if (statusF && c.status !== statusF) return false;
       if (areaF && c.area?.name !== areaF) return false;
-      if (unreadOnly && !(c.unread > 0)) return false;
       if (q) {
         const hay = (c.contact?.name ?? "") + " " + c.preview;
         if (!hay.toLowerCase().includes(q.toLowerCase())) return false;
       }
+      const stale = isStale(c);
+      if (trashView) return stale; // papelera: only chats inactive 90+ days
+      if (stale) return false;     // stale chats live only in the trash
+      // Snoozed/hidden live in a separate view; active list excludes them.
+      if (isArchived(c) !== showArchived) return false;
+      if (statusF === "active") { if (!(c.status === "open" || c.status === "pending")) return false; }
+      else if (statusF && c.status !== statusF) return false;
+      if (unreadOnly && !(c.unread > 0)) return false;
       return true;
     });
-  }, [list, tab, statusF, q, meId, showArchived, areaF, unreadOnly]);
+  }, [list, tab, statusF, trashView, q, meId, showArchived, areaF, unreadOnly]);
 
-  const archivedN = list.filter(isArchived).length;
+  const archivedN = list.filter((c) => isArchived(c) && !isStale(c)).length;
 
   const mineN = list.filter((c) => c.assignee_id === meId).length;
   const unN = list.filter((c) => c.assignee_id == null).length;
@@ -711,18 +724,31 @@ export function ChatScreen({
   // status/unread filters themselves).
   const chipCounts = useMemo(() => {
     const scope = list.filter((c) =>
-      isArchived(c) === showArchived &&
       !(tab === "mine" && c.assignee_id !== meId) &&
       !(tab === "unassigned" && c.assignee_id != null) &&
       !(areaF && c.area?.name !== areaF));
+    const trash = scope.filter(isStale).length;
+    const live = scope.filter((c) => !isStale(c) && isArchived(c) === showArchived);
     return {
-      all: scope.length,
-      open: scope.filter((c) => c.status === "open").length,
-      pending: scope.filter((c) => c.status === "pending").length,
-      resolved: scope.filter((c) => c.status === "resolved").length,
-      unread: scope.filter((c) => c.unread > 0).length,
+      all: live.length,
+      active: live.filter((c) => c.status === "open" || c.status === "pending").length,
+      open: live.filter((c) => c.status === "open").length,
+      pending: live.filter((c) => c.status === "pending").length,
+      resolved: live.filter((c) => c.status === "resolved").length,
+      unread: live.filter((c) => c.unread > 0).length,
+      trash,
     };
   }, [list, tab, areaF, showArchived, meId]);
+
+  async function emptyTrash() {
+    if (!confirm(lang === "es"
+      ? `¿Eliminar permanentemente ${chipCounts.trash} chat(s) sin actividad en 90+ días y TODOS sus mensajes? No se puede deshacer.`
+      : `Permanently delete ${chipCounts.trash} chat(s) inactive for 90+ days and ALL their messages? This can't be undone.`)) return;
+    setPurging(true);
+    try { await emptyChatTrash(businessId); const fresh = await liveList(businessId); setList(fresh); }
+    catch { alert(lang === "es" ? "No se pudo vaciar la papelera." : "Couldn't empty the trash."); }
+    setPurging(false);
+  }
 
   return (
     <ChatRefreshContext.Provider value={softRefresh}>
@@ -763,6 +789,9 @@ export function ChatScreen({
             <button className="btn btn-sm btn-primary" title={lang === "es" ? "Nueva conversación" : "New conversation"} onClick={() => setShowCompose(true)}><Icon name="plus" size={15} /></button>
           </div>
           <div className="chip-row">
+            <button className={"chip" + (statusF === "active" ? " on" : "")} onClick={() => { setStatusF("active"); setUnreadOnly(false); }}>
+              {lang === "es" ? "Activos" : "Active"}<span className="chip-n">{chipCounts.active}</span>
+            </button>
             <button className={"chip" + (!statusF && !unreadOnly ? " on" : "")} onClick={() => { setStatusF(null); setUnreadOnly(false); }}>
               {lang === "es" ? "Todos" : "All"}<span className="chip-n">{chipCounts.all}</span>
             </button>
@@ -783,7 +812,16 @@ export function ChatScreen({
             <button className={"chip" + (showArchived ? " on" : "")} onClick={() => setShowArchived((v) => !v)} title={lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}>
               <Icon name="clock" size={12} />{lang === "es" ? "Pospuestos" : "Snoozed"}{archivedN > 0 && <span className="chip-n">{archivedN}</span>}
             </button>
+            <button className={"chip" + (trashView ? " on" : "")} onClick={() => setStatusF(trashView ? "active" : "trash")} title={lang === "es" ? "Chats sin actividad en 90+ días" : "Chats inactive 90+ days"}>
+              <Icon name="trash" size={12} />{lang === "es" ? "Papelera" : "Trash"}{chipCounts.trash > 0 && <span className="chip-n">{chipCounts.trash}</span>}
+            </button>
           </div>
+          {trashView && (
+            <div className="row gap-2" style={{ alignItems: "center", padding: "2px 2px 0" }}>
+              <span className="t-xs muted grow">{lang === "es" ? "Chats sin actividad en 90+ días. El contacto se conserva." : "Chats inactive for 90+ days. The contact is kept."}</span>
+              <button className="btn btn-sm btn-danger" disabled={purging || chipCounts.trash === 0} onClick={emptyTrash}>{purging ? <Spinner size={14} /> : <Icon name="trash" size={14} />}{lang === "es" ? "Eliminar todos" : "Delete all"}</button>
+            </div>
+          )}
         </div>
         <div className="col-scroll scroll">
           {filtered.length === 0 ? (
