@@ -12,7 +12,7 @@ import type { ConvDetail } from "@/lib/chat";
 import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
-import { createOrder, assignOrder, addOrderNote } from "@/app/(app)/orders/actions";
+import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder } from "@/app/(app)/orders/actions";
 import { moveOrderArea } from "@/app/(app)/actions";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
@@ -53,7 +53,10 @@ export function OrdersTable({
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [showXfer, setShowXfer] = useState(false);
+  const [trashView, setTrashView] = useState(false);
+  const [trashRows, setTrashRows] = useState<OrderRow[]>([]);
   const PER = 25;
+  const openTrash = (on: boolean) => { setTrashView(on); setSel(new Set()); setPage(0); if (on) loadDeletedOrders().then(setTrashRows).catch(() => {}); };
   const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   useEffect(() => { if (autoOpen) setShowNew(true); }, [autoOpen]);
@@ -61,7 +64,8 @@ export function OrdersTable({
 
   const sortedAll = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const filtered = rows.filter((o) =>
+    const base = trashView ? trashRows : rows;
+    const filtered = base.filter((o) =>
       (!needle || o.code.toLowerCase().includes(needle) || (o.contact?.name ?? "").toLowerCase().includes(needle)) &&
       (!stageF || o.stage?.name === stageF) &&
       (!areaF || o.area?.name === areaF) &&
@@ -79,7 +83,7 @@ export function OrdersTable({
       return dir === "asc" ? r : -r;
     });
     return sorted;
-  }, [rows, q, sortKey, dir, stageF, areaF, assigneeF, prioF]);
+  }, [rows, trashRows, trashView, q, sortKey, dir, stageF, areaF, assigneeF, prioF]);
 
   const pageCount = Math.max(1, Math.ceil(sortedAll.length / PER));
   const curPage = Math.min(page, pageCount - 1); // clamp so a shrunk list never lands on an empty page
@@ -152,6 +156,7 @@ export function OrdersTable({
           {(["urgent", "high", "normal", "low"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
         </select>
         <span className="grow" />
+        <button className={"btn btn-sm " + (trashView ? "btn-danger" : "btn-outline")} type="button" onClick={() => openTrash(!trashView)} title={lang === "es" ? "Papelera (eliminados)" : "Trash (deleted)"}><Icon name="trash" size={14} /> {lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${trashRows.length})` : ""}</button>
         <button className="btn btn-sm btn-outline" type="button" onClick={exportCsv}><Icon name="file" size={14} /> {lang === "es" ? "Exportar" : "Export"}</button>
         <button className="btn btn-sm btn-primary" type="button" onClick={() => setShowNew(true)}>
           <Icon name="plus" size={14} /> {t("new_order")}
@@ -182,7 +187,7 @@ export function OrdersTable({
               {!personal && <Sort k="total">{t("col_total")}</Sort>}
               <Sort k="due_at">{lang === "es" ? "Fecha límite" : "Deadline"}</Sort>
               <Sort k="created_at">{lang === "es" ? "Creado" : "Created"}</Sort>
-              <Sort k="updated_at">{t("col_updated")}</Sort>
+              {trashView ? <th>{lang === "es" ? "Acciones" : "Actions"}</th> : <Sort k="updated_at">{t("col_updated")}</Sort>}
             </tr>
           </thead>
           <tbody>
@@ -191,7 +196,7 @@ export function OrdersTable({
               const item0 = o.items?.[0]?.name;
               const overdue = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name);
               return (
-              <tr key={o.id} style={{ cursor: "pointer" }} className={sel.has(o.id) ? "sel-row" : ""} onClick={() => router.push(`/orders?order=${o.id}`, { scroll: false })}>
+              <tr key={o.id} style={{ cursor: trashView ? "default" : "pointer", opacity: trashView ? 0.85 : 1 }} className={sel.has(o.id) ? "sel-row" : ""} onClick={() => { if (!trashView) router.push(`/orders?order=${o.id}`, { scroll: false }); }}>
                 <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} /></td>
                 <td><span className="mono" style={{ fontWeight: 700 }}>{o.code}</span></td>
                 <td>
@@ -200,7 +205,7 @@ export function OrdersTable({
                     <span className="truncate" style={{ maxWidth: 150 }}>{o.contact?.name ?? "—"}</span>
                   </div>
                 </td>
-                <td>{o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
+                <td>{trashView ? <Pill color="red" dot>{lang === "es" ? "Eliminado" : "Deleted"}</Pill> : o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{o.area ? <Pill color={o.area.color as PillColor}>{o.area.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
@@ -208,14 +213,21 @@ export function OrdersTable({
                 {!personal && <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>}
                 <td className="t-sm">{o.due_at ? <span className="row gap-1" style={{ color: overdue ? "var(--red)" : "var(--text-muted)", fontWeight: overdue ? 700 : 400 }}>{overdue && <Icon name="clock" size={12} />}{relDate(o.due_at)}</span> : <span className="muted">—</span>}</td>
                 <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
-                <td className="muted t-sm">{relDate(o.updated_at)}</td>
+                {trashView ? (
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <div className="row gap-1">
+                      <button className="iconbtn sm" title={lang === "es" ? "Restaurar" : "Restore"} onClick={() => { setTrashRows((rs) => rs.filter((x) => x.id !== o.id)); setOrderDeleted(o.id, false); router.refresh(); }}><Icon name="refresh" size={15} /></button>
+                      <button className="iconbtn sm" style={{ color: "var(--red)" }} title={lang === "es" ? "Eliminar definitivamente" : "Delete permanently"} onClick={() => { if (!confirm(lang === "es" ? "¿Eliminar definitivamente? No se puede recuperar." : "Delete permanently? This can't be undone.")) return; setTrashRows((rs) => rs.filter((x) => x.id !== o.id)); purgeOrder(o.id); }}><Icon name="trash" size={15} /></button>
+                    </div>
+                  </td>
+                ) : <td className="muted t-sm">{relDate(o.updated_at)}</td>}
               </tr>
               );
             })}
             {view.length === 0 && (
               <tr>
                 <td colSpan={personal ? 11 : 12} className="muted" style={{ textAlign: "center", padding: 40 }}>
-                  {personal ? (lang === "es" ? "No hay tareas todavía." : "No tasks yet.") : t("empty_orders")}
+                  {trashView ? (lang === "es" ? "Papelera vacía." : "Trash is empty.") : personal ? (lang === "es" ? "No hay tareas todavía." : "No tasks yet.") : t("empty_orders")}
                 </td>
               </tr>
             )}

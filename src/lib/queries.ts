@@ -34,6 +34,15 @@ export async function getOrders(businessId: string): Promise<OrderRow[]> {
   return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
 }
 
+/** Soft-deleted orders for the trash view (empty if the 0039 column isn't applied yet). */
+export async function getDeletedOrders(businessId: string): Promise<OrderRow[]> {
+  const supabase = await createClient();
+  const cols = `id, code, priority, pay_status, total, updated_at, created_at, due_at, deleted_at, assignee_id, stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
+  const { data, error } = await supabase.from("orders").select(cols).eq("business_id", businessId).not("deleted_at", "is", null).order("updated_at", { ascending: false });
+  if (error) return [];
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
+}
+
 export interface ContactRow {
   id: string;
   name: string;

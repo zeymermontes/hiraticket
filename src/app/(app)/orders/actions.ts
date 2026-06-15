@@ -2,6 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
+import { getMyBusiness, getDeletedOrders } from "@/lib/queries";
+import type { OrderRow } from "@/lib/types";
 import { moveOrderStage } from "@/app/(app)/actions";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
@@ -221,6 +223,22 @@ export async function setOrderDeleted(orderId: string, deleted: boolean): Promis
   const { error } = await supabase.from("orders").update({ deleted_at: deleted ? new Date().toISOString() : null }).eq("id", orderId);
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
   return { ok: !error };
+}
+
+/** The current business's soft-deleted orders (for the trash view). */
+export async function loadDeletedOrders(): Promise<OrderRow[]> {
+  const biz = await getMyBusiness();
+  if (!biz) return [];
+  return getDeletedOrders(biz.id);
+}
+
+/** Permanently delete an order: its items + payments (FK cascade) and notes/events, then the order. */
+export async function purgeOrder(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("notes").delete().eq("parent_type", "order").eq("parent_id", orderId);
+  await supabase.from("events").delete().eq("parent_type", "order").eq("parent_id", orderId);
+  await supabase.from("orders").delete().eq("id", orderId);
+  revalidatePath("/orders"); revalidatePath("/kanban");
 }
 
 interface NewOrderItem { item: string; qty: number; price: number; note?: string }
