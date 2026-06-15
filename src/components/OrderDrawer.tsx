@@ -252,6 +252,7 @@ export function OrderDrawer({
           {/* notes */}
           {(() => {
             const subLabel = personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items");
+            const subNoteLabel = personal ? (lang === "es" ? "Nota de subtarea" : "Subtask note") : (lang === "es" ? "Nota de producto" : "Product note");
             const ordLabel = personal ? (lang === "es" ? "Tarea" : "Task") : (lang === "es" ? "Pedido" : "Order");
             const noteTitle = (id: string | null) => id ? (detail.items.find((it) => it.id === id)?.name ?? (personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Artículo" : "Item"))) : ordLabel;
             const showOrder = noteFilter.size === 0 || noteFilter.has("order");
@@ -271,7 +272,7 @@ export function OrderDrawer({
                       <select className="inp-inline" style={{ maxWidth: 180 }} value={noteItem} onChange={(e) => setNoteItem(e.target.value)}>
                         {detail.items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
                       </select>
-                      <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => postNote(noteItem || detail.items[0]?.id || null)}><Icon name="send" size={14} />{lang === "es" ? "Nota de subtarea" : "Subtask note"}</button>
+                      <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => postNote(noteItem || detail.items[0]?.id || null)}><Icon name="send" size={14} />{subNoteLabel}</button>
                     </>
                   )}
                   <button className="btn btn-sm" style={{ background: "var(--amber)", color: "#fff" }} disabled={pending} onClick={() => postNote(null)}><Icon name="send" size={14} />{lang === "es" ? "Nota de orden" : "Order note"}</button>
