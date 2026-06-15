@@ -412,9 +412,20 @@ function Tick({ state }: { state: string | null }) {
   return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
 }
 
+/** Scroll the original message into view and flash it (if it's loaded in the thread). */
+function jumpToMessage(id: string) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById("m-" + id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("msg-flash");
+  window.setTimeout(() => el.classList.remove("msg-flash"), 1500);
+}
+
 function QuotedBlock({ m }: { m: ChatMessage }) {
+  const { lang } = useApp();
   const label = m.deleted ? "…" : (m.body || (m.type !== "text" ? "📎 " + m.type : ""));
-  return <div className="truncate" style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240 }}>{label}</div>;
+  return <div className="truncate" title={lang === "es" ? "Ir al mensaje" : "Go to message"} onClick={(e) => { e.stopPropagation(); jumpToMessage(m.id); }} style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240, cursor: "pointer" }}>{label}</div>;
 }
 
 function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void }) {
@@ -1297,7 +1308,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       onDelete={out ? () => { if (confirm(lang === "es" ? "¿Eliminar todas las fotos para todos?" : "Delete all photos for everyone?")) start(async () => { for (const it of row.items) await deleteMessage(it.id); refresh(); }); } : undefined} />
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                       {row.items.slice(0, 4).map((m, idx) => (
-                        <a key={m.id} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { if (m.media_url) { e.preventDefault(); openLightbox(m.id); } }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
+                        <a key={m.id} id={`m-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { if (m.media_url) { e.preventDefault(); openLightbox(m.id); } }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
                           <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
                           {m.state === "failed" && (
@@ -1332,7 +1343,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <React.Fragment key={key}>
             {daySep}
             <div className={"msg " + (out ? "out" : "in")}>
-              <div className="bubble">
+              <div className="bubble" id={`m-${m.id}`}>
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}

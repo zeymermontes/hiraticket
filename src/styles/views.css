@@ -164,6 +164,10 @@
 .msg.out .aud-time { color: #4f7d62; }
 [data-theme="dark"] .msg.out .aud-time { color: #8fc5a5; }
 
+/* Flash a message when you jump to it from a reply preview. */
+@keyframes msgflash { 0%, 100% { box-shadow: 0 0 0 0 rgba(245,197,24,0); } 25% { box-shadow: 0 0 0 3px var(--brand); } }
+.msg-flash { animation: msgflash 1.5s ease; }
+
 .mention { font-weight: 700; color: var(--brand-700); }
 .msg.out .mention { color: #0b6b3f; }
 [data-theme="dark"] .msg.out .mention { color: #7fe0a6; }
