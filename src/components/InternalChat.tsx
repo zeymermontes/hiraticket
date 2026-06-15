@@ -30,8 +30,6 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [reply, setReply] = useState<InternalMsg | null>(null);
   const [editing, setEditing] = useState<InternalMsg | null>(null);
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
-  const [cannedRect, setCannedRect] = useState<DOMRect | null>(null);
-  const [canned, setCanned] = useState<{ id: string; title: string; body: string }[]>([]);
   const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [fwdTarget, setFwdTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [stickerRect, setStickerRect] = useState<DOMRect | null>(null);
@@ -46,7 +44,6 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const emojiBtn = useRef<HTMLButtonElement>(null);
-  const cannedBtn = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const teamLabel = lang === "es" ? "Equipo" : "Team";
@@ -61,10 +58,6 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   }, [refreshThreads, refreshMsgs]);
 
   useEffect(() => { openChannel(selRef.current); /* eslint-disable-next-line */ }, []);
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.from("canned_messages").select("id, title, body").eq("business_id", businessId).order("title").then(({ data }) => setCanned((data ?? []) as { id: string; title: string; body: string }[]));
-  }, [businessId]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -110,7 +103,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const del = (m: InternalMsg) => { if (!confirm(lang === "es" ? "¿Eliminar este mensaje?" : "Delete this message?")) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
-  const openStickers = () => { setEmojiRect(null); setCannedRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };
+  const openStickers = () => { setEmojiRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };
   const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setMsgs((m) => [...m, opt]); start(async () => { await sendInternalSticker(ch, s.id); refreshThreads(); }); };
 
   const selThread = threads.find((t) => t.key === sel);
@@ -222,20 +215,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
               <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { if (e.target.files?.length) onPickFiles(e.target.files); e.target.value = ""; }} />
               <button className="iconbtn" onClick={() => fileRef.current?.click()} disabled={uploading} title={lang === "es" ? "Adjuntar" : "Attach"}>{uploading ? <Icon name="clock" /> : <Icon name="paperclip" />}</button>
               <span style={{ display: "inline-flex" }}>
-                <button ref={emojiBtn} className="iconbtn" title="Emoji" style={{ fontSize: 16 }} onClick={() => { setCannedRect(null); setEmojiRect(emojiRect ? null : emojiBtn.current?.getBoundingClientRect() ?? null); }}>😀</button>
+                <button ref={emojiBtn} className="iconbtn" title="Emoji" style={{ fontSize: 16 }} onClick={() => { setEmojiRect(emojiRect ? null : emojiBtn.current?.getBoundingClientRect() ?? null); }}>😀</button>
                 {emojiRect && (<><div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setEmojiRect(null)} /><EmojiPicker rect={emojiRect} onPick={(e) => setText((v) => v + e)} /></>)}
-              </span>
-              <span style={{ display: "inline-flex" }}>
-                <button ref={cannedBtn} className="iconbtn" title={lang === "es" ? "Plantillas" : "Templates"} onClick={() => { setEmojiRect(null); setCannedRect(cannedRect ? null : cannedBtn.current?.getBoundingClientRect() ?? null); }}><Icon name="canned" /></button>
-                {cannedRect && (
-                  <>
-                    <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setCannedRect(null)} />
-                    <div className="menu scroll" style={menuStyle(cannedRect, { width: 300, height: 320, align: "left", gap: 6 })}>
-                      {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div>
-                        : canned.map((c) => <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }} onClick={() => { setText((v) => (v ? v + " " : "") + c.body); setCannedRect(null); taRef.current?.focus(); }}><div style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</div><div className="muted t-xs truncate">{c.body}</div></button>)}
-                    </div>
-                  </>
-                )}
               </span>
               <span style={{ display: "inline-flex" }}>
                 <button ref={stickerBtn} className="iconbtn" title="Stickers" style={{ fontSize: 16 }} onClick={openStickers}>🩷</button>
