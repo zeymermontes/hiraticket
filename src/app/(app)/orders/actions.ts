@@ -174,6 +174,55 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
   revalidatePath("/orders");
 }
 
+/** order.total := sum of its line-item subtotals. */
+async function recomputeOrderTotal(supabase: SB, orderId: string): Promise<void> {
+  const { data: items } = await supabase.from("order_items").select("subtotal").eq("order_id", orderId);
+  const total = (items ?? []).reduce((s: number, i: { subtotal: number }) => s + (Number(i.subtotal) || 0), 0);
+  await supabase.from("orders").update({ total }).eq("id", orderId);
+}
+
+/** Edit a line item (name / qty / unit price); recomputes its subtotal + the order total. */
+export async function updateOrderItem(itemId: string, patch: { name?: string; qty?: number; unit_price?: number }): Promise<void> {
+  const supabase = await createClient();
+  const { data: item } = await supabase.from("order_items").select("order_id, qty, unit_price").eq("id", itemId).maybeSingle();
+  if (!item) return;
+  const qty = patch.qty ?? (item.qty as number);
+  const price = patch.unit_price ?? (item.unit_price as number);
+  const upd: Record<string, unknown> = { subtotal: (Number(qty) || 1) * (Number(price) || 0) };
+  if (patch.name !== undefined) upd.name = patch.name.trim() || "Artículo";
+  if (patch.qty !== undefined) upd.qty = Number(qty) || 1;
+  if (patch.unit_price !== undefined) upd.unit_price = Number(price) || 0;
+  await supabase.from("order_items").update(upd).eq("id", itemId);
+  await recomputeOrderTotal(supabase, item.order_id as string);
+  revalidatePath("/orders"); revalidatePath("/kanban");
+}
+
+/** Add a line item to an order; recomputes the order total. */
+export async function addOrderItem(orderId: string, input: { name: string; qty?: number; price?: number; stageId?: string | null }): Promise<void> {
+  const supabase = await createClient();
+  const qty = input.qty || 1, price = input.price || 0;
+  await supabase.from("order_items").insert({ order_id: orderId, name: input.name.trim() || "Artículo", qty, unit_price: price, subtotal: qty * price, stage_id: input.stageId ?? null });
+  await recomputeOrderTotal(supabase, orderId);
+  revalidatePath("/orders"); revalidatePath("/kanban");
+}
+
+/** Delete a line item; recomputes the order total. */
+export async function deleteOrderItem(itemId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: item } = await supabase.from("order_items").select("order_id").eq("id", itemId).maybeSingle();
+  await supabase.from("order_items").delete().eq("id", itemId);
+  if (item?.order_id) await recomputeOrderTotal(supabase, item.order_id as string);
+  revalidatePath("/orders"); revalidatePath("/kanban");
+}
+
+/** Soft-delete an order (recoverable). Pass restore=true to undo. */
+export async function setOrderDeleted(orderId: string, deleted: boolean): Promise<{ ok: boolean }> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("orders").update({ deleted_at: deleted ? new Date().toISOString() : null }).eq("id", orderId);
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
+  return { ok: !error };
+}
+
 interface NewOrderItem { item: string; qty: number; price: number; note?: string }
 interface NewOrder {
   contactName: string;

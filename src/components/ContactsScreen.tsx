@@ -93,7 +93,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
                     {c.conv_id && (
                       <>
                         <button className="iconbtn sm" title={lang === "es" ? "Abrir chat" : "Open chat"} onClick={() => router.push(`/chat?c=${c.conv_id}`)}><Icon name="whatsapp" size={15} /></button>
-                        <button className={"iconbtn sm" + (c.muted ? " active" : "")} title={c.muted ? (lang === "es" ? "Escuchar de nuevo" : "Listen again") : (lang === "es" ? "Dejar de escuchar (no guardar mensajes)" : "Stop listening (don't save messages)")} onClick={() => toggleMute(c)}><Icon name="mute" size={15} /></button>
+                        <button className={"iconbtn sm" + (c.muted ? " active" : "")} title={c.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat (no guardar mensajes)" : "Disconnect chat (don't save messages)")} onClick={() => toggleMute(c)}><Icon name="wifioff" size={15} /></button>
                       </>
                     )}
                     <button className="iconbtn sm" title={lang === "es" ? "Eliminar contacto y chats" : "Delete contact and chats"} style={{ color: "var(--red)" }} onClick={() => removeContact(c)}><Icon name="trash" size={15} /></button>

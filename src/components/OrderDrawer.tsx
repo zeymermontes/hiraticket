@@ -13,7 +13,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, loadOrderDetail, setOrderDue } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -47,6 +47,8 @@ export function OrderDrawer({
   const [note, setNote] = useState("");
   const [noteItem, setNoteItem] = useState(""); // selected subtask for a subtask note ("" → first)
   const [noteFilter, setNoteFilter] = useState<Set<"order" | "subtask">>(new Set()); // empty = all
+  const [editItems, setEditItems] = useState(false);
+  const [newItem, setNewItem] = useState({ name: "", qty: "1", price: "" });
   const [payAmount, setPayAmount] = useState("");
   const [xfer, setXfer] = useState(false);
   const [advanceMenu, setAdvanceMenu] = useState(false);
@@ -130,6 +132,8 @@ export function OrderDrawer({
             <div className="row gap-2"><span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>{detail.code}</span>{detail.stage && <Pill color={detail.stage.color as PillColor} dot>{detail.stage.name}</Pill>}</div>
             <div className="t-sm muted">{lang === "es" ? "Creado" : "Created"} {date(detail.created_at)} · {lang === "es" ? "Actualizado" : "Updated"} {date(detail.updated_at)}</div>
           </div>
+          <button className="iconbtn" title={personal ? (lang === "es" ? "Eliminar tarea" : "Delete task") : (lang === "es" ? "Eliminar pedido" : "Delete order")} style={{ color: "var(--red)" }} disabled={pending}
+            onClick={() => { if (!confirm(personal ? (lang === "es" ? "¿Eliminar esta tarea? Se puede recuperar." : "Delete this task? It can be restored.") : (lang === "es" ? "¿Eliminar este pedido? Se puede recuperar." : "Delete this order? It can be restored."))) return; start(async () => { await setOrderDeleted(detail.id, true); onClose(); router.refresh(); }); }}><Icon name="trash" /></button>
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
 
@@ -181,9 +185,18 @@ export function OrderDrawer({
 
           {/* line items */}
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="orders" size={16} /><h4>{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos del pedido" : "Line items")}</h4></div>
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos del pedido" : "Line items")}</h4>
+              <button className={"btn btn-sm " + (editItems ? "btn-primary" : "btn-outline")} onClick={() => setEditItems((v) => !v)}><Icon name={editItems ? "check" : "edit"} size={13} />{editItems ? (lang === "es" ? "Listo" : "Done") : (lang === "es" ? "Editar" : "Edit")}</button>
+            </div>
             <div style={{ padding: "4px 14px 12px" }}>
-              {detail.items.map((li) => (
+              {detail.items.map((li) => (editItems ? (
+                <div className="row gap-2" key={li.id} style={{ alignItems: "center", padding: "5px 0" }}>
+                  <input className="inp-inline grow" defaultValue={li.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== li.name) run(() => updateOrderItem(li.id, { name: e.target.value })); }} placeholder={personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Producto" : "Product")} />
+                  <input className="inp-inline" style={{ width: 48 }} defaultValue={String(li.qty)} title={lang === "es" ? "Cantidad" : "Qty"} onBlur={(e) => { const q = Number(e.target.value) || 1; if (q !== li.qty) run(() => updateOrderItem(li.id, { qty: q })); }} />
+                  {!personal && <input className="inp-inline" style={{ width: 80 }} defaultValue={String(li.unit_price)} title={lang === "es" ? "Precio unit." : "Unit price"} placeholder="$" onBlur={(e) => { const p = Number(e.target.value) || 0; if (p !== li.unit_price) run(() => updateOrderItem(li.id, { unit_price: p })); }} />}
+                  <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }} onClick={() => run(() => deleteOrderItem(li.id))}><Icon name="trash" size={14} /></button>
+                </div>
+              ) : (
                 <div className="lineitem" key={li.id}>
                   <div className="lineitem-thumb" />
                   <div className="grow" style={{ minWidth: 0 }}>
@@ -197,8 +210,16 @@ export function OrderDrawer({
                   </div>
                   {!personal && <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(li.subtotal)}</span>}
                 </div>
-              ))}
-              {!personal && (
+              )))}
+              {editItems && (
+                <div className="row gap-2" style={{ alignItems: "center", paddingTop: 8, marginTop: 4, borderTop: "1px dashed var(--border)" }}>
+                  <input className="inp-inline grow" value={newItem.name} onChange={(e) => setNewItem((n) => ({ ...n, name: e.target.value }))} placeholder={personal ? (lang === "es" ? "Nueva subtarea" : "New subtask") : (lang === "es" ? "Nuevo producto" : "New product")} onKeyDown={(e) => { if (e.key === "Enter" && newItem.name.trim()) { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); } }} />
+                  <input className="inp-inline" style={{ width: 48 }} value={newItem.qty} onChange={(e) => setNewItem((n) => ({ ...n, qty: e.target.value }))} title={lang === "es" ? "Cantidad" : "Qty"} />
+                  {!personal && <input className="inp-inline" style={{ width: 80 }} value={newItem.price} onChange={(e) => setNewItem((n) => ({ ...n, price: e.target.value }))} placeholder="$" />}
+                  <button className="iconbtn sm" disabled={!newItem.name.trim()} title={lang === "es" ? "Agregar" : "Add"} onClick={() => { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); }}><Icon name="plus" size={15} /></button>
+                </div>
+              )}
+              {!personal && !editItems && (
                 <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
                   <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
                   <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(detail.total)}</span>

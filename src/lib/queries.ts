@@ -25,14 +25,13 @@ export async function getOrders(businessId: string): Promise<OrderRow[]> {
   const supabase = await createClient();
   const cols = (due: string) =>
     `id, code, priority, pay_status, total, updated_at, created_at, ${due}assignee_id, stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
-  // due_at may not exist yet (migration 0029) — fall back.
+  // due_at (0029) / deleted_at (0039) may not exist yet — cascade the fallbacks.
   let { data, error } = await supabase
-    .from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false });
-  if (error) {
-    ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
-  }
+    .from("orders").select(cols("due_at, deleted_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false });
+  if (error) ({ data, error } = await supabase.from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false }));
+  if (error) ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) throw new Error(error.message);
-  return ((data ?? []) as unknown as Record<string, unknown>[]).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
+  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
 }
 
 export interface ContactRow {

@@ -848,7 +848,7 @@ export function ChatScreen({
                         ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>
                         : <Pill color={STATUS_COLOR[c.status]} dot>{STATUS_LABEL[c.status][lang]}</Pill>}
                       {c.hidden && <Pill color="slate"><Icon name="eye" size={11} /></Pill>}
-                      {c.muted && <Pill color="slate" title={lang === "es" ? "Silenciado — no se guardan mensajes" : "Muted — messages not saved"}><Icon name="mute" size={11} /></Pill>}
+                      {c.muted && <Pill color="slate" title={lang === "es" ? "Chat desconectado — no se guardan mensajes" : "Chat disconnected — messages not saved"}><Icon name="wifioff" size={11} /></Pill>}
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
                       {(c.contact?.tags ?? []).slice(0, 3).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
                       <span className="grow" />
@@ -1866,8 +1866,8 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
               <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); refresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
-              <button className={"act" + (detail.muted ? " warn" : "")} disabled={pending} title={lang === "es" ? "Si dejas de escuchar, los mensajes entrantes ya no se guardan" : "When muted, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
-                <Icon name="mute" />{detail.muted ? (lang === "es" ? "Escuchar" : "Listen") : (lang === "es" ? "Dejar de escuchar" : "Stop listening")}
+              <button className={"act" + (detail.muted ? " warn" : "")} disabled={pending} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
+                <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
               </button>
               {detail.status === "resolved"
                 ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
