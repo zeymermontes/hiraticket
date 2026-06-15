@@ -32,14 +32,14 @@ import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
 
 /** Render text with clickable URLs. */
-function linkify(text: string): React.ReactNode {
+export function linkify(text: string): React.ReactNode {
   return text.split(/(https?:\/\/[^\s]+)/g).map((p, i) =>
     /^https?:\/\//.test(p)
       ? <a key={i} href={p} target="_blank" rel="noreferrer" style={{ color: "var(--blue)", textDecoration: "underline", wordBreak: "break-all" }} onClick={(e) => e.stopPropagation()}>{p}</a>
       : <React.Fragment key={i}>{p}</React.Fragment>,
   );
 }
-const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
+export const firstUrl = (text: string) => text.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
 
 // Stable color per group participant, hashed from their JID/name. Mid-tone hues stay legible on
 // both light and dark message bubbles.
@@ -99,7 +99,7 @@ function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
 const _metaCache = new Map<string, LinkMeta>();
 /** Open-Graph preview card for the first link in a message. onReady fires when the card (or its
  *  image) appears so the thread can stay pinned to the bottom instead of "popping". */
-function LinkPreview({ url, onReady }: { url: string; onReady?: () => void }) {
+export function LinkPreview({ url, onReady }: { url: string; onReady?: () => void }) {
   const [meta, setMeta] = useState<LinkMeta | null>(_metaCache.get(url) ?? null);
   useEffect(() => {
     if (_metaCache.has(url)) { setMeta(_metaCache.get(url)!); return; }

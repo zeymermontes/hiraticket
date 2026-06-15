@@ -1,6 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getAgents, type Agent } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
+
+/** Replace stored media paths with short-lived signed URLs (private 'media' bucket). */
+async function signInternalMedia(msgs: InternalMsg[]): Promise<InternalMsg[]> {
+  const paths = [...new Set(msgs.map((m) => m.media_url).filter((p): p is string => !!p && !p.startsWith("http")))];
+  if (!paths.length) return msgs;
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.storage.from("media").createSignedUrls(paths, 60 * 60 * 24 * 7);
+    const signed = new Map<string, string>();
+    (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
+    return msgs.map((m) => (m.media_url && signed.has(m.media_url) ? { ...m, media_url: signed.get(m.media_url)! } : m));
+  } catch { return msgs; }
+}
 
 export const TEAM_CHANNEL = "team";
 /** Stable channel key for a DM between two members (order-independent). */
@@ -19,6 +34,11 @@ export interface InternalMsg {
   edited: boolean;
   deleted: boolean;
   reactions: { emoji: string; by: string }[];
+  type: string;
+  media_url: string | null;
+  media_mime: string | null;
+  media_name: string | null;
+  forwarded: boolean;
 }
 
 export interface InternalThread {
@@ -39,10 +59,11 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
   const agents = await getAgents(businessId);
   const [readsRes, msgsRes] = await Promise.all([
     supabase.from("internal_reads").select("channel, last_read_at").eq("business_id", businessId).eq("user_id", userId),
-    supabase.from("internal_messages").select("id, channel, author_id, body, created_at").eq("business_id", businessId).order("created_at", { ascending: false }).limit(500),
+    supabase.from("internal_messages").select("id, channel, author_id, body, created_at, type").eq("business_id", businessId).order("created_at", { ascending: false }).limit(500),
   ]);
   const reads = new Map<string, string>(((readsRes.data ?? []) as { channel: string; last_read_at: string }[]).map((r) => [r.channel, r.last_read_at]));
-  const msgs = (msgsRes.data ?? []) as { id: string; channel: string; author_id: string | null; body: string; created_at: string }[];
+  const mediaPreview = (t?: string) => (t === "image" ? "📷 Foto" : t && t !== "text" ? "📎 Archivo" : "");
+  const msgs = ((msgsRes.data ?? []) as { id: string; channel: string; author_id: string | null; body: string; created_at: string; type?: string }[]).map((m) => ({ ...m, body: m.body || mediaPreview(m.type) }));
 
   // Aggregate last message + unread per channel (msgs are newest-first → first seen is the last message).
   const agg = new Map<string, { last: typeof msgs[number]; unread: number }>();
@@ -74,10 +95,10 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
 export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; limit?: number }): Promise<InternalMsg[]> {
   const supabase = await createClient();
   const limit = opts?.limit ?? MSG_PAGE;
-  let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
+  let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
   if (opts?.before) q = q.lt("created_at", opts.before);
   const { data } = await q;
-  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
+  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
   msgs.reverse();
-  return msgs;
+  return signInternalMedia(msgs);
 }

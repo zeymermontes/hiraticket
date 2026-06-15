@@ -36,6 +36,30 @@ export async function sendInternalMessage(channel: string, body: string, replyTo
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
 }
 
+/** Queue an internal media message (file already uploaded to the 'media' bucket). */
+export async function sendInternalMedia(channel: string, input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string }): Promise<void> {
+  const { supabase, userId, businessId } = await ctx();
+  if (!userId || !businessId) return;
+  await supabase.from("internal_messages").insert({
+    business_id: businessId, channel, author_id: userId, body: input.caption || "",
+    type: input.type, media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name ?? null,
+  });
+  await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
+}
+
+/** Forward an internal message (text or media) to another internal channel. */
+export async function forwardInternalMessage(messageId: string, toChannel: string): Promise<void> {
+  const { supabase, userId, businessId } = await ctx();
+  if (!userId || !businessId) return;
+  const { data: m } = await supabase.from("internal_messages").select("body, type, media_url, media_mime, media_name").eq("id", messageId).maybeSingle();
+  if (!m) return;
+  await supabase.from("internal_messages").insert({
+    business_id: businessId, channel: toChannel, author_id: userId, forwarded: true,
+    body: m.body ?? "", type: (m.type as string) ?? "text", media_url: m.media_url ?? null, media_mime: m.media_mime ?? null, media_name: m.media_name ?? null,
+  });
+  await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel: toChannel, last_read_at: new Date().toISOString() });
+}
+
 /** Edit your own internal message. */
 export async function editInternalMessage(id: string, body: string): Promise<void> {
   const text = body.trim();
