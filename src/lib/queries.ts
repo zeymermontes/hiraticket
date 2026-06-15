@@ -44,13 +44,14 @@ export interface ContactRow {
   created_at: string;
   conv_id: string | null;      // latest conversation, to open the chat
   last_active: string | null;  // its last_message_at
+  muted: boolean;              // latest conversation muted ("stop listening")
   orders_count: number;        // pedidos/tareas linked to this contact
 }
 
 /** All contacts for a business + their latest conversation and order/task count (for the Contacts page). */
 export async function getContacts(businessId: string): Promise<ContactRow[]> {
   const supabase = await createClient();
-  const full = "id, name, phone, tags, avatar_url, created_at, conversations(id, last_message_at), orders(count)";
+  const full = "id, name, phone, tags, avatar_url, created_at, conversations(id, last_message_at, muted), orders(count)";
   const { data: full0, error } = await supabase.from("contacts").select(full).eq("business_id", businessId).order("name");
   let data = full0 as unknown as Record<string, unknown>[] | null;
   if (error) {
@@ -58,8 +59,8 @@ export async function getContacts(businessId: string): Promise<ContactRow[]> {
     data = r.data as unknown as Record<string, unknown>[] | null;
   }
   return ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
-    const convs = (c.conversations as { id: string; last_message_at: string | null }[] | undefined) ?? [];
-    const latest = convs.reduce<{ id: string; last_message_at: string | null } | null>((a, x) => (!a || (x.last_message_at ?? "") > (a.last_message_at ?? "") ? x : a), null);
+    const convs = (c.conversations as { id: string; last_message_at: string | null; muted?: boolean }[] | undefined) ?? [];
+    const latest = convs.reduce<{ id: string; last_message_at: string | null; muted?: boolean } | null>((a, x) => (!a || (x.last_message_at ?? "") > (a.last_message_at ?? "") ? x : a), null);
     const oc = c.orders as { count?: number }[] | undefined;
     return {
       id: c.id as string,
@@ -70,6 +71,7 @@ export async function getContacts(businessId: string): Promise<ContactRow[]> {
       created_at: c.created_at as string,
       conv_id: latest?.id ?? null,
       last_active: latest?.last_message_at ?? null,
+      muted: latest?.muted ?? false,
       orders_count: Array.isArray(oc) ? (oc[0]?.count ?? 0) : 0,
     };
   });

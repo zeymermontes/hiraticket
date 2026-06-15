@@ -1,28 +1,43 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { tagColor } from "@/lib/types";
 import type { ContactRow } from "@/lib/queries";
+import { setConvMuted, deleteContact } from "@/app/(app)/chat/actions";
 
 export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [rows, setRows] = useState(contacts);
+  useEffect(() => { setRows(contacts); }, [contacts]);
+  const [, start] = useTransition();
 
   const title = personal ? (lang === "es" ? "Contactos" : "Contacts") : (lang === "es" ? "Clientes" : "Customers");
   const objLabel = personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders");
 
+  const toggleMute = (c: ContactRow) => {
+    if (!c.conv_id) return;
+    setRows((rs) => rs.map((x) => (x.id === c.id ? { ...x, muted: !x.muted } : x)));
+    start(async () => { await setConvMuted(c.conv_id!, !c.muted); });
+  };
+  const removeContact = (c: ContactRow) => {
+    if (!confirm(lang === "es" ? `¿Eliminar a ${c.name} y todos sus chats? Los pedidos se conservan. No se puede deshacer.` : `Delete ${c.name} and all their chats? Orders are kept. This can't be undone.`)) return;
+    setRows((rs) => rs.filter((x) => x.id !== c.id));
+    start(async () => { await deleteContact(c.id); });
+  };
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return contacts;
-    return contacts.filter((c) =>
+    if (!s) return rows;
+    return rows.filter((c) =>
       c.name.toLowerCase().includes(s) ||
       (c.phone ?? "").toLowerCase().includes(s) ||
       c.tags.some((t) => t.toLowerCase().includes(s)));
-  }, [contacts, q]);
+  }, [rows, q]);
 
   const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "2-digit" }) : "—";
 
@@ -30,7 +45,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
     <div className="page">
       <div className="phead">
         <h1>{title}</h1>
-        <Pill color="slate" large>{contacts.length}</Pill>
+        <Pill color="slate" large>{rows.length}</Pill>
       </div>
 
       <div className="toolbar">
@@ -51,7 +66,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
               <th>{lang === "es" ? "Etiquetas" : "Tags"}</th>
               <th>{objLabel}</th>
               <th>{lang === "es" ? "Última actividad" : "Last active"}</th>
-              <th style={{ width: 90 }} />
+              <th style={{ width: 150 }} />
             </tr>
           </thead>
           <tbody>
@@ -74,9 +89,15 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
                 <td>{c.orders_count > 0 ? <Pill color="slate">{c.orders_count}</Pill> : <span className="muted">—</span>}</td>
                 <td className="t-sm muted">{fmtDate(c.last_active)}</td>
                 <td onClick={(e) => e.stopPropagation()}>
-                  {c.conv_id
-                    ? <button className="btn btn-sm btn-outline" onClick={() => router.push(`/chat?c=${c.conv_id}`)}><Icon name="whatsapp" size={13} />{lang === "es" ? "Abrir" : "Open"}</button>
-                    : <span className="muted t-xs">{lang === "es" ? "Sin chat" : "No chat"}</span>}
+                  <div className="row gap-1" style={{ justifyContent: "flex-end" }}>
+                    {c.conv_id && (
+                      <>
+                        <button className="iconbtn sm" title={lang === "es" ? "Abrir chat" : "Open chat"} onClick={() => router.push(`/chat?c=${c.conv_id}`)}><Icon name="whatsapp" size={15} /></button>
+                        <button className={"iconbtn sm" + (c.muted ? " active" : "")} title={c.muted ? (lang === "es" ? "Escuchar de nuevo" : "Listen again") : (lang === "es" ? "Dejar de escuchar (no guardar mensajes)" : "Stop listening (don't save messages)")} onClick={() => toggleMute(c)}><Icon name="mute" size={15} /></button>
+                      </>
+                    )}
+                    <button className="iconbtn sm" title={lang === "es" ? "Eliminar contacto y chats" : "Delete contact and chats"} style={{ color: "var(--red)" }} onClick={() => removeContact(c)}><Icon name="trash" size={15} /></button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -358,6 +358,20 @@ export async function setConvMuted(convId: string, muted: boolean): Promise<void
   await supabase.from("conversations").update({ muted }).eq("id", convId);
 }
 
+/** Delete a contact and all their chats: conversations (messages cascade) + conversation
+ *  notes/events, then the contact row. Orders are kept (their contact link is nulled by FK). */
+export async function deleteContact(contactId: string): Promise<void> {
+  const { supabase } = await ctx();
+  const { data: convs } = await supabase.from("conversations").select("id").eq("contact_id", contactId);
+  const ids = (convs ?? []).map((c) => c.id as string);
+  if (ids.length) {
+    await supabase.from("notes").delete().eq("parent_type", "conversation").in("parent_id", ids);
+    await supabase.from("events").delete().eq("parent_type", "conversation").in("parent_id", ids);
+    await supabase.from("conversations").delete().in("id", ids);
+  }
+  await supabase.from("contacts").delete().eq("id", contactId);
+}
+
 /** Snooze (postpone) a conversation until `untilISO`, or pass null to un-snooze. */
 export async function snoozeConv(convId: string, untilISO: string | null): Promise<void> {
   const { supabase, userId } = await ctx();
