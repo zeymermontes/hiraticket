@@ -58,6 +58,6 @@ content_path = "./supabase/templates/reauthentication.html"
 ## Notes
 
 - Brand: `#F5C518` (gold) with `#1A1606` text on it — matches the app's `--brand`.
-- The default SMTP has a low rate limit; for production configure a custom SMTP
-  (Resend/SES/Postmark) under Authentication → Emails → SMTP Settings.
+- The default SMTP has a low rate limit; send through **Resend** instead — see
+  [`../RESEND_SETUP.md`](../RESEND_SETUP.md) for the SMTP settings (from `hiraticket.com`).
 - These are localized to Spanish to match the app's default language.
