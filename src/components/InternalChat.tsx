@@ -5,7 +5,7 @@ import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { firstUrl, LinkPreview } from "@/components/chat/ChatScreen";
+import { firstUrl, LinkPreview, MediaThumb } from "@/components/chat/ChatScreen";
 import { menuStyle } from "@/lib/popover";
 import type { Agent } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
@@ -45,7 +45,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [fwdTarget, setFwdTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [stickerRect, setStickerRect] = useState<DOMRect | null>(null);
   const [stickerTray, setStickerTray] = useState<{ favorites: StickerItem[]; recent: StickerItem[] }>({ favorites: [], recent: [] });
-  const [uploading, setUploading] = useState(false);
+  const [staged, setStaged] = useState<File[]>([]);
+  const [caption, setCaption] = useState("");
+  const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ q: string; at: number; rect: DOMRect } | null>(null);
   const [mentionSel, setMentionSel] = useState(0);
   const stickerBtn = useRef<HTMLButtonElement>(null);
@@ -114,20 +116,24 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     setMsgs((m) => [...m, opt]);
     start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshThreads(); });
   }
-  async function onPickFiles(files: FileList) {
-    const ch = sel; setUploading(true);
+  const stageFiles = (files: FileList | File[]) => setStaged((s) => [...s, ...Array.from(files)]);
+  // Upload staged files, then send (caption goes on the first item, like the WhatsApp chat).
+  async function sendStaged() {
+    if (!staged.length) return;
+    const ch = sel; setSending(true);
     const supabase = createClient();
     try {
-      for (const file of Array.from(files)) {
+      for (let i = 0; i < staged.length; i++) {
+        const file = staged[i];
         const ext = (file.name.split(".").pop() || "bin").toLowerCase();
         const path = `${businessId}/internal/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
         if (error) { console.error(error); continue; }
         const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-        await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name });
+        await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
       }
-      refreshMsgs(ch); refreshThreads();
-    } finally { setUploading(false); }
+      setStaged([]); setCaption(""); refreshMsgs(ch); refreshThreads();
+    } finally { setSending(false); }
   }
   const startEdit = (m: InternalMsg) => { setEditing(m); setReply(null); setText(m.body); taRef.current?.focus(); };
   const del = (m: InternalMsg) => { if (!confirm(lang === "es" ? "¿Eliminar este mensaje?" : "Delete this message?")) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
@@ -239,7 +245,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
             <div className="composer-input">
               <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Mensaje interno… usa @ para mencionar" : "Internal message… use @ to mention"} value={text}
                 onChange={(e) => onComposerChange(e.target.value, e.target.selectionStart)}
-                onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); onPickFiles(e.clipboardData.files); } }}
+                onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); stageFiles(files); } }}
                 onBlur={() => setTimeout(() => setMention(null), 150)}
                 onKeyDown={(e) => {
                   if (mention && mentionMatches.length) {
@@ -263,8 +269,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
               )}
             </div>
             <div className="composer-actions">
-              <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { if (e.target.files?.length) onPickFiles(e.target.files); e.target.value = ""; }} />
-              <button className="iconbtn" onClick={() => fileRef.current?.click()} disabled={uploading} title={lang === "es" ? "Adjuntar" : "Attach"}>{uploading ? <Icon name="clock" /> : <Icon name="paperclip" />}</button>
+              <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { if (e.target.files?.length) stageFiles(e.target.files); e.target.value = ""; }} />
+              <button className="iconbtn" onClick={() => fileRef.current?.click()} title={lang === "es" ? "Adjuntar" : "Attach"}><Icon name="paperclip" /></button>
               <span style={{ display: "inline-flex" }}>
                 <button ref={emojiBtn} className="iconbtn" title="Emoji" style={{ fontSize: 16 }} onClick={() => { setEmojiRect(emojiRect ? null : emojiBtn.current?.getBoundingClientRect() ?? null); }}>😀</button>
                 {emojiRect && (<><div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setEmojiRect(null)} /><EmojiPicker rect={emojiRect} onPick={(e) => setText((v) => v + e)} /></>)}
@@ -311,6 +317,28 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
             {threads.map((t) => <button key={t.key} className="menu-item" onClick={() => doForward(t.key)}>{t.kind === "team" ? <Icon name="agents" size={15} /> : <Avatar name={t.title} initials={deriveInitials(t.title)} color={t.color} size={20} />}<span className="truncate">{title(t)}</span></button>)}
           </div>
         </>
+      )}
+
+      {staged.length > 0 && (
+        <div className="modal-wrap">
+          <div className="scrim" onClick={() => { if (!sending) setStaged([]); }} />
+          <div className="modal">
+            <div className="modal-head">
+              <h3 className="grow">{lang === "es" ? "Enviar archivos" : "Send files"}{staged.length > 1 ? ` (${staged.length})` : ""}</h3>
+              <button className="iconbtn" disabled={sending} onClick={() => setStaged([])}><Icon name="x" /></button>
+            </div>
+            <div className="modal-body">
+              <div className="row gap-2" style={{ flexWrap: "wrap", justifyContent: "center" }}>
+                {staged.map((f, i) => <MediaThumb key={i} file={f} onRemove={() => setStaged((s) => s.filter((_, j) => j !== i))} />)}
+                <button className="iconbtn" style={{ width: 86, height: 86, border: "1px dashed var(--border-strong)", borderRadius: 10 }} onClick={() => fileRef.current?.click()}><Icon name="plus" /></button>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <div className="field field-filled grow"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
+              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : (lang === "es" ? "Enviar" : "Send")}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

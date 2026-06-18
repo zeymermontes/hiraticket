@@ -1625,7 +1625,7 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
   );
 }
 
-function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+export function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
   const url = useMemo(() => (file.type.startsWith("image/") || file.type.startsWith("video/") ? URL.createObjectURL(file) : null), [file]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   return (
