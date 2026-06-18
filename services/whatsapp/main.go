@@ -734,6 +734,16 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 
 	msg := v.Message
 
+	// Disappearing-messages chats wrap content in an ephemeral container; document+caption messages
+	// wrap a document. Unwrap so the real message (text / media / view-once) is seen instead of an
+	// empty wrapper (otherwise the message silently never appears).
+	if eph := msg.GetEphemeralMessage().GetMessage(); eph != nil {
+		msg = eph
+	}
+	if dwc := msg.GetDocumentWithCaptionMessage().GetMessage(); dwc != nil {
+		msg = dwc
+	}
+
 	// Inbound edit/revoke (and reactions) — handled separately, not stored as new rows.
 	if pm := msg.GetProtocolMessage(); pm != nil {
 		m.handleProtocol(ctx, s, pm)
