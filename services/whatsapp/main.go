@@ -677,9 +677,100 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 		client.Disconnect()
 	case *events.Message:
 		m.handleIncoming(ctx, s, client, v)
+	case *events.UndecryptableMessage:
+		m.handleUnavailable(ctx, s, client, v)
 	case *events.Receipt:
 		m.handleReceipt(ctx, v)
 	}
+}
+
+// handleUnavailable records a placeholder for messages WhatsApp won't deliver to a linked device —
+// notably view-once media, which never arrives as a normal events.Message. So at least the chat
+// shows that a one-time message was received.
+func (m *Manager) handleUnavailable(ctx context.Context, s session, client *whatsmeow.Client, v *events.UndecryptableMessage) {
+	if v.UnavailableType != events.UnavailableTypeViewOnce {
+		return // only surface intentionally-unavailable view-once for now
+	}
+	info := v.Info
+	if info.Chat.Server == "broadcast" || info.Chat.Server == "newsletter" {
+		return
+	}
+	if info.IsGroup && !m.allowGroups(ctx, s.BusinessID) {
+		return
+	}
+	waID := info.ID
+	var exists bool
+	_ = m.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE business_id=$1 AND wa_id=$2)`, s.BusinessID, waID).Scan(&exists)
+	if exists {
+		return
+	}
+
+	var contactID, convID string
+	var unread int
+	var muted bool
+	senderName, senderJID := "", ""
+
+	if info.IsGroup {
+		groupJID := info.Chat.String()
+		gerr := m.db.QueryRowContext(ctx, `SELECT id, contact_id, unread, muted FROM conversations WHERE business_id=$1 AND group_jid=$2 LIMIT 1`, s.BusinessID, groupJID).Scan(&convID, &contactID, &unread, &muted)
+		if gerr == sql.ErrNoRows {
+			subject := m.groupSubject(ctx, client, info.Chat)
+			if ierr := m.db.QueryRowContext(ctx, `INSERT INTO contacts (business_id, name, is_group) VALUES ($1,$2,true) RETURNING id`, s.BusinessID, subject).Scan(&contactID); ierr != nil {
+				return
+			}
+			if ierr := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject) VALUES ($1,$2,'open',0,true,$3,$4) RETURNING id`, s.BusinessID, contactID, groupJID, subject).Scan(&convID); ierr != nil {
+				return
+			}
+		} else if gerr != nil {
+			return
+		}
+		if !info.IsFromMe {
+			senderName = info.PushName
+			if senderName == "" {
+				senderName = "+" + info.Sender.User
+			}
+			senderJID = info.Sender.ToNonAD().String()
+		}
+	} else {
+		partner := partnerPhone(info)
+		err := m.db.QueryRowContext(ctx, `SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, partner).Scan(&contactID)
+		if err == sql.ErrNoRows {
+			name := partner
+			if !info.IsFromMe && info.PushName != "" {
+				name = info.PushName
+			}
+			if e := m.db.QueryRowContext(ctx, `INSERT INTO contacts (business_id, name, phone) VALUES ($1,$2,$3) RETURNING id`, s.BusinessID, name, partner).Scan(&contactID); e != nil {
+				return
+			}
+		} else if err != nil {
+			return
+		}
+		err = m.db.QueryRowContext(ctx, `SELECT id, unread, muted FROM conversations WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved' ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted)
+		if err == sql.ErrNoRows {
+			if e := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread) VALUES ($1,$2,'open',0) RETURNING id`, s.BusinessID, contactID).Scan(&convID); e != nil {
+				return
+			}
+		} else if err != nil {
+			return
+		}
+	}
+	if muted {
+		return
+	}
+
+	dir, state := "in", "delivered"
+	if info.IsFromMe {
+		dir, state = "out", "sent"
+	}
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, sender_name, sender_jid)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		s.BusinessID, convID, dir, "text", "📷 Foto de única vez — ábrela en tu teléfono", state, waID, nullIf(senderName), nullIf(senderJID))
+	if dir == "in" {
+		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
+	} else {
+		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0 WHERE id=$1`, convID)
+	}
+	m.log.Infof("recorded unavailable view-once %s from %s", waID, info.Sender.String())
 }
 
 // handleReceipt advances outbound message ticks to delivered/read.
