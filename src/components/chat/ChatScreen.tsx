@@ -197,7 +197,7 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
 }
 
 /** Full-screen photo viewer with prev/next + per-photo download/forward/delete. */
-function Lightbox({ items, index, onClose, onForward, onDelete }: { items: ChatMessage[]; index: number; onClose: () => void; onForward: (m: ChatMessage) => void; onDelete: (m: ChatMessage) => void }) {
+export function Lightbox({ items, index, onClose, onForward, onDelete }: { items: ChatMessage[]; index: number; onClose: () => void; onForward: (m: ChatMessage) => void; onDelete: (m: ChatMessage) => void }) {
   const { lang } = useApp();
   const [i, setI] = useState(index);
   const prev = useCallback(() => setI((x) => (x - 1 + items.length) % items.length), [items.length]);
@@ -369,7 +369,7 @@ function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerI
   );
 }
 
-function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => void }) {
+export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => void }) {
   const url = m.media_url ?? undefined;
   if (!url) return null;
   if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;

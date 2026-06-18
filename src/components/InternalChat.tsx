@@ -5,9 +5,9 @@ import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { firstUrl, LinkPreview, MediaThumb } from "@/components/chat/ChatScreen";
+import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox } from "@/components/chat/ChatScreen";
 import { menuStyle } from "@/lib/popover";
-import type { Agent } from "@/lib/chat";
+import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
 import {
   loadInternalThreads, loadInternalMessages, sendInternalMessage, sendInternalMedia, forwardInternalMessage, sendInternalSticker,
@@ -16,7 +16,16 @@ import {
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
 
-const QUICK = ["👍", "❤️", "😂", "🙌", "✅", "🔥"];
+/** Scroll the original message into view and flash it (parity with the clients chat). */
+function jumpInternal(id: string) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById("im-" + id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("msg-flash");
+  window.setTimeout(() => el.classList.remove("msg-flash"), 1500);
+}
+
 function clock(iso: string, lang: "es" | "en") {
   return new Date(iso).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "2-digit", minute: "2-digit" });
 }
@@ -43,6 +52,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
   const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [fwdTarget, setFwdTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const [lightbox, setLightbox] = useState<number | null>(null);
   const [stickerRect, setStickerRect] = useState<DOMRect | null>(null);
   const [stickerTray, setStickerTray] = useState<{ favorites: StickerItem[]; recent: StickerItem[] }>({ favorites: [], recent: [] });
   const [staged, setStaged] = useState<File[]>([]);
@@ -56,6 +66,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const meId = initial.meId;
   const agentMap = useMemo(() => new Map(initial.agents.map((a) => [a.id, a])), [initial.agents]);
   const msgMap = useMemo(() => new Map(msgs.map((m) => [m.id, m])), [msgs]);
+  const imageMsgs = useMemo(() => msgs.filter((mm) => (mm.type === "image" || mm.type === "sticker") && mm.media_url && !mm.deleted), [msgs]);
+  const openLightbox = useCallback((id: string) => { const idx = imageMsgs.findIndex((mm) => mm.id === id); setLightbox(idx >= 0 ? idx : 0); }, [imageMsgs]);
   const selRef = useRef(sel); selRef.current = sel;
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -190,11 +202,11 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
             const url = m.body ? firstUrl(m.body) : null;
             return (
               <div className={"msg " + (mine ? "out" : "in")} key={m.id}>
-                <div className="bubble">
+                <div className="bubble" id={`im-${m.id}`}>
                   {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
                   {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
                   {quoted && !m.deleted && (
-                    <div style={{ borderLeft: "3px solid var(--brand)", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12 }}>
+                    <div onClick={(e) => { e.stopPropagation(); jumpInternal(quoted.id); }} title={lang === "es" ? "Ir al mensaje" : "Go to message"} style={{ borderLeft: "3px solid var(--brand)", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>
                       <div style={{ fontWeight: 700, color: "var(--brand-700)" }}>{quoted.author_id === meId ? (lang === "es" ? "Tú" : "You") : (agentMap.get(quoted.author_id ?? "")?.name ?? "Agente")}</div>
                       <div className="truncate" style={{ opacity: 0.8 }}>{quoted.deleted ? "—" : (quoted.body || (lang === "es" ? "Adjunto" : "Attachment"))}</div>
                     </div>
@@ -203,14 +215,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                     <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
                   ) : (
                     <>
-                      {m.media_url && m.type === "sticker" && <img src={m.media_url} alt="" style={{ width: 130, height: 130, objectFit: "contain", display: "block" }} />}
-                      {m.media_url && m.type === "image" && <a href={m.media_url} target="_blank" rel="noreferrer"><img src={m.media_url} alt="" style={{ maxWidth: 240, maxHeight: 280, borderRadius: 10, display: "block" }} /></a>}
-                      {m.media_url && m.type !== "image" && m.type !== "sticker" && (
-                        <a href={m.media_url} target="_blank" rel="noreferrer" className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}>
-                          <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
-                          <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
-                        </a>
-                      )}
+                      {m.media_url && <MediaBlock m={m as unknown as ChatMessage} onImage={openLightbox} />}
                       {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderBody(m.body, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</div>}
                       {url && <LinkPreview url={url} />}
                     </>
@@ -304,10 +309,13 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
       {reactTarget && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setReactTarget(null)} />
-          <div className="menu" style={{ ...menuStyle(reactTarget.rect, { width: 232, height: 46 }), display: "flex", gap: 4, padding: 6, overflowY: "visible" }}>
-            {QUICK.map((e) => <button key={e} className="iconbtn" style={{ fontSize: 18 }} onClick={() => react(reactTarget.id, e)}>{e}</button>)}
-          </div>
+          <EmojiPicker rect={reactTarget.rect} onPick={(e) => react(reactTarget.id, e)} />
         </>
+      )}
+      {lightbox != null && imageMsgs.length > 0 && (
+        <Lightbox items={imageMsgs as unknown as ChatMessage[]} index={lightbox} onClose={() => setLightbox(null)}
+          onForward={(mm) => { setLightbox(null); setFwdTarget({ id: mm.id, rect: new DOMRect(window.innerWidth / 2, window.innerHeight / 2, 0, 0) }); }}
+          onDelete={(mm) => { setLightbox(null); start(async () => { await deleteInternalMessage(mm.id); refreshMsgs(selRef.current); }); }} />
       )}
       {fwdTarget && (
         <>
