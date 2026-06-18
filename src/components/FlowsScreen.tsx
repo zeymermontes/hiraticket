@@ -7,7 +7,7 @@ import { useApp } from "@/components/AppContext";
 import type { Automation } from "@/lib/extras";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
-import { toggleAutomation, deleteAutomation, createAutomation } from "@/app/(app)/features-actions";
+import { toggleAutomation, deleteAutomation, createAutomation, updateAutomation } from "@/app/(app)/features-actions";
 
 const TRIGGERS: Record<string, { es: string; en: string }> = {
   order_stage: { es: "Un pedido cambia de etapa", en: "An order changes stage" },
@@ -34,7 +34,7 @@ const ACTIONS: Record<string, { es: string; en: string; icon: string }> = {
   add_tag: { es: "Agregar etiqueta", en: "Add a tag", icon: "tag" },
 };
 
-function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; stages: Stage[]; agents: Agent[] }) {
+function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation; areas: Area[]; stages: Stage[]; agents: Agent[]; onEdit: () => void; editing: boolean }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -51,7 +51,7 @@ function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; 
   const agentName = payload.agent ? agents.find((a) => a.id === payload.agent)?.name : null;
 
   return (
-    <div className={"flow-card" + (w.enabled ? "" : " off")}>
+    <div className={"flow-card" + (w.enabled ? "" : " off") + (editing ? " sel-row" : "")}>
       <button className={"switch" + (w.enabled ? " on" : "")} aria-label="toggle" onClick={() => run(() => toggleAutomation(w.id, !w.enabled))} />
       <div className="grow" style={{ minWidth: 0 }}>
         <div className="row gap-2">
@@ -71,6 +71,7 @@ function FlowCard({ w, areas, stages, agents }: { w: Automation; areas: Area[]; 
           {w.action_type === "add_tag" && payload.tag && <span className="pill pill-brand">{payload.tag}</span>}
         </div>
       </div>
+      <button className="iconbtn" title={lang === "es" ? "Editar" : "Edit"} onClick={onEdit}><Icon name="edit" /></button>
       <button className="iconbtn" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteAutomation(w.id))}><Icon name="trash" /></button>
     </div>
   );
@@ -90,6 +91,7 @@ export function FlowsScreen({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [q, setQ] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [trigger, setTrigger] = useState("order_stage");
   const [stageId, setStageId] = useState("");
@@ -105,22 +107,45 @@ export function FlowsScreen({
     return automations.filter((w) => !needle || w.name.toLowerCase().includes(needle));
   }, [automations, q]);
 
-  function create() {
+  function resetForm() {
+    setEditId(null); setName(""); setTag("");
+    setTrigger("order_stage"); setStageId(""); setStatusVal("open"); setAction("send_template");
+    setTemplate(cannedTitles[0] ?? ""); setAreaId(areas[0]?.id ?? ""); setAgentId(agents[0]?.id ?? "");
+  }
+
+  function startEdit(w: Automation) {
+    const p = (w.action_payload ?? {}) as { template?: string; area?: string; agent?: string; tag?: string };
+    setEditId(w.id);
+    setName(w.name);
+    setTrigger(w.trigger_type);
+    setStageId(w.trigger_type === "order_stage" ? (w.trigger_value ?? "") : "");
+    setStatusVal(w.trigger_type === "conversation_status" ? (w.trigger_value ?? "open") : "open");
+    setAction(w.action_type);
+    setTemplate(p.template ?? cannedTitles[0] ?? "");
+    setAreaId(p.area ?? areas[0]?.id ?? "");
+    setAgentId(p.agent ?? agents[0]?.id ?? "");
+    setTag(p.tag ?? "");
+    if (typeof document !== "undefined") document.querySelector(".page")?.scrollTo?.({ top: 0 });
+  }
+
+  function save() {
     if (!name.trim()) return;
+    const input = {
+      name,
+      trigger_type: trigger,
+      trigger_value: trigger === "order_stage" ? (stageId || null) : trigger === "conversation_status" ? statusVal : null,
+      action_type: action,
+      template: action === "send_template" ? template : undefined,
+      area: action === "transfer_area" ? areaId : undefined,
+      agent: action === "assign_agent" ? agentId : undefined,
+      tag: action === "add_tag" ? tag.trim() : undefined,
+    };
+    const id = editId;
     start(async () => {
-      await createAutomation(businessId, {
-        name,
-        trigger_type: trigger,
-        trigger_value: trigger === "order_stage" ? (stageId || null) : trigger === "conversation_status" ? statusVal : null,
-        action_type: action,
-        template: action === "send_template" ? template : undefined,
-        area: action === "transfer_area" ? areaId : undefined,
-        agent: action === "assign_agent" ? agentId : undefined,
-        tag: action === "add_tag" ? tag.trim() : undefined,
-      });
+      if (id) await updateAutomation(id, input); else await createAutomation(businessId, input);
       router.refresh();
     });
-    setName(""); setTag("");
+    resetForm();
   }
 
   return (
@@ -149,12 +174,12 @@ export function FlowsScreen({
               <h3>{lang === "es" ? "Sin flujos todavía" : "No flows yet"}</h3>
               <p className="muted t-sm">{lang === "es" ? "Crea tu primer flujo para automatizar respuestas y transferencias." : "Create your first flow to automate replies and transfers."}</p>
             </div>
-          ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} agents={agents} />)}
+          ) : filtered.map((w) => <FlowCard key={w.id} w={w} areas={areas} stages={stages} agents={agents} editing={editId === w.id} onEdit={() => startEdit(w)} />)}
           {filtered.length > 0 && <div className="t-xs muted" style={{ padding: "8px 4px" }}>{personal ? (lang === "es" ? "Pruébalo: avanza una tarea a “Listo” y se envía la plantilla automáticamente." : "Try it: advance a task to “Ready” and the template is sent automatically.") : (lang === "es" ? "Pruébalo: avanza un pedido a “Listo” y se envía la plantilla automáticamente." : "Try it: advance an order to “Ready” and the template is sent automatically.")}</div>}
         </div>
 
         <section className="ws-block">
-          <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Nuevo flujo" : "New flow"}</h4></div>
+          <div className="ws-block-head"><Icon name={editId ? "edit" : "plus"} size={16} /><h4 className="grow">{editId ? (lang === "es" ? "Editar flujo" : "Edit flow") : (lang === "es" ? "Nuevo flujo" : "New flow")}</h4>{editId && <button className="iconbtn sm" title={lang === "es" ? "Cancelar" : "Cancel"} onClick={resetForm}><Icon name="x" size={15} /></button>}</div>
           <div className="ws-block-body col gap-2">
             <input className="inp-inline" placeholder={lang === "es" ? "Nombre" : "Name"} value={name} onChange={(e) => setName(e.target.value)} />
 
@@ -198,9 +223,10 @@ export function FlowsScreen({
               <input className="inp-inline" placeholder={lang === "es" ? "Etiqueta (ej. VIP)" : "Tag (e.g. VIP)"} value={tag} onChange={(e) => setTag(e.target.value)} />
             )}
 
-            <button className="btn btn-primary btn-block" disabled={pending || !name.trim()} onClick={create}>
-              <Icon name="plus" size={15} />{lang === "es" ? "Crear flujo" : "Create flow"}
+            <button className="btn btn-primary btn-block" disabled={pending || !name.trim()} onClick={save}>
+              <Icon name={editId ? "check" : "plus"} size={15} />{editId ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear flujo" : "Create flow")}
             </button>
+            {editId && <button className="btn btn-outline btn-block" onClick={resetForm}>{lang === "es" ? "Cancelar" : "Cancel"}</button>}
           </div>
         </section>
       </div>

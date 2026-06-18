@@ -39,6 +39,31 @@ export async function createAutomation(
   revalidatePath("/flows");
 }
 
+/** Edit an existing flow's trigger/action/config (keeps its enabled state + run count). */
+export async function updateAutomation(
+  id: string,
+  input: {
+    name: string; trigger_type: string; trigger_value: string | null;
+    action_type: string; template?: string; area?: string; agent?: string; tag?: string;
+  },
+) {
+  const supabase = await createClient();
+  const payload: Record<string, unknown> = {};
+  if (input.action_type === "send_template" && input.template) payload.template = input.template;
+  if (input.action_type === "transfer_area" && input.area) payload.area = input.area;
+  if (input.action_type === "assign_agent" && input.agent) payload.agent = input.agent;
+  if (input.action_type === "add_tag" && input.tag) payload.tag = input.tag;
+
+  await supabase.from("automations").update({
+    name: input.name.trim() || "Flujo",
+    trigger_type: input.trigger_type,
+    trigger_value: input.trigger_value,
+    action_type: input.action_type,
+    action_payload: payload,
+  }).eq("id", id);
+  revalidatePath("/flows");
+}
+
 /* ---------- products ---------- */
 export async function createProduct(businessId: string, input: { name: string; kind: string; price: number }) {
   const supabase = await createClient();
