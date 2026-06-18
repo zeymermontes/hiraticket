@@ -102,10 +102,11 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   }, []);
   const openChannel = useCallback((ch: string) => {
     setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null);
+    try { localStorage.setItem("ht.internalCh." + businessId, ch); } catch {} // remember across tab changes
     scrollAction.current = "bottom";
     loadInternalMessages(ch).then((fresh) => { setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
     start(async () => { await markInternalRead(ch); refreshThreads(); });
-  }, [refreshThreads]);
+  }, [refreshThreads, businessId]);
 
   async function loadOlder() {
     if (loadingOlder || !hasMore) return;
@@ -124,7 +125,13 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     if (el.scrollTop < 80) loadOlder();
   }
 
-  useEffect(() => { openChannel(selRef.current); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem("ht.internalCh." + businessId); } catch {}
+    const start0 = saved && (saved === "team" || threads.some((t) => t.key === saved)) ? saved : selRef.current;
+    openChannel(start0);
+    /* eslint-disable-next-line */
+  }, []);
 
   useEffect(() => {
     const supabase = createClient();
