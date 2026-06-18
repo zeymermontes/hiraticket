@@ -239,6 +239,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
             <div className="composer-input">
               <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Mensaje interno… usa @ para mencionar" : "Internal message… use @ to mention"} value={text}
                 onChange={(e) => onComposerChange(e.target.value, e.target.selectionStart)}
+                onPaste={(e) => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); onPickFiles(e.clipboardData.files); } }}
                 onBlur={() => setTimeout(() => setMention(null), 150)}
                 onKeyDown={(e) => {
                   if (mention && mentionMatches.length) {
