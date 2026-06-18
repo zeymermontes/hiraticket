@@ -1,12 +1,13 @@
 "use client";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox } from "@/components/chat/ChatScreen";
+import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
 import { menuStyle } from "@/lib/popover";
+import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
 import {
@@ -15,6 +16,14 @@ import {
 } from "@/app/(app)/internal/actions";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
+
+/** Merge message lists by id (incoming wins, so edits/reactions/deletes apply), sorted by time. */
+function mergeInternal(a: InternalMsg[], b: InternalMsg[]): InternalMsg[] {
+  const map = new Map<string, InternalMsg>();
+  for (const m of a) map.set(m.id, m);
+  for (const m of b) map.set(m.id, m);
+  return [...map.values()].sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
+}
 
 /** Scroll the original message into view and flash it (parity with the clients chat). */
 function jumpInternal(id: string) {
@@ -60,6 +69,15 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ q: string; at: number; rect: DOMRect } | null>(null);
   const [mentionSel, setMentionSel] = useState(0);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [typingName, setTypingName] = useState<string | null>(null);
+  const atBottomRef = useRef(true);
+  const scrollAction = useRef<"bottom" | "preserve" | "follow">("bottom");
+  const prevHeight = useRef(0);
+  const chanRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+  const typingTO = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const lastSentTyping = useRef(0);
   const stickerBtn = useRef<HTMLButtonElement>(null);
   const mentionMatches = useMemo(() => (mention ? initial.agents.filter((a) => a.id !== initial.meId && a.name.toLowerCase().includes(mention.q.toLowerCase())).slice(0, 6) : []), [mention, initial.agents, initial.meId]);
   const [, start] = useTransition();
@@ -78,12 +96,33 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const title = (t: InternalThread) => (t.kind === "team" ? teamLabel : t.title);
 
   const refreshThreads = useCallback(() => { loadInternalThreads().then((r) => { if (r) setThreads(r.threads); }).catch(() => {}); }, []);
-  const refreshMsgs = useCallback((ch: string) => { loadInternalMessages(ch).then(setMsgs).catch(() => {}); }, []);
+  // Merge the latest page into what's loaded (keeps older history + applies edits/reactions/deletes).
+  const refreshMsgs = useCallback((ch: string) => {
+    loadInternalMessages(ch).then((fresh) => { scrollAction.current = "follow"; setMsgs((prev) => mergeInternal(prev, fresh)); setHasMore((h) => h || fresh.length >= MSG_PAGE); }).catch(() => {});
+  }, []);
   const openChannel = useCallback((ch: string) => {
-    setSel(ch); setReply(null); setEditing(null); setText("");
-    refreshMsgs(ch);
+    setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null);
+    scrollAction.current = "bottom";
+    loadInternalMessages(ch).then((fresh) => { setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
     start(async () => { await markInternalRead(ch); refreshThreads(); });
-  }, [refreshThreads, refreshMsgs]);
+  }, [refreshThreads]);
+
+  async function loadOlder() {
+    if (loadingOlder || !hasMore) return;
+    const oldest = msgs[0]?.created_at;
+    if (!oldest) return;
+    setLoadingOlder(true);
+    try {
+      const older = await loadInternalMessages(selRef.current, oldest);
+      if (older.length < MSG_PAGE) setHasMore(false);
+      if (older.length) { prevHeight.current = endRef.current?.scrollHeight ?? 0; scrollAction.current = "preserve"; setMsgs((prev) => mergeInternal(older, prev)); }
+    } finally { setLoadingOlder(false); }
+  }
+  function onThreadScroll() {
+    const el = endRef.current; if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (el.scrollTop < 80) loadOlder();
+  }
 
   useEffect(() => { openChannel(selRef.current); /* eslint-disable-next-line */ }, []);
 
@@ -96,15 +135,38 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
         refreshThreads();
         if (row?.channel && row.channel === selRef.current) { refreshMsgs(selRef.current); markInternalRead(selRef.current).catch(() => {}); }
       })
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const t = payload as { channel?: string; userId?: string; name?: string };
+        if (t.channel !== selRef.current || t.userId === meId) return;
+        setTypingName(t.name ?? null);
+        clearTimeout(typingTO.current); typingTO.current = setTimeout(() => setTypingName(null), 3500);
+      })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [businessId, refreshThreads, refreshMsgs]);
+    chanRef.current = ch;
+    return () => { clearTimeout(typingTO.current); supabase.removeChannel(ch); chanRef.current = null; };
+  }, [businessId, refreshThreads, refreshMsgs, meId]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [msgs]);
+  // Apply scroll after messages render: bottom on open, keep position when prepending, follow if near bottom.
+  useLayoutEffect(() => {
+    const el = endRef.current; if (!el) return;
+    if (scrollAction.current === "bottom") { el.scrollTop = el.scrollHeight; setTimeout(() => { if (endRef.current && atBottomRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; }, 200); }
+    else if (scrollAction.current === "preserve") el.scrollTop = el.scrollHeight - prevHeight.current;
+    else if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    scrollAction.current = "follow";
+  }, [msgs]);
+
+  // Broadcast a throttled "typing" ping on the realtime channel (ephemeral, no DB).
+  const sendTyping = () => {
+    const now = Date.now();
+    if (now - lastSentTyping.current < 1500) return;
+    lastSentTyping.current = now;
+    chanRef.current?.send({ type: "broadcast", event: "typing", payload: { channel: selRef.current, userId: meId, name: agentMap.get(meId)?.name ?? "Alguien" } });
+  };
 
   // @mention autocomplete in the composer.
   const onComposerChange = (v: string, caret: number) => {
     setText(v);
+    if (v.trim()) sendTyping();
     const m = v.slice(0, caret).match(/(?:^|\s)@([\p{L}\d]*)$/u);
     if (m) { setMentionSel(0); setMention({ q: m[1], at: caret - m[1].length - 1, rect: taRef.current?.getBoundingClientRect() ?? new DOMRect() }); }
     else setMention(null);
@@ -156,6 +218,61 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
 
   const selThread = threads.find((t) => t.key === sel);
 
+  // Group consecutive plain images (same author) into a 2×2 album, like the clients chat.
+  type Row = { kind: "album"; items: InternalMsg[] } | { kind: "msg"; m: InternalMsg };
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = []; let album: InternalMsg[] = [];
+    const flush = () => { if (album.length >= 2) out.push({ kind: "album", items: album }); else album.forEach((m) => out.push({ kind: "msg", m })); album = []; };
+    for (const m of msgs) {
+      const isImg = m.type === "image" && !!m.media_url && !m.reply_to && !m.deleted && !m.body;
+      if (isImg && (album.length === 0 || album[album.length - 1].author_id === m.author_id)) album.push(m);
+      else { flush(); if (isImg) album.push(m); else out.push({ kind: "msg", m }); }
+    }
+    flush(); return out;
+  }, [msgs]);
+
+  function renderBubble(m: InternalMsg) {
+    const mine = m.author_id === meId;
+    const au = m.author_id ? agentMap.get(m.author_id) : null;
+    const quoted = m.reply_to ? msgMap.get(m.reply_to) : null;
+    const url = m.body ? firstUrl(m.body) : null;
+    return (
+      <div className={"msg " + (mine ? "out" : "in")}>
+        <div className="bubble" id={`im-${m.id}`}>
+          {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
+          {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
+          {quoted && !m.deleted && (
+            <div onClick={(e) => { e.stopPropagation(); jumpInternal(quoted.id); }} title={lang === "es" ? "Ir al mensaje" : "Go to message"} style={{ borderLeft: "3px solid var(--brand)", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>
+              <div style={{ fontWeight: 700, color: "var(--brand-700)" }}>{quoted.author_id === meId ? (lang === "es" ? "Tú" : "You") : (agentMap.get(quoted.author_id ?? "")?.name ?? "Agente")}</div>
+              <div className="truncate" style={{ opacity: 0.8 }}>{quoted.deleted ? "—" : (quoted.body || (lang === "es" ? "Adjunto" : "Attachment"))}</div>
+            </div>
+          )}
+          {m.deleted ? (
+            <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
+          ) : (
+            <>
+              {m.media_url && <MediaBlock m={m as unknown as ChatMessage} onImage={openLightbox} />}
+              {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderBody(m.body, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</div>}
+              {url && <LinkPreview url={url} />}
+            </>
+          )}
+          <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}<span>{clock(m.created_at, lang)}</span></div>
+          {!m.deleted && m.reactions.length > 0 && (
+            <div className="msg-reacts">
+              {m.reactions.map((r, i) => <button key={i} className={"msg-react" + (r.by === meId ? " mine" : "")} onClick={() => react(m.id, r.emoji)}>{r.emoji}</button>)}
+            </div>
+          )}
+          {!m.deleted && !m.id.startsWith("tmp") && (
+            <InternalMsgMenu out={mine} canEdit={mine && m.type === "text"} canDelete={mine} lang={lang}
+              onReply={() => { setReply(m); setEditing(null); taRef.current?.focus(); }}
+              onForward={(rect) => setFwdTarget({ id: m.id, rect })}
+              onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
       {/* threads list */}
@@ -192,50 +309,40 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
           </div>
         </div>
 
-        <div className="thread scroll" ref={endRef}>
-          {msgs.length === 0 ? (
+        <div className="thread scroll" ref={endRef} onScroll={onThreadScroll}>
+          {loadingOlder && <div className="t-xs muted" style={{ textAlign: "center", padding: "8px 0" }}>{lang === "es" ? "Cargando mensajes…" : "Loading messages…"}</div>}
+          {rows.length === 0 ? (
             <div className="empty" style={{ padding: "56px 24px" }}><div className="empty-art"><Icon name="chat" /></div><p className="muted t-sm">{lang === "es" ? "Inicia la conversación interna." : "Start the internal conversation."}</p></div>
-          ) : msgs.map((m) => {
-            const mine = m.author_id === meId;
-            const au = m.author_id ? agentMap.get(m.author_id) : null;
-            const quoted = m.reply_to ? msgMap.get(m.reply_to) : null;
-            const url = m.body ? firstUrl(m.body) : null;
-            return (
-              <div className={"msg " + (mine ? "out" : "in")} key={m.id}>
-                <div className="bubble" id={`im-${m.id}`}>
-                  {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
-                  {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
-                  {quoted && !m.deleted && (
-                    <div onClick={(e) => { e.stopPropagation(); jumpInternal(quoted.id); }} title={lang === "es" ? "Ir al mensaje" : "Go to message"} style={{ borderLeft: "3px solid var(--brand)", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>
-                      <div style={{ fontWeight: 700, color: "var(--brand-700)" }}>{quoted.author_id === meId ? (lang === "es" ? "Tú" : "You") : (agentMap.get(quoted.author_id ?? "")?.name ?? "Agente")}</div>
-                      <div className="truncate" style={{ opacity: 0.8 }}>{quoted.deleted ? "—" : (quoted.body || (lang === "es" ? "Adjunto" : "Attachment"))}</div>
+          ) : rows.map((row, i) => {
+            const created = row.kind === "album" ? row.items[0].created_at : row.m.created_at;
+            const prev = i > 0 ? rows[i - 1] : null;
+            const prevAt = prev ? (prev.kind === "album" ? prev.items[0].created_at : prev.m.created_at) : null;
+            const daySep = (!prevAt || new Date(prevAt).toDateString() !== new Date(created).toDateString())
+              ? <div className="day-sep"><span>{dayLabel(created, lang)}</span></div> : null;
+            if (row.kind === "album") {
+              const mine = row.items[0].author_id === meId;
+              return (
+                <Fragment key={"al" + row.items[0].id}>
+                  {daySep}
+                  <div className={"msg " + (mine ? "out" : "in")}>
+                    <div className="bubble" style={{ padding: 3 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
+                        {row.items.slice(0, 4).map((m, idx) => (
+                          <a key={m.id} id={`im-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); openLightbox(m.id); }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
+                            <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800 }}>+{row.items.length - 4}</span>}
+                          </a>
+                        ))}
+                      </div>
+                      <div className="bubble-meta"><span>{clock(row.items[row.items.length - 1].created_at, lang)}</span></div>
                     </div>
-                  )}
-                  {m.deleted ? (
-                    <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
-                  ) : (
-                    <>
-                      {m.media_url && <MediaBlock m={m as unknown as ChatMessage} onImage={openLightbox} />}
-                      {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderBody(m.body, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</div>}
-                      {url && <LinkPreview url={url} />}
-                    </>
-                  )}
-                  <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}<span>{clock(m.created_at, lang)}</span></div>
-                  {!m.deleted && m.reactions.length > 0 && (
-                    <div className="msg-reacts">
-                      {m.reactions.map((r, i) => <button key={i} className={"msg-react" + (r.by === meId ? " mine" : "")} onClick={() => react(m.id, r.emoji)}>{r.emoji}</button>)}
-                    </div>
-                  )}
-                  {!m.deleted && !m.id.startsWith("tmp") && (
-                    <InternalMsgMenu out={mine} canEdit={mine && m.type === "text"} canDelete={mine} lang={lang}
-                      onReply={() => { setReply(m); setEditing(null); taRef.current?.focus(); }}
-                      onForward={(rect) => setFwdTarget({ id: m.id, rect })}
-                      onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })} />
-                  )}
-                </div>
-              </div>
-            );
+                  </div>
+                </Fragment>
+              );
+            }
+            return <Fragment key={row.m.id}>{daySep}{renderBubble(row.m)}</Fragment>;
           })}
+          {typingName && <div className="msg in"><div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div></div>}
         </div>
 
         <div className="composer">

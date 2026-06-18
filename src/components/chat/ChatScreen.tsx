@@ -1984,7 +1984,7 @@ function relTime(iso: string | null, lang: "es" | "en"): string {
   return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
 }
 
-function dayLabel(iso: string, lang: "es" | "en"): string {
+export function dayLabel(iso: string, lang: "es" | "en"): string {
   const d = new Date(iso);
   const today = new Date();
   const yest = new Date(); yest.setDate(today.getDate() - 1);
