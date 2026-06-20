@@ -7,5 +7,11 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET(request: Request) {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  return NextResponse.redirect(new URL("/login", request.url));
+  // Behind a proxy (Render/Vercel) request.url's origin is the internal localhost:PORT, so use the
+  // forwarded host/proto when present — otherwise the redirect lands on localhost.
+  const { origin } = new URL(request.url);
+  const fwdHost = request.headers.get("x-forwarded-host");
+  const fwdProto = request.headers.get("x-forwarded-proto") ?? "https";
+  const base = fwdHost ? `${fwdProto}://${fwdHost}` : origin;
+  return NextResponse.redirect(`${base}/login`);
 }

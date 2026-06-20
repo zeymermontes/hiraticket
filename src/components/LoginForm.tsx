@@ -23,7 +23,7 @@ function Inner() {
     if (!email) { setErr(lang === "es" ? "Escribe tu correo primero." : "Enter your email first."); return; }
     setErr(null);
     const supabase = createClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/auth/callback` });
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/auth/callback?next=/reset-password` });
     if (error) setErr(error.message);
     else setInfo(lang === "es" ? "Te enviamos un link para restablecer tu contraseña." : "We sent you a password reset link.");
   }
