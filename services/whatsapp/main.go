@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -71,6 +73,15 @@ func main() {
 	if dsn == "" {
 		panic("DATABASE_URL is required")
 	}
+	// Tell Go the container's memory ceiling so the GC stays aggressive near the limit instead of
+	// letting the heap grow into an OOM kill (Go can't read the cgroup limit on its own). Default to
+	// ~450MiB for a 512MB instance; override with MEM_LIMIT_MIB.
+	memMiB := int64(450)
+	if v, err := strconv.ParseInt(os.Getenv("MEM_LIMIT_MIB"), 10, 64); err == nil && v > 0 {
+		memMiB = v
+	}
+	debug.SetMemoryLimit(memMiB << 20)
+
 	ctx := context.Background()
 	logger := waLog.Stdout("WA", "INFO", true)
 
