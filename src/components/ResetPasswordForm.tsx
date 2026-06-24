@@ -45,8 +45,8 @@ function Inner() {
         </div>
 
         <div>
-          <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Nueva contraseña" : "New password"}</h1>
-          <p className="muted" style={{ marginTop: 4, fontSize: 14 }}>{lang === "es" ? "Elige una nueva contraseña para tu cuenta." : "Choose a new password for your account."}</p>
+          <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Define tu contraseña" : "Set your password"}</h1>
+          <p className="muted" style={{ marginTop: 4, fontSize: 14 }}>{lang === "es" ? "Elige una contraseña para tu cuenta y entra al equipo." : "Choose a password for your account and join the team."}</p>
         </div>
 
         {hasSession === false ? (

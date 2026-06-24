@@ -50,6 +50,14 @@ export async function setAgentArea(businessId: string, userId: string, areaId: s
   revalidatePath("/agents");
 }
 
+// Invited users have no password yet, so the invite link must land on the set-password page
+// (/reset-password) instead of dropping them into the app — otherwise login fails with
+// "invalid credentials". Needs NEXT_PUBLIC_SITE_URL set on the host.
+function inviteOpts() {
+  const site = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "");
+  return site ? { redirectTo: `${site}/auth/callback?next=/reset-password` } : undefined;
+}
+
 /** Resend the invitation email to an agent (admins only). */
 export async function resendInvite(businessId: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   if (!(await assertAdmin(businessId))) return { ok: false, error: "forbidden" };
@@ -57,7 +65,7 @@ export async function resendInvite(businessId: string, userId: string): Promise<
   const { data } = await admin.auth.admin.getUserById(userId);
   const email = data?.user?.email;
   if (!email) return { ok: false, error: "no email" };
-  const { error } = await admin.auth.admin.inviteUserByEmail(email);
+  const { error } = await admin.auth.admin.inviteUserByEmail(email, inviteOpts());
   if (error) return { ok: false, error: error.message };
   return { ok: true };
 }
@@ -84,7 +92,7 @@ export async function inviteAgent(
   if (!clean) return { ok: false, error: "email" };
 
   const admin = createAdminClient();
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(clean);
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(clean, inviteOpts());
   if (error || !data?.user) return { ok: false, error: error?.message ?? "invite failed" };
 
   await admin.from("business_members").upsert(
