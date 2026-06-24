@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { configuredOrigin } from "@/lib/url";
 
 async function assertAdmin(businessId: string): Promise<string | null> {
   const supabase = await createClient();
@@ -54,7 +55,7 @@ export async function setAgentArea(businessId: string, userId: string, areaId: s
 // (/reset-password) instead of dropping them into the app — otherwise login fails with
 // "invalid credentials". Needs NEXT_PUBLIC_SITE_URL set on the host.
 function inviteOpts() {
-  const site = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "");
+  const site = configuredOrigin();
   return site ? { redirectTo: `${site}/auth/callback?next=/reset-password` } : undefined;
 }
 
