@@ -23,8 +23,9 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs,
 } from "@/app/(app)/chat/actions";
+import { menuStyle } from "@/lib/popover";
 import { useToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
@@ -701,6 +702,22 @@ export function ChatScreen({
   const [purging, setPurging] = useState(false);
   const [areaF, setAreaF] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  // Multi-select (long-press to start): bulk status / assign / delete on the chat list.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMenu, setBulkMenu] = useState<{ kind: "status" | "agent"; rect: DOMRect } | null>(null);
+  const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const justLongPressed = useRef(false);
+  const toggleSel = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); setBulkMenu(null); };
+  const startPress = (id: string) => { clearTimeout(pressTimer.current); pressTimer.current = setTimeout(() => { justLongPressed.current = true; setSelectMode(true); setSelected((s) => new Set(s).add(id)); }, 450); };
+  const cancelPress = () => clearTimeout(pressTimer.current);
+  const convClick = (e: React.MouseEvent, c: ConvListItem) => {
+    if (justLongPressed.current) { justLongPressed.current = false; e.preventDefault(); return; }
+    if (selectMode) { e.preventDefault(); toggleSel(c.id); return; }
+    openConv(c);
+  };
+  const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); await liveList(businessId).then(setList).catch(() => {}); exitSelect(); })(); };
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const areaNames = useMemo(() => [...new Set(list.map((c) => c.area?.name).filter(Boolean))] as string[], [list]);
@@ -835,6 +852,29 @@ export function ChatScreen({
             </div>
           )}
         </div>
+        {selectMode && (
+          <div className="row gap-2" style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", alignItems: "center", background: "var(--surface-2)", flex: "none" }}>
+            <button className="iconbtn sm" onClick={exitSelect} aria-label="cancel"><Icon name="x" size={16} /></button>
+            <span className="t-sm" style={{ fontWeight: 700 }}>{selected.size}</span>
+            <span className="grow" />
+            <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "status", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Estado" : "Status"}><Icon name="dot" size={13} /></button>
+            <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "agent", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Asignar" : "Assign"}><Icon name="agents" size={13} /></button>
+            <button className="btn btn-sm btn-danger" disabled={!selected.size} onClick={() => { if (confirm(lang === "es" ? `¿Eliminar ${selected.size} chat(s) y sus mensajes? No se puede deshacer.` : `Delete ${selected.size} chat(s) and their messages? This can't be undone.`)) runBulk(() => bulkDeleteConvs([...selected])); }} title={lang === "es" ? "Eliminar" : "Delete"}><Icon name="trash" size={13} /></button>
+          </div>
+        )}
+        {bulkMenu && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setBulkMenu(null)} />
+            <div className="menu scroll" style={menuStyle(bulkMenu.rect, { width: 210, height: 280, align: "right" })}>
+              {bulkMenu.kind === "status"
+                ? (["open", "pending", "resolved"] as const).map((s) => <button key={s} className="menu-item" onClick={() => runBulk(() => bulkSetStatus([...selected], s))}><Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill></button>)
+                : <>
+                    <button className="menu-item" onClick={() => runBulk(() => bulkAssign([...selected], null))}><Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill></button>
+                    {agents.filter((a) => a.role !== "viewer").map((a) => <button key={a.id} className="menu-item" onClick={() => runBulk(() => bulkAssign([...selected], a.id))}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
+                  </>}
+            </div>
+          </>
+        )}
         <div className="col-scroll scroll">
           {filtered.length === 0 ? (
             <div className="empty" style={{ padding: "56px 24px" }}>
@@ -846,7 +886,11 @@ export function ChatScreen({
             filtered.map((c) => {
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
-                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={() => openConv(c)} className={"conv" + (c.id === (detail?.id ?? selectedId) ? " sel" : "") + (c.unread ? " unread" : "")}>
+                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={(e) => convClick(e, c)}
+                  onPointerDown={() => startPress(c.id)} onPointerUp={cancelPress} onPointerLeave={cancelPress} onPointerMove={cancelPress} onContextMenu={(e) => { if (selectMode) e.preventDefault(); }}
+                  className={"conv" + (c.id === (detail?.id ?? selectedId) && !selectMode ? " sel" : "") + (c.unread ? " unread" : "")}
+                  style={selectMode && selected.has(c.id) ? { background: "var(--brand-50)" } : undefined}>
+                  {selectMode && <span style={{ width: 22, height: 22, borderRadius: "50%", flex: "none", border: "2px solid " + (selected.has(c.id) ? "var(--brand)" : "var(--border-strong)"), background: selected.has(c.id) ? "var(--brand)" : "transparent", color: "var(--on-brand)", display: "flex", alignItems: "center", justifyContent: "center" }}>{selected.has(c.id) && <Icon name="check" size={13} />}</span>}
                   <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
                   <div className="conv-body">
                     <div className="conv-top">

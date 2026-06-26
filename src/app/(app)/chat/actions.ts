@@ -315,6 +315,29 @@ export async function deleteConv(convId: string): Promise<void> {
   await supabase.from("conversations").delete().eq("id", convId);
 }
 
+/** Bulk-set status on several conversations at once. */
+export async function bulkSetStatus(convIds: string[], status: "open" | "pending" | "resolved"): Promise<void> {
+  if (!convIds.length) return;
+  const { supabase } = await ctx();
+  await supabase.from("conversations").update(status === "resolved" ? { status, unread: 0 } : { status }).in("id", convIds);
+}
+
+/** Bulk-assign several conversations to an agent (or null to unassign). */
+export async function bulkAssign(convIds: string[], agentId: string | null): Promise<void> {
+  if (!convIds.length) return;
+  const { supabase } = await ctx();
+  await supabase.from("conversations").update({ assignee_id: agentId }).in("id", convIds);
+}
+
+/** Bulk-delete several conversations (messages cascade; notes/events cleared). */
+export async function bulkDeleteConvs(convIds: string[]): Promise<void> {
+  if (!convIds.length) return;
+  const { supabase } = await ctx();
+  await supabase.from("notes").delete().eq("parent_type", "conversation").in("parent_id", convIds);
+  await supabase.from("events").delete().eq("parent_type", "conversation").in("parent_id", convIds);
+  await supabase.from("conversations").delete().in("id", convIds);
+}
+
 /** Rename the contact behind a chat. */
 export async function renameContact(contactId: string, name: string): Promise<void> {
   const { supabase } = await ctx();
