@@ -7,6 +7,8 @@ import { getStages } from "@/lib/business";
 import { Shell, type ShellUser } from "@/components/Shell";
 import { AppProvider } from "@/components/AppContext";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
+import { InvitePopup } from "@/components/InvitePopup";
+import { getMyPendingInvite } from "@/app/(app)/invites/actions";
 
 export default async function AppLayout({
   children,
@@ -20,9 +22,19 @@ export default async function AppLayout({
 
   if (!user) redirect("/login");
 
-  // First-run onboarding: no business yet, or setup not finished/skipped.
   const business = await getMyBusiness();
-  if (!business || !business.onboarded) {
+  // No team yet: if someone invited this account, show the join popup instead of forcing them to
+  // create their own workspace. Otherwise first-run onboarding (create a workspace).
+  if (!business) {
+    const pending = await getMyPendingInvite();
+    if (pending) return <InvitePopup businessName={pending.businessName} inviterName={pending.inviterName} role={pending.role} inviteId={pending.id} />;
+    return (
+      <AppProvider>
+        <OnboardingWizard business={null} />
+      </AppProvider>
+    );
+  }
+  if (!business.onboarded) {
     return (
       <AppProvider>
         <OnboardingWizard business={business} />

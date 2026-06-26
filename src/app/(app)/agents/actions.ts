@@ -85,21 +85,29 @@ export async function deactivateAgent(businessId: string, userId: string): Promi
   return { ok: true };
 }
 
+/** Invite an EXISTING account to the team — never creates an account on someone's behalf. The person
+ *  accepts via a popup on their next visit. Errors: 'no-account' (tell them to sign up first),
+ *  'in-another-team', 'already-member'. */
 export async function inviteAgent(
   businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!(await assertAdmin(businessId))) return { ok: false, error: "forbidden" };
+  const me = await assertAdmin(businessId);
+  if (!me) return { ok: false, error: "forbidden" };
   const clean = email.trim().toLowerCase();
   if (!clean) return { ok: false, error: "email" };
 
   const admin = createAdminClient();
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(clean, inviteOpts());
-  if (error || !data?.user) return { ok: false, error: error?.message ?? "invite failed" };
+  const { data: uid } = await admin.rpc("user_id_by_email", { p_email: clean });
+  if (!uid) return { ok: false, error: "no-account" };
 
-  await admin.from("business_members").upsert(
-    { business_id: businessId, user_id: data.user.id, role, area_id: areaId ?? null },
-    { onConflict: "business_id,user_id" },
-  );
+  // One team per account (for now): block if they already belong to a team.
+  const { data: existing } = await admin.from("business_members").select("business_id").eq("user_id", uid).limit(1).maybeSingle();
+  if (existing) return { ok: false, error: existing.business_id === businessId ? "already-member" : "in-another-team" };
+
+  // Replace any prior pending invite for this email+business, then create a fresh one.
+  await admin.from("team_invites").delete().eq("business_id", businessId).eq("email", clean).is("token", null);
+  const { error } = await admin.from("team_invites").insert({ business_id: businessId, email: clean, role, area_id: areaId ?? null, created_by: me });
+  if (error) return { ok: false, error: error.message };
   revalidatePath("/agents");
   return { ok: true };
 }
