@@ -36,7 +36,7 @@ function Inner({ businessName, inviterName, role, inviteId, token }: { businessN
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", gap: 14, alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>
       <div style={{ width: "100%", maxWidth: 420, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, padding: 28, boxShadow: "var(--sh-lg)" }}>
         <div className="row gap-2" style={{ alignItems: "center", marginBottom: 14 }}>
           <span style={{ width: 40, height: 40, borderRadius: 11, background: "var(--brand)", color: "var(--on-brand)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 20 }}>H</span>
@@ -57,6 +57,7 @@ function Inner({ businessName, inviterName, role, inviteId, token }: { businessN
           <button className="btn btn-primary grow" disabled={busy} onClick={accept}><Icon name="check" size={16} />{lang === "es" ? "Unirme al equipo" : "Join the team"}</button>
         </div>
       </div>
+      <a href="/logout" className="t-sm muted" style={{ textDecoration: "none" }}>{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
     </div>
   );
 }
@@ -72,13 +73,14 @@ function NoticeInner({ reason }: { reason?: string }) {
       : reason === "already-in-team" ? (lang === "es" ? "Ya perteneces a un equipo. Cada cuenta puede estar en uno solo." : "You already belong to a team. Each account can be in one only.")
         : (lang === "es" ? "Este enlace de invitación no es válido." : "This invite link is not valid.");
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", gap: 14, alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>
       <div style={{ width: "100%", maxWidth: 420, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, padding: 28, boxShadow: "var(--sh-lg)", textAlign: "center" }}>
         <div style={{ width: 44, height: 44, borderRadius: 12, background: "var(--surface-2)", color: "var(--text-faint)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}><Icon name="lock" /></div>
         <h1 style={{ fontSize: 20, margin: "0 0 8px" }}>{lang === "es" ? "Invitación" : "Invitation"}</h1>
         <p style={{ margin: "0 0 18px", fontSize: 14, lineHeight: 1.6, color: "var(--text-muted)" }}>{msg}</p>
         <a className="btn btn-primary btn-block" href="/chat">{lang === "es" ? "Ir a Hiraticket" : "Go to Hiraticket"}</a>
       </div>
+      <a href="/logout" className="t-sm muted" style={{ textDecoration: "none" }}>{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
     </div>
   );
 }
