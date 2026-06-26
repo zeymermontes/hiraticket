@@ -30,7 +30,7 @@ export default async function AppLayout({
     if (pending) return <InvitePopup businessName={pending.businessName} inviterName={pending.inviterName} role={pending.role} inviteId={pending.id} />;
     return (
       <AppProvider>
-        <OnboardingWizard business={null} />
+        <OnboardingWizard business={null} email={user.email ?? ""} />
       </AppProvider>
     );
   }

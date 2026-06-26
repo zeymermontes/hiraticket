@@ -21,16 +21,64 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function OnboardingWizard({ business }: { business: Business | null }) {
+export function OnboardingWizard({ business, email }: { business: Business | null; email?: string }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"business" | "personal">("business");
   const [err, setErr] = useState<string | null>(null);
+  const [path, setPath] = useState<"choose" | "create" | "join">("choose");
 
-  // Phase A — create the workspace (required; this is the tenant).
+  // Phase A — no team yet: first choose to create your own workspace or join an existing one.
   if (!business) {
+    if (path === "choose") {
+      return (
+        <Shell>
+          <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Bienvenido a Hiraticket" : "Welcome to Hiraticket"}</h1>
+          <p className="muted" style={{ marginTop: 4, marginBottom: 18 }}>{lang === "es" ? "¿Cómo quieres empezar?" : "How do you want to start?"}</p>
+          <div className="col gap-2">
+            <button type="button" onClick={() => setPath("create")} style={{ display: "flex", gap: 12, alignItems: "flex-start", textAlign: "left", padding: 14, borderRadius: 12, cursor: "pointer", background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <span style={{ width: 38, height: 38, borderRadius: 10, flex: "none", background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="plus" size={19} /></span>
+              <span style={{ minWidth: 0 }}><span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{lang === "es" ? "Crear mi espacio" : "Create my workspace"}</span><span className="t-xs muted">{lang === "es" ? "Empieza un equipo nuevo y administra tú." : "Start a new team that you manage."}</span></span>
+            </button>
+            <button type="button" onClick={() => setPath("join")} style={{ display: "flex", gap: 12, alignItems: "flex-start", textAlign: "left", padding: 14, borderRadius: 12, cursor: "pointer", background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <span style={{ width: 38, height: 38, borderRadius: 10, flex: "none", background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="agents" size={19} /></span>
+              <span style={{ minWidth: 0 }}><span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{lang === "es" ? "Unirme a un equipo" : "Join a team"}</span><span className="t-xs muted">{lang === "es" ? "Alguien ya tiene un espacio y quieres entrar." : "Someone already has a workspace you want to join."}</span></span>
+            </button>
+          </div>
+        </Shell>
+      );
+    }
+    if (path === "join") {
+      return (
+        <Shell>
+          <button type="button" className="row gap-1 t-sm muted" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 10 }} onClick={() => setPath("choose")}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="arrowr" size={14} /></span>{lang === "es" ? "Atrás" : "Back"}</button>
+          <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Únete a un equipo" : "Join a team"}</h1>
+          <p className="muted" style={{ marginTop: 4, marginBottom: 16 }}>{lang === "es" ? "Pídele al administrador del espacio que te agregue. Solo necesita tu correo:" : "Ask the workspace admin to add you. They just need your email:"}</p>
+          {email && (
+            <div className="row gap-2" style={{ marginBottom: 16, alignItems: "center" }}>
+              <div className="field field-sm field-filled grow"><Icon name="mail" size={15} /><input readOnly value={email} onFocus={(e) => e.currentTarget.select()} /></div>
+              <button className="btn btn-sm btn-outline" onClick={() => navigator.clipboard?.writeText(email).catch(() => {})}><Icon name="paperclip" size={14} />{lang === "es" ? "Copiar" : "Copy"}</button>
+            </div>
+          )}
+          <div className="col gap-2" style={{ marginBottom: 18 }}>
+            {[
+              lang === "es" ? "Comparte tu correo con el admin del equipo." : "Share your email with the team admin.",
+              lang === "es" ? "El admin entra a Agentes → Invitar al equipo y te invita (o te comparte un enlace de invitación)." : "The admin goes to Agents → Invite to team and invites you (or shares an invite link).",
+              lang === "es" ? "Cuando te inviten, aparecerá aquí un aviso para unirte." : "Once you're invited, a prompt to join will appear here.",
+            ].map((s, i) => (
+              <div key={i} className="row gap-3" style={{ alignItems: "flex-start" }}>
+                <span style={{ width: 24, height: 24, borderRadius: 7, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none", fontWeight: 800, fontSize: 12 }}>{i + 1}</span>
+                <span className="t-sm">{s}</span>
+              </div>
+            ))}
+          </div>
+          <button className="btn btn-primary btn-lg btn-block" disabled={pending} onClick={() => start(async () => { router.refresh(); })}><Icon name="refresh" size={16} />{lang === "es" ? "Ya me invitaron — Revisar" : "I've been invited — Check"}</button>
+        </Shell>
+      );
+    }
+    // path === "create"
     function submit() {
       if (!name.trim()) return;
       setErr(null);
@@ -45,6 +93,7 @@ export function OnboardingWizard({ business }: { business: Business | null }) {
     ];
     return (
       <Shell>
+        <button type="button" className="row gap-1 t-sm muted" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 10 }} onClick={() => setPath("choose")}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="arrowr" size={14} /></span>{lang === "es" ? "Atrás" : "Back"}</button>
         <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Crea tu espacio" : "Create your workspace"}</h1>
         <p className="muted" style={{ marginTop: 4, marginBottom: 18 }}>
           {lang === "es" ? "Elige cómo lo vas a usar. Sin datos de ejemplo." : "Choose how you'll use it. No sample data."}
