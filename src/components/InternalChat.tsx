@@ -88,6 +88,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const imageMsgs = useMemo(() => msgs.filter((mm) => (mm.type === "image" || mm.type === "sticker") && mm.media_url && !mm.deleted), [msgs]);
   const openLightbox = useCallback((id: string) => { const idx = imageMsgs.findIndex((mm) => mm.id === id); setLightbox(idx >= 0 ? idx : 0); }, [imageMsgs]);
   const selRef = useRef(sel); selRef.current = sel;
+  // Bubbles already on screen — used to animate only *newly arrived* messages, never the whole history on open.
+  const seen = useRef<Set<string>>(new Set());
+  const isFresh = (m: InternalMsg) => m.author_id !== meId && !seen.current.has(m.id);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const emojiBtn = useRef<HTMLButtonElement>(null);
@@ -105,7 +108,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null);
     try { localStorage.setItem("ht.internalCh." + businessId, ch); } catch {} // remember across tab changes
     scrollAction.current = "bottom";
-    loadInternalMessages(ch).then((fresh) => { setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
+    loadInternalMessages(ch).then((fresh) => { seen.current = new Set(fresh.map((m) => m.id)); setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
     start(async () => { await markInternalRead(ch); refreshThreads(); });
   }, [refreshThreads, businessId]);
 
@@ -117,7 +120,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     try {
       const older = await loadInternalMessages(selRef.current, oldest);
       if (older.length < MSG_PAGE) setHasMore(false);
-      if (older.length) { prevHeight.current = endRef.current?.scrollHeight ?? 0; scrollAction.current = "preserve"; setMsgs((prev) => mergeInternal(older, prev)); }
+      if (older.length) { older.forEach((m) => seen.current.add(m.id)); prevHeight.current = endRef.current?.scrollHeight ?? 0; scrollAction.current = "preserve"; setMsgs((prev) => mergeInternal(older, prev)); }
     } finally { setLoadingOlder(false); }
   }
   function onThreadScroll() {
@@ -156,6 +159,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
 
   // Drop the optimistic bubble once the real row lands (msgs grows) or on channel switch.
   useEffect(() => { setExtra([]); }, [sel, msgs.length]);
+  // After paint, mark everything on screen as seen so it won't re-animate on the next render.
+  useEffect(() => { for (const m of msgs) seen.current.add(m.id); }, [msgs]);
 
   // Apply scroll after messages render: bottom on open, keep position when prepending, follow if near bottom.
   useLayoutEffect(() => {
@@ -242,13 +247,13 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     flush(); return out;
   }, [msgs]);
 
-  function renderBubble(m: InternalMsg) {
+  function renderBubble(m: InternalMsg, fresh = false) {
     const mine = m.author_id === meId;
     const au = m.author_id ? agentMap.get(m.author_id) : null;
     const quoted = m.reply_to ? msgMap.get(m.reply_to) : null;
     const url = m.body ? firstUrl(m.body) : null;
     return (
-      <div className={"msg " + (mine ? "out" : "in")}>
+      <div className={"msg " + (mine ? "out" : "in") + (fresh ? " fresh" : "")}>
         <div className="bubble" id={`im-${m.id}`}>
           {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
           {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
@@ -335,7 +340,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
               return (
                 <Fragment key={"al" + row.items[0].id}>
                   {daySep}
-                  <div className={"msg " + (mine ? "out" : "in")}>
+                  <div className={"msg " + (mine ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")}>
                     <div className="bubble" style={{ padding: 3 }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                         {row.items.slice(0, 4).map((m, idx) => (
@@ -351,9 +356,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                 </Fragment>
               );
             }
-            return <Fragment key={row.m.id}>{daySep}{renderBubble(row.m)}</Fragment>;
+            return <Fragment key={row.m.id}>{daySep}{renderBubble(row.m, isFresh(row.m))}</Fragment>;
           })}
-          {extra.map((m) => <Fragment key={m.id}>{renderBubble(m)}</Fragment>)}
+          {extra.map((m) => <Fragment key={m.id}>{renderBubble(m, true)}</Fragment>)}
           {typingName && <div className="msg in"><div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div></div>}
         </div>
 

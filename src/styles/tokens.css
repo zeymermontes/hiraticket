@@ -150,7 +150,7 @@ a { color: inherit; text-decoration: none; }
 @keyframes ht-toast-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
 @keyframes ht-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes ht-spin { to { transform: rotate(360deg); } }
-@keyframes ht-bubble { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes ht-bubble { from { opacity: 0; transform: translateY(8px) scale(.92); } to { opacity: 1; transform: none; } }
 @keyframes ht-pop-safe { from { transform: translateY(8px) scale(.985); } to { transform: none; } }
 @keyframes ht-slide-safe { from { transform: translateX(20px); } to { transform: none; } }
 

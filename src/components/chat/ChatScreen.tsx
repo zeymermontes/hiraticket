@@ -1136,6 +1136,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     if (lastConvRef.current !== detail.id) {
       lastConvRef.current = detail.id;
       scrollAction.current = "bottom";
+      seenIds.current = new Set(detail.messages.map((m) => m.id)); // seed: the opening page doesn't animate
       setMsgs(detail.messages);
       setHasMore(detail.messages.length >= MSG_PAGE);
     } else {
@@ -1153,6 +1154,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       const older = await loadOlderMessages(detail.id, oldest);
       if (older.length < MSG_PAGE) setHasMore(false);
       if (older.length) {
+        older.forEach((m) => seenIds.current.add(m.id)); // prepended history shouldn't animate
         prevHeight.current = endRef.current?.scrollHeight ?? 0;
         scrollAction.current = "preserve";
         setMsgs((prev) => mergeMsgs(older, prev));
@@ -1217,6 +1219,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
 
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
   const messages = [...msgs, ...extra];
+  // Animate only newly-arrived bubbles (incoming) + my optimistic sends — never the whole history on open.
+  const seenIds = useRef<Set<string>>(new Set());
+  const isFresh = (m: ChatMessage) => m.id.startsWith("tmp") || (m.direction === "in" && !seenIds.current.has(m.id));
+  useEffect(() => { for (const m of msgs) seenIds.current.add(m.id); }, [msgs]);
 
   // Group @mentions: who has spoken in this group (the pickable participants) + number→name lookup.
   const participants = useMemo(() => {
@@ -1346,7 +1352,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             return (
               <React.Fragment key={key}>
                 {daySep}
-                <div className={"msg " + (out ? "out" : "in")}>
+                <div className={"msg " + (out ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")}>
                   <div className="bubble" style={{ padding: 3 }}>
                     <AlbumMenu out={out} onForward={() => setForwarding(row.items)}
                       onDelete={out ? () => { if (confirm(lang === "es" ? "¿Eliminar todas las fotos para todos?" : "Delete all photos for everyone?")) start(async () => { for (const it of row.items) await deleteMessage(it.id); refresh(); }); } : undefined} />
@@ -1386,7 +1392,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           return (
             <React.Fragment key={key}>
             {daySep}
-            <div className={"msg " + (out ? "out" : "in")}>
+            <div className={"msg " + (out ? "out" : "in") + (isFresh(m) ? " fresh" : "")}>
               <div className="bubble" id={`m-${m.id}`}>
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
