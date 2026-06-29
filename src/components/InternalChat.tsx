@@ -55,6 +55,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [threads, setThreads] = useState(initial.threads);
   const [sel, setSel] = useState<string>(initial.threads[0]?.key ?? "team");
   const [msgs, setMsgs] = useState<InternalMsg[]>([]);
+  const [extra, setExtra] = useState<InternalMsg[]>([]); // optimistic bubbles, kept out of msgs so the real row can't dup
   const [text, setText] = useState("");
   const [reply, setReply] = useState<InternalMsg | null>(null);
   const [editing, setEditing] = useState<InternalMsg | null>(null);
@@ -153,6 +154,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     return () => { clearTimeout(typingTO.current); supabase.removeChannel(ch); chanRef.current = null; };
   }, [businessId, refreshThreads, refreshMsgs, meId]);
 
+  // Drop the optimistic bubble once the real row lands (msgs grows) or on channel switch.
+  useEffect(() => { setExtra([]); }, [sel, msgs.length]);
+
   // Apply scroll after messages render: bottom on open, keep position when prepending, follow if near bottom.
   useLayoutEffect(() => {
     const el = endRef.current; if (!el) return;
@@ -160,7 +164,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     else if (scrollAction.current === "preserve") el.scrollTop = el.scrollHeight - prevHeight.current;
     else if (atBottomRef.current) el.scrollTop = el.scrollHeight;
     scrollAction.current = "follow";
-  }, [msgs]);
+  }, [msgs, extra]);
 
   // Broadcast a throttled "typing" ping on the realtime channel (ephemeral, no DB).
   const sendTyping = () => {
@@ -193,9 +197,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     const ch = sel; const rt = reply?.id ?? null;
     const mentioned = initial.agents.filter((a) => a.id !== meId && body.includes("@" + a.name)).map((a) => a.id);
     setText(""); setReply(null); setMention(null);
-    const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body, mentions: mentioned, created_at: new Date().toISOString(), reply_to: rt, edited: false, deleted: false, reactions: [], type: "text", media_url: null, media_mime: null, media_name: null, forwarded: false };
-    setMsgs((m) => [...m, opt]);
-    start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshThreads(); });
+    const opt: InternalMsg = { id: "tmp" + extra.length, channel: ch, author_id: meId, body, mentions: mentioned, created_at: new Date().toISOString(), reply_to: rt, edited: false, deleted: false, reactions: [], type: "text", media_url: null, media_mime: null, media_name: null, forwarded: false };
+    setExtra((e) => [...e, opt]);
+    start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshMsgs(selRef.current); refreshThreads(); });
   }
   const stageFiles = (files: FileList | File[]) => setStaged((s) => [...s, ...Array.from(files)]);
   // Upload staged files, then send (caption goes on the first item, like the WhatsApp chat).
@@ -221,7 +225,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
   const openStickers = () => { setEmojiRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };
-  const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + msgs.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setMsgs((m) => [...m, opt]); start(async () => { await sendInternalSticker(ch, s.id); refreshThreads(); }); };
+  const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + extra.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setExtra((e) => [...e, opt]); start(async () => { await sendInternalSticker(ch, s.id); refreshMsgs(selRef.current); refreshThreads(); }); };
 
   const selThread = threads.find((t) => t.key === sel);
 
@@ -349,6 +353,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
             }
             return <Fragment key={row.m.id}>{daySep}{renderBubble(row.m)}</Fragment>;
           })}
+          {extra.map((m) => <Fragment key={m.id}>{renderBubble(m)}</Fragment>)}
           {typingName && <div className="msg in"><div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div></div>}
         </div>
 
