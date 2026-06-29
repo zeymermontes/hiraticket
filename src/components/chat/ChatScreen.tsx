@@ -769,6 +769,17 @@ export function ChatScreen({
     };
   }, [list, tab, areaF, showArchived, meId]);
 
+  // The open chat belongs to the current tab only if its (live) assignment matches it. This keeps
+  // a leftover/default-open chat from another tab (e.g. an unassigned one while on "Míos") from
+  // showing — we surface the "pick a conversation" indicator instead.
+  const detailInView = useMemo(() => {
+    if (!detail) return false;
+    const assignee = (list.find((c) => c.id === detail.id)?.assignee_id) ?? detail.assignee_id;
+    if (tab === "mine") return assignee === meId;
+    if (tab === "unassigned") return assignee == null;
+    return true;
+  }, [detail, list, tab, meId]);
+
   async function emptyTrash() {
     if (!confirm(lang === "es"
       ? `¿Eliminar permanentemente ${chipCounts.trash} chat(s) sin actividad en 90+ días y TODOS sus mensajes? No se puede deshacer.`
@@ -786,7 +797,7 @@ export function ChatScreen({
       className="chat"
       style={{
         position: "relative",
-        gridTemplateColumns: detail && ctxVisible
+        gridTemplateColumns: detail && detailInView && ctxVisible
           ? `${listW}px ${ctxW}px minmax(300px,1fr)`
           : `${listW}px minmax(300px,1fr)`,
       }}
@@ -918,7 +929,7 @@ export function ChatScreen({
         </div>
       </div>
 
-      {detail ? (
+      {detail && detailInView ? (
         <>
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
