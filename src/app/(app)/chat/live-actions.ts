@@ -7,6 +7,7 @@ import {
   type ChatMessage, type ConvListItem, type ConvDetail, type StickerItem,
 } from "@/lib/chat";
 import { getChatBadges, getNotifications, getNotificationFeed, type Notif, type NotifFilter } from "@/lib/notifications";
+import { getInternalUnread } from "@/lib/internal";
 import { getMyBusiness } from "@/lib/queries";
 
 /** Paginated notification feed for the bell + /notifications page (infinite scroll). */
@@ -71,15 +72,16 @@ export async function liveConvHeader(convId: string): Promise<Partial<ConvDetail
 }
 
 /** Nav badges + bell notifications, so the Shell can stay live without a full route refresh. */
-export async function liveBadges(businessId: string): Promise<{ mine: number; unassigned: number; notifications: Notif[] }> {
+export async function liveBadges(businessId: string): Promise<{ mine: number; unassigned: number; internal: number; notifications: Notif[] }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { mine: 0, unassigned: 0, notifications: [] };
+  if (!user) return { mine: 0, unassigned: 0, internal: 0, notifications: [] };
   const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
-  const [badges, notifications] = await Promise.all([
+  const [badges, internal, notifications] = await Promise.all([
     getChatBadges(businessId, user.id),
+    getInternalUnread(businessId, user.id),
     getNotifications(businessId, user.id, myName),
   ]);
-  return { mine: badges.mine, unassigned: badges.unassigned, notifications };
+  return { mine: badges.mine, unassigned: badges.unassigned, internal, notifications };
 }

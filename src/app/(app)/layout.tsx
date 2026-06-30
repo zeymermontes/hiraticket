@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
 import { getChatBadges, getNotifications } from "@/lib/notifications";
+import { getInternalUnread } from "@/lib/internal";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getStages } from "@/lib/business";
 import { Shell, type ShellUser } from "@/components/Shell";
@@ -47,11 +48,12 @@ export default async function AppLayout({
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
   const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName };
 
-  const [chatBadges, notifications, sessions, stages] = await Promise.all([
+  const [chatBadges, notifications, sessions, stages, internalUnread] = await Promise.all([
     getChatBadges(business.id, user.id),
     getNotifications(business.id, user.id, myName),
     getSessions(business.id),
     getStages(business.id),
+    getInternalUnread(business.id, user.id),
   ]);
 
   // Open orders = not yet in the terminal stage. Bounded head-count (no full table scan).
@@ -65,7 +67,7 @@ export default async function AppLayout({
     <Shell
       user={shellUser}
       businessId={business.id}
-      badges={{ chat: chatBadges.mine, orders: openOrders }}
+      badges={{ chat: chatBadges.mine, orders: openOrders, internal: internalUnread }}
       secondaryBadges={{ chat: chatBadges.unassigned }}
       notifications={notifications}
       connected={isConnected(sessions)}

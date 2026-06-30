@@ -91,6 +91,23 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
   return { threads: [team, ...dms], agents };
 }
 
+/** Total unread internal messages for the user across every channel they can see (RLS-scoped) —
+ *  drives the "Equipo" nav badge. Light query: ids + timestamps only, no agent/title work. */
+export async function getInternalUnread(businessId: string, userId: string): Promise<number> {
+  const supabase = await createClient();
+  const [readsRes, msgsRes] = await Promise.all([
+    supabase.from("internal_reads").select("channel, last_read_at").eq("business_id", businessId).eq("user_id", userId),
+    supabase.from("internal_messages").select("channel, created_at").eq("business_id", businessId).neq("author_id", userId).order("created_at", { ascending: false }).limit(500),
+  ]);
+  const reads = new Map<string, string>(((readsRes.data ?? []) as { channel: string; last_read_at: string }[]).map((r) => [r.channel, r.last_read_at]));
+  let n = 0;
+  for (const m of (msgsRes.data ?? []) as { channel: string; created_at: string }[]) {
+    const lastRead = reads.get(m.channel);
+    if (!lastRead || m.created_at > lastRead) n++;
+  }
+  return n;
+}
+
 /** Messages for one internal channel, oldest→newest, paginated (newest page, or older than `before`). */
 export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; limit?: number }): Promise<InternalMsg[]> {
   const supabase = await createClient();

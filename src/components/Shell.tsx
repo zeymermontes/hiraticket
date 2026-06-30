@@ -123,7 +123,7 @@ const PRIMARY: NavItem[] = [
   { id: "orders", href: "/orders", icon: "orders", labelKey: "nav_orders" },
   { id: "kanban", href: "/kanban", icon: "kanban", labelKey: "nav_kanban" },
   { id: "contacts", href: "/contacts", icon: "user", labelKey: "nav_contacts" },
-  { id: "internal", href: "/internal", icon: "agents", labelKey: "nav_internal" },
+  { id: "internal", href: "/internal", icon: "agents", labelKey: "nav_internal", red: true },
   { id: "agenda", href: "/agenda", icon: "calendar", labelKey: "nav_agenda" },
 ];
 
@@ -163,7 +163,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
         <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : it.id === "contacts" && personal ? (lang === "es" ? "Contactos" : "Contacts") : t(it.labelKey)}</span>
         <span className="rail-badges">
           {badge != null && badge > 0 && (
-            <span className={"badge" + (it.red ? " badge-red" : "")} title={lang === "es" ? "Asignados a ti" : "Assigned to you"}>{badge}</span>
+            <span className={"badge" + (it.red ? " badge-red" : "")} title={it.id === "internal" ? (lang === "es" ? "Mensajes del equipo sin leer" : "Unread team messages") : (lang === "es" ? "Asignados a ti" : "Assigned to you")}>{badge}</span>
           )}
           {secondary != null && secondary > 0 && (
             <span className="badge badge-new" title={lang === "es" ? "Nuevos sin asignar" : "New, unassigned"}>{secondary}</span>
@@ -267,11 +267,17 @@ export function Shell({
   useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications]);
   const refreshBadges = useCallback(() => {
     liveBadges(businessId).then((r) => {
-      setB((cur) => ({ ...cur, chat: r.mine }));
+      setB((cur) => ({ ...cur, chat: r.mine, internal: r.internal }));
       setSb({ chat: r.unassigned });
       setNotifs(r.notifications);
     }).catch(() => {});
   }, [businessId]);
+  // Let pages signal "badges may have changed" (e.g. the team chat after marking a channel read).
+  useEffect(() => {
+    const h = () => refreshBadges();
+    window.addEventListener("ht:badges", h);
+    return () => window.removeEventListener("ht:badges", h);
+  }, [refreshBadges]);
 
   return (
     <AppProvider personal={personal}>

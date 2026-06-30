@@ -99,6 +99,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const teamLabel = lang === "es" ? "Equipo" : "Team";
   const title = (t: InternalThread) => (t.kind === "team" ? teamLabel : t.title);
 
+  // Tell the Shell to refetch the nav "Equipo" badge after we mark a channel read.
+  const pokeBadges = () => { try { window.dispatchEvent(new Event("ht:badges")); } catch {} };
   const refreshThreads = useCallback(() => { loadInternalThreads().then((r) => { if (r) setThreads(r.threads); }).catch(() => {}); }, []);
   // Merge the latest page into what's loaded (keeps older history + applies edits/reactions/deletes).
   const refreshMsgs = useCallback((ch: string) => {
@@ -109,7 +111,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     try { localStorage.setItem("ht.internalCh." + businessId, ch); } catch {} // remember across tab changes
     scrollAction.current = "bottom";
     loadInternalMessages(ch).then((fresh) => { seen.current = new Set(fresh.map((m) => m.id)); setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
-    start(async () => { await markInternalRead(ch); refreshThreads(); });
+    start(async () => { await markInternalRead(ch); refreshThreads(); pokeBadges(); });
   }, [refreshThreads, businessId]);
 
   async function loadOlder() {
@@ -144,7 +146,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
       .on("postgres_changes", { event: "*", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, (p) => {
         const row = (p.new ?? p.old) as { channel?: string };
         refreshThreads();
-        if (row?.channel && row.channel === selRef.current) { refreshMsgs(selRef.current); markInternalRead(selRef.current).catch(() => {}); }
+        if (row?.channel && row.channel === selRef.current) { refreshMsgs(selRef.current); markInternalRead(selRef.current).catch(() => {}); pokeBadges(); }
       })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const t = payload as { channel?: string; userId?: string; name?: string };
