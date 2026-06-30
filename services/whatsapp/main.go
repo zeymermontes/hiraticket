@@ -1110,13 +1110,21 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
 }
 
+// dayCfg is one weekday's business hours (message_hours, per-day schedule).
+type dayCfg struct {
+	Open bool   `json:"open"`
+	From string `json:"from"` // "HH:MM"
+	To   string `json:"to"`   // "HH:MM"
+}
+
 // scheduleCfg is the per-flow config stored in automations.trigger_config for the time/date triggers.
 type scheduleCfg struct {
-	OpenFrom      string `json:"open_from"` // "HH:MM" business opens (message_hours)
-	OpenTo        string `json:"open_to"`   // "HH:MM" business closes (message_hours)
-	Date          string `json:"date"`      // "YYYY-MM-DD" holiday (message_date)
-	Recurring     bool   `json:"recurring"` // holiday repeats every year (month+day only)
-	CooldownHours int    `json:"cooldown_hours"`
+	Days          map[string]dayCfg `json:"days"`      // "0".."6" (Sun..Sat) business hours (message_hours)
+	OpenFrom      string            `json:"open_from"` // legacy single-window open (message_hours)
+	OpenTo        string            `json:"open_to"`   // legacy single-window close
+	Date          string            `json:"date"`      // "YYYY-MM-DD" holiday (message_date)
+	Recurring     bool              `json:"recurring"` // holiday repeats every year (month+day only)
+	CooldownHours int               `json:"cooldown_hours"`
 }
 
 var placeholderRe = regexp.MustCompile(`{{[^}]*}}`)
@@ -1184,14 +1192,30 @@ func (m *Manager) runScheduleAutomations(ctx context.Context, businessID, convID
 		match := false
 		switch f.ttype {
 		case "message_hours":
-			openMin, closeMin := hhmmToMin(f.cfg.OpenFrom), hhmmToMin(f.cfg.OpenTo)
-			if openMin >= 0 && closeMin >= 0 && openMin != closeMin {
-				nowMin := now.Hour()*60 + now.Minute()
-				if openMin < closeMin {
-					match = nowMin < openMin || nowMin >= closeMin // outside daytime hours
+			// Resolve today's hours from the per-day schedule, falling back to the legacy single window.
+			day, hasDay := dayCfg{}, false
+			if f.cfg.Days != nil {
+				if d, ok := f.cfg.Days[strconv.Itoa(int(now.Weekday()))]; ok { // Weekday: Sun=0..Sat=6
+					day, hasDay = d, true
+				}
+			}
+			if !hasDay && f.cfg.OpenFrom != "" && f.cfg.OpenTo != "" {
+				day, hasDay = dayCfg{Open: true, From: f.cfg.OpenFrom, To: f.cfg.OpenTo}, true
+			}
+			if hasDay {
+				if !day.Open {
+					match = true // closed all day → always outside hours
 				} else {
-					// Overnight business (opens in the evening) — closed window is the gap [close, open).
-					match = nowMin >= closeMin && nowMin < openMin
+					openMin, closeMin := hhmmToMin(day.From), hhmmToMin(day.To)
+					if openMin >= 0 && closeMin >= 0 && openMin != closeMin {
+						nowMin := now.Hour()*60 + now.Minute()
+						if openMin < closeMin {
+							match = nowMin < openMin || nowMin >= closeMin // outside daytime hours
+						} else {
+							// Overnight business (opens in the evening) — closed window is [close, open).
+							match = nowMin >= closeMin && nowMin < openMin
+						}
+					}
 				}
 			}
 		case "message_date":

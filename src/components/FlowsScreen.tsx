@@ -21,6 +21,26 @@ const TRIGGER_ICON: Record<string, string> = {
   message_hours: "moon", message_date: "calendar",
 };
 const isSchedule = (t: string) => t === "message_hours" || t === "message_date";
+
+// Per-day business hours. Keyed by weekday number 0=Sun..6=Sat (matches JS getDay() and Go Weekday),
+// displayed Monday-first. A day that's not "open" counts as outside-hours all day.
+type DayHours = { open: boolean; from: string; to: string };
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const DAY_LABEL: Record<number, { es: string; en: string }> = {
+  1: { es: "Lun", en: "Mon" }, 2: { es: "Mar", en: "Tue" }, 3: { es: "Mié", en: "Wed" },
+  4: { es: "Jue", en: "Thu" }, 5: { es: "Vie", en: "Fri" }, 6: { es: "Sáb", en: "Sat" }, 0: { es: "Dom", en: "Sun" },
+};
+const defaultDays = (): DayHours[] => Array.from({ length: 7 }, () => ({ open: true, from: "10:00", to: "17:00" }));
+
+/** Compact card summary for a per-day (or legacy single-window) hours config. */
+function hoursSummary(cfg: { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string }, lang: "es" | "en"): string {
+  if (!cfg.days) return `${cfg.open_from ?? "?"}–${cfg.open_to ?? "?"}`;
+  const open = Object.values(cfg.days).filter((d) => d.open);
+  if (open.length === 0) return lang === "es" ? "Siempre cerrado" : "Always closed";
+  const ranges = new Set(open.map((d) => `${d.from}–${d.to}`));
+  if (ranges.size === 1) return `${[...ranges][0]} · ${open.length}${lang === "es" ? " días" : " days"}`;
+  return lang === "es" ? "Horario por día" : "Per-day hours";
+}
 const triggerLabel = (key: string, personal: boolean, lang: "es" | "en") =>
   key === "order_stage" && personal ? (lang === "es" ? "Una tarea cambia de etapa" : "A task changes stage") : (TRIGGERS[key]?.[lang] ?? key);
 
@@ -54,9 +74,9 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
 
   const payload = w.action_payload as { template?: string; area?: string; agent?: string; tag?: string };
   const act = ACTIONS[w.action_type] ?? { es: w.action_type, en: w.action_type, icon: "bolt" };
-  const cfg = (w.trigger_config ?? {}) as { open_from?: string; open_to?: string; date?: string; recurring?: boolean };
+  const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean };
   const triggerVal = w.trigger_type === "message_hours"
-    ? `${cfg.open_from ?? "?"}–${cfg.open_to ?? "?"}`
+    ? hoursSummary(cfg, lang)
     : w.trigger_type === "message_date"
       ? holidayLabel(cfg.date, cfg.recurring, lang)
       : w.trigger_value
@@ -119,8 +139,7 @@ export function FlowsScreen({
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [tag, setTag] = useState("");
   // Schedule config (message_hours / message_date triggers).
-  const [openFrom, setOpenFrom] = useState("10:00");
-  const [openTo, setOpenTo] = useState("17:00");
+  const [hourDays, setHourDays] = useState<DayHours[]>(defaultDays);
   const [holidayDate, setHolidayDate] = useState("");
   const [recurring, setRecurring] = useState(true);
   const [cooldown, setCooldown] = useState("6");
@@ -134,12 +153,12 @@ export function FlowsScreen({
     setEditId(null); setName(""); setTag("");
     setTrigger("order_stage"); setStageId(""); setStatusVal("open"); setAction("send_template");
     setTemplate(cannedTitles[0] ?? ""); setAreaId(areas[0]?.id ?? ""); setAgentId(agents[0]?.id ?? "");
-    setOpenFrom("10:00"); setOpenTo("17:00"); setHolidayDate(""); setRecurring(true); setCooldown("6");
+    setHourDays(defaultDays()); setHolidayDate(""); setRecurring(true); setCooldown("6");
   }
 
   function startEdit(w: Automation) {
     const p = (w.action_payload ?? {}) as { template?: string; area?: string; agent?: string; tag?: string };
-    const cfg = (w.trigger_config ?? {}) as { open_from?: string; open_to?: string; date?: string; recurring?: boolean; cooldown_hours?: number };
+    const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean; cooldown_hours?: number };
     setEditId(w.id);
     setName(w.name);
     setTrigger(w.trigger_type);
@@ -151,8 +170,12 @@ export function FlowsScreen({
     setAreaId(p.area ?? areas[0]?.id ?? "");
     setAgentId(p.agent ?? agents[0]?.id ?? "");
     setTag(p.tag ?? "");
-    setOpenFrom(cfg.open_from ?? "10:00");
-    setOpenTo(cfg.open_to ?? "17:00");
+    if (cfg.days) {
+      setHourDays(Array.from({ length: 7 }, (_, i) => { const d = cfg.days![String(i)] ?? {}; return { open: d.open ?? false, from: d.from ?? "10:00", to: d.to ?? "17:00" }; }));
+    } else if (cfg.open_from) {
+      // Legacy single-window flow → apply that window to every day.
+      setHourDays(Array.from({ length: 7 }, () => ({ open: true, from: cfg.open_from!, to: cfg.open_to ?? "17:00" })));
+    } else setHourDays(defaultDays());
     setHolidayDate(cfg.date ?? "");
     setRecurring(cfg.recurring ?? true);
     setCooldown(String(cfg.cooldown_hours ?? 6));
@@ -166,7 +189,7 @@ export function FlowsScreen({
     const effAction = isSchedule(trigger) ? "send_template" : action;
     const cool = Math.max(0, Math.round(Number(cooldown) || 0));
     const schedule = trigger === "message_hours"
-      ? { open_from: openFrom, open_to: openTo, cooldown_hours: cool }
+      ? { days: Object.fromEntries(hourDays.map((d, i) => [String(i), { open: d.open, from: d.from, to: d.to }])), cooldown_hours: cool }
       : trigger === "message_date"
         ? { date: holidayDate, recurring, cooldown_hours: cool }
         : undefined;
@@ -241,11 +264,30 @@ export function FlowsScreen({
             )}
             {trigger === "message_hours" && (
               <>
-                <div className="row gap-2">
-                  <div className="col gap-1 grow"><label className="lbl">{lang === "es" ? "Abre" : "Opens"}</label><input className="inp-inline" type="time" value={openFrom} onChange={(e) => setOpenFrom(e.target.value)} /></div>
-                  <div className="col gap-1 grow"><label className="lbl">{lang === "es" ? "Cierra" : "Closes"}</label><input className="inp-inline" type="time" value={openTo} onChange={(e) => setOpenTo(e.target.value)} /></div>
+                <label className="lbl">{lang === "es" ? "Horario de atención" : "Business hours"}</label>
+                <div className="col gap-1">
+                  {DAY_ORDER.map((wd) => {
+                    const d = hourDays[wd];
+                    const set = (patch: Partial<DayHours>) => setHourDays((prev) => prev.map((x, i) => (i === wd ? { ...x, ...patch } : x)));
+                    return (
+                      <div key={wd} className="row gap-2" style={{ alignItems: "center" }}>
+                        <span style={{ width: 32, fontSize: 13, fontWeight: 600, flex: "none" }}>{DAY_LABEL[wd][lang]}</span>
+                        <label className="row gap-1" style={{ alignItems: "center", cursor: "pointer", width: 74, flex: "none" }}>
+                          <input type="checkbox" checked={d.open} onChange={(e) => set({ open: e.target.checked })} />
+                          <span className="t-xs">{lang === "es" ? "Abierto" : "Open"}</span>
+                        </label>
+                        {d.open ? (
+                          <>
+                            <input className="inp-inline" style={{ minWidth: 0, flex: 1 }} type="time" value={d.from} onChange={(e) => set({ from: e.target.value })} />
+                            <span className="muted">–</span>
+                            <input className="inp-inline" style={{ minWidth: 0, flex: 1 }} type="time" value={d.to} onChange={(e) => set({ to: e.target.value })} />
+                          </>
+                        ) : <span className="t-xs muted grow">{lang === "es" ? "Cerrado" : "Closed"}</span>}
+                      </div>
+                    );
+                  })}
                 </div>
-                <span className="t-xs muted">{lang === "es" ? `Fuera de ${openFrom}–${openTo} (hora del negocio) se responde con la plantilla.` : `Outside ${openFrom}–${openTo} (business time) the template is sent.`}</span>
+                <span className="t-xs muted">{lang === "es" ? "Fuera del horario de cada día (o en días cerrados) se responde con la plantilla." : "Outside each day's hours (or on closed days) the template is sent."}</span>
               </>
             )}
             {trigger === "message_date" && (
