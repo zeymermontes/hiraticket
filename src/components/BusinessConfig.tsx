@@ -86,7 +86,8 @@ export function BusinessConfig({
         <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Configura tus etapas y áreas" : "Configure your stages and areas"}</span>
       </div>
 
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         {/* Vertical + object name */}
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
           <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Tipo de espacio" : "Workspace type"}</h4></div>
@@ -225,6 +226,7 @@ export function BusinessConfig({
             </div>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );
