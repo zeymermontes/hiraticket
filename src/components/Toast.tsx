@@ -10,6 +10,14 @@ interface Toast extends ToastInput { id: number }
 const ToastCtx = createContext<{ push: (t: ToastInput) => void }>({ push: () => {} });
 export const useToast = () => useContext(ToastCtx);
 
+/** Toast "flujo activado" for each automation that fired. Pass the `flows` array a server action returns. */
+export function useFlowToast() {
+  const { push } = useToast();
+  return useCallback((flows: string[] | undefined, lang: "es" | "en" = "es") => {
+    for (const f of flows ?? []) push({ kind: "success", title: lang === "es" ? "Flujo activado" : "Flow triggered", message: f, href: "/flows" });
+  }, [push]);
+}
+
 const ICON: Record<ToastKind, string> = { info: "bell", success: "check", warn: "clock", mention: "at" };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {

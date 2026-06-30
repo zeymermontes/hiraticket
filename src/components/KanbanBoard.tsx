@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useFlowToast } from "@/components/Toast";
 import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO } from "@/lib/types";
 import type { KanbanOrder, KanbanItem } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
@@ -27,6 +28,7 @@ export function KanbanBoard({
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
+  const flowToast = useFlowToast();
   const [, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export function KanbanBoard({
     if (!id) return;
     start(async () => {
       if (products) await setItemStage(id, colId);
-      else if (effGroup === "status") await moveOrderStage(id, colId);
+      else if (effGroup === "status") { const r = await moveOrderStage(id, colId); flowToast(r.flows, lang); }
       else await moveOrderArea(id, colId);
       router.refresh();
     });

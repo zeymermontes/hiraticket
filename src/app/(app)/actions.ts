@@ -14,28 +14,31 @@ async function orderBusiness(orderId: string): Promise<string | null> {
   return (data?.business_id as string) ?? null;
 }
 
-/** Move an order to a new pipeline stage (Kanban drag / status change). */
-export async function moveOrderStage(orderId: string, stageId: string): Promise<void> {
+/** Move an order to a new pipeline stage (Kanban drag / status change). Returns the names of any
+ *  flows that fired so the caller can toast "flujo activado". */
+export async function moveOrderStage(orderId: string, stageId: string): Promise<{ flows: string[] }> {
   const { supabase, userId } = await actorCtx();
   const businessId = await orderBusiness(orderId);
-  if (!businessId) return;
+  if (!businessId) return { flows: [] };
   await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).eq("id", orderId);
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId,
     actor_id: userId, kind: "status", text: "Cambio de etapa",
   });
-  await runStageAutomations(orderId, businessId, stageId, userId);
+  const flows = await runStageAutomations(orderId, businessId, stageId, userId);
   revalidatePath("/kanban");
   revalidatePath("/orders");
   revalidatePath("/chat");
   revalidatePath("/flows");
+  return { flows };
 }
 
-/** Fire enabled automations triggered by an order reaching a stage. */
-async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null) {
+/** Fire enabled automations triggered by an order reaching a stage. Returns fired flow names. */
+async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null): Promise<string[]> {
   const supabase = await createClient();
+  const fired: string[] = [];
   const { data: autos } = await supabase
-    .from("automations").select("id, action_type, action_payload, trigger_value, runs")
+    .from("automations").select("id, name, action_type, action_payload, trigger_value, runs")
     .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "order_stage");
 
   for (const a of autos ?? []) {
@@ -86,7 +89,9 @@ async function runStageAutomations(orderId: string, businessId: string, stageId:
     }
 
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
+    fired.push((a.name as string) || "Flujo");
   }
+  return fired;
 }
 
 /** Move an order to a different area/department. */

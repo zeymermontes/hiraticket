@@ -207,10 +207,10 @@ export async function sendMediaMessage(
 export async function setConvStatus(
   convId: string,
   status: "open" | "pending" | "resolved",
-): Promise<void> {
+): Promise<{ flows: string[] }> {
   const { supabase, userId } = await ctx();
   const businessId = await businessOf(convId);
-  if (!businessId) return;
+  if (!businessId) return { flows: [] };
 
   await supabase
     .from("conversations")
@@ -224,14 +224,16 @@ export async function setConvStatus(
     kind: status === "resolved" ? "check" : "status",
     text: `Estado → ${status}`,
   });
-  await runConvStatusAutomations(convId, businessId, status, userId);
+  const flows = await runConvStatusAutomations(convId, businessId, status, userId);
+  return { flows };
 }
 
-/** Fire enabled automations triggered by a conversation reaching a status. */
-async function runConvStatusAutomations(convId: string, businessId: string, status: string, userId: string | null) {
+/** Fire enabled automations triggered by a conversation reaching a status. Returns fired flow names. */
+async function runConvStatusAutomations(convId: string, businessId: string, status: string, userId: string | null): Promise<string[]> {
   const supabase = await createClient();
+  const fired: string[] = [];
   const { data: autos } = await supabase
-    .from("automations").select("id, action_type, action_payload, trigger_value, runs")
+    .from("automations").select("id, name, action_type, action_payload, trigger_value, runs")
     .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "conversation_status");
 
   for (const a of autos ?? []) {
@@ -265,7 +267,9 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
       }
     }
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
+    fired.push((a.name as string) || "Flujo");
   }
+  return fired;
 }
 
 /** Mark a conversation read (reset unread) when it's opened. */

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useFlowToast } from "@/components/Toast";
 import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
 import type { OrderDetail } from "@/lib/orders";
@@ -38,6 +39,7 @@ export function OrderDrawer({
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
+  const flowToast = useFlowToast();
   const [pending, start] = useTransition();
   // Keep the detail live: re-seed from the prop, and re-fetch after each mutation so the drawer
   // updates in place (it's often opened from local state — Kanban/chat — that router.refresh
@@ -107,7 +109,7 @@ export function OrderDrawer({
   // When the order's items carry their own stage, moving the order stage prompts whether to drag
   // the items along (sync) or leave them as they are.
   const hasItemStages = detail.product_stages && detail.items.length > 0;
-  const moveOrderTo = (s: Stage) => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, () => moveOrderStage(detail.id, s.id));
+  const moveOrderTo = (s: Stage) => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, async () => { const r = await moveOrderStage(detail.id, s.id); flowToast(r.flows, lang); });
   const goToStage = (s: Stage | undefined) => {
     if (!s || s.id === detail.stage_id) return;
     if (hasItemStages) setStagePrompt(s);

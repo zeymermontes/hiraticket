@@ -26,7 +26,7 @@ import {
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs,
 } from "@/app/(app)/chat/actions";
 import { menuStyle } from "@/lib/popover";
-import { useToast } from "@/components/Toast";
+import { useToast, useFlowToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
@@ -1071,6 +1071,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [savingSticker, setSavingSticker] = useState<StickerItem | null>(null); // sticker being added to favorites (name/tags form)
   const [confirmSticker, setConfirmSticker] = useState<StickerItem | null>(null); // sticker awaiting send confirmation
   const { push } = useToast();
+  const flowToast = useFlowToast();
 
   async function loadStickers(showSpinner = true) {
     if (showSpinner) setStickerLoading(true);
@@ -1342,7 +1343,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         <TransferControl detail={detail} agents={agents} areas={areas} />
         {detail.status !== "resolved" ? (
           <button className="iconbtn" title={lang === "es" ? "Resolver" : "Resolve"} style={{ color: "var(--green)" }} disabled={pending}
-            onClick={() => { patch({ status: "resolved" }); start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); }); }}>
+            onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}>
             {pending ? <Spinner size={15} /> : <Icon name="check" />}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
@@ -1749,6 +1750,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
   const router = useRouter();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
+  const flowToast = useFlowToast();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -1942,8 +1944,8 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
                 <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
               </button>
               {detail.status === "resolved"
-                ? <button className="act full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "open"); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" disabled={pending} onClick={() => start(async () => { await setConvStatus(detail.id, "resolved"); refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
@@ -1966,6 +1968,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
+  const flowToast = useFlowToast();
   const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   return (
@@ -1976,7 +1979,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 180, zIndex: 201 }}>
             {(["open", "pending", "resolved"] as const).map((s) => (
-              <button className="menu-item" key={s} onClick={() => { close(); patch({ status: s }); start(async () => { await setConvStatus(detail.id, s); refresh(); }); }}>
+              <button className="menu-item" key={s} onClick={() => { close(); patch({ status: s }); start(async () => { const r = await setConvStatus(detail.id, s); flowToast(r.flows, lang); refresh(); }); }}>
                 <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
               </button>
             ))}
