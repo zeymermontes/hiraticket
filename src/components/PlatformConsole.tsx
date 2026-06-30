@@ -75,7 +75,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
       <div className="main">
         <div className="page">
           <div className="phead"><h1>{TABS.find((x) => x.id === tab)?.[lang]}</h1></div>
-          <div className="scroll" style={{ padding: "0 24px 24px" }}>
+          <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 24px 24px" }}>
 
             {tab === "overview" && (
               <>

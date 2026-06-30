@@ -33,7 +33,7 @@ export function ReportsScreen({ data }: { data: ReportData }) {
   return (
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Reportes" : "Reports"}</h1></div>
-      <div className="scroll" style={{ padding: "0 24px 24px" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 24px 24px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
           {personal ? (
             <>

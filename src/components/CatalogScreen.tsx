@@ -23,7 +23,8 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
   return (
     <div className="page">
       <div className="phead"><h1>{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Catálogo" : "Catalog")}</h1><Pill color="slate" large>{products.length}</Pill></div>
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="store" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Productos y servicios" : "Products & services")}</h4>
             <div className="field field-sm" style={{ width: 180 }}><Icon name="search" /><input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} /></div>
@@ -78,6 +79,7 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
             </button>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );

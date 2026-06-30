@@ -50,7 +50,8 @@ export function AgendaScreen({ businessId, appointments }: { businessId: string;
   return (
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Agenda" : "Agenda"}</h1><Pill color="slate" large>{appointments.length}</Pill></div>
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-3" style={{ minWidth: 0 }}>
           <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
             <div className="seg">
@@ -107,6 +108,7 @@ export function AgendaScreen({ businessId, appointments }: { businessId: string;
             </button>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );

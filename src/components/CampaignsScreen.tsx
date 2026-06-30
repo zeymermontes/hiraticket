@@ -26,7 +26,8 @@ export function CampaignsScreen({
   return (
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Campañas" : "Campaigns"}</h1><Pill color="slate" large>{campaigns.length}</Pill></div>
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="send" size={16} /><h4>{lang === "es" ? "Historial" : "History"}</h4></div>
           <div className="tablewrap">
@@ -65,6 +66,7 @@ export function CampaignsScreen({
             <div className="t-xs muted">{lang === "es" ? "Envío simulado a tus contactos (la entrega real usa el worker de WhatsApp)." : "Simulated send to your contacts (real delivery uses the WhatsApp worker)."}</div>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );

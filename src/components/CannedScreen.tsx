@@ -183,7 +183,8 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
         <Pill color="slate" large>{items.length}</Pill>
       </div>
 
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-3">
           {/* variables reference */}
           <section className="ws-block">
@@ -226,6 +227,7 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
             <button className="btn btn-primary btn-block" disabled={pending || !title.trim() || !body.trim()} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"}</button>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );

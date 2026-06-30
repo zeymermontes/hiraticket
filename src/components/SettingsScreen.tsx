@@ -131,7 +131,8 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Ajustes" : "Settings"}</h1></div>
 
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
           <div className="ws-block-head">
             <Icon name="whatsapp" size={16} />
@@ -210,6 +211,7 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
             <a className="btn btn-outline btn-block" href="/logout"><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
           </div>
         </section>
+       </div>
       </div>
     </div>
   );

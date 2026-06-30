@@ -230,7 +230,8 @@ export function FlowsScreen({
         <div className="ws-block" style={{ flex: 1, minWidth: 200 }}><div className="ws-block-body row gap-3" style={{ alignItems: "center" }}><span className="t-ic" style={{ width: 38, height: 38, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={18} /></span><div><div className="mono" style={{ fontWeight: 800, fontSize: 22 }}>{automations.reduce((s, w) => s + (w.runs || 0), 0).toLocaleString("es-MX")}</div><div className="t-xs muted">{lang === "es" ? "Mensajes automatizados" : "Messages automated"}</div></div></div></div>
       </div>
 
-      <div className="scroll" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-2">
           {filtered.length === 0 ? (
             <div className="empty" style={{ padding: "48px 24px" }}>
@@ -340,6 +341,7 @@ export function FlowsScreen({
             {editId && <button className="btn btn-outline btn-block" onClick={resetForm}>{lang === "es" ? "Cancelar" : "Cancel"}</button>}
           </div>
         </section>
+       </div>
       </div>
     </div>
   );
