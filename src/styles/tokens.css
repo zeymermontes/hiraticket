@@ -126,9 +126,6 @@ a { color: inherit; text-decoration: none; }
    bare `.scroll` (no companion layout class) actually scrolls instead of overflowing. Companion
    classes loaded later (.board, .modal, .tablewrap, .thread…) override `overflow` where needed. */
 .scroll { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; overflow-y: auto; }
-/* Page content regions are flex children of `.page` (which clips overflow): make them fill the
-   remaining height and scroll, instead of growing past the page and getting cut off. */
-.page > .scroll { flex: 1; min-height: 0; }
 .scroll::-webkit-scrollbar { width: 10px; height: 10px; }
 .scroll::-webkit-scrollbar-thumb {
   background: var(--border-strong); border-radius: 999px;
