@@ -46,7 +46,7 @@ export function TransferModal({
             <button className={tab === "area" ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => { setTab("area"); setSel(""); }}>{lang === "es" ? "A un área" : "To an area"}</button>
             {allowUnassign && <button className={tab === "unassign" ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => { setTab("unassign"); setSel(""); }}>{lang === "es" ? "Sin asignar" : "Unassign"}</button>}
           </div>
-          <div className="col gap-2 scroll" style={{ maxHeight: 260 }}>
+          <div className="col gap-2 scroll" style={{ maxHeight: 260, overflowY: "auto" }}>
             {tab === "unassign" ? (
               <div className="row gap-2" style={{ alignItems: "flex-start", padding: 12, borderRadius: 10, background: "var(--surface-2)" }}>
                 <Icon name="agents" size={18} />

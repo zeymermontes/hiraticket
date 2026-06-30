@@ -1704,7 +1704,7 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
           {preview && <div className="t-xs muted truncate" style={{ marginBottom: 8, padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8 }}>{preview}</div>}
           <div className="field field-filled"><Icon name="search" size={15} /><input placeholder={lang === "es" ? "Buscar chat…" : "Search chat…"} value={q} onChange={(e) => setQ(e.target.value)} autoFocus /></div>
         </div>
-        <div className="scroll" style={{ flex: 1, padding: "0 8px", minHeight: 0 }}>
+        <div className="scroll" style={{ flex: 1, padding: "0 8px", minHeight: 0, overflowY: "auto" }}>
           {view.map((c) => (
             <button key={c.id} className={"menu-item" + (sel.has(c.id) ? " on" : "")} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", height: "auto", padding: "8px 10px" }} onClick={() => toggle(c.id)}>
               <input type="checkbox" checked={sel.has(c.id)} readOnly style={{ pointerEvents: "none" }} />
