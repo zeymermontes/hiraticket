@@ -124,15 +124,15 @@ const PRIMARY: NavItem[] = [
   { id: "kanban", href: "/kanban", icon: "kanban", labelKey: "nav_kanban" },
   { id: "contacts", href: "/contacts", icon: "user", labelKey: "nav_contacts" },
   { id: "internal", href: "/internal", icon: "agents", labelKey: "nav_internal", red: true },
+  { id: "agents", href: "/agents", icon: "agents", labelKey: "nav_agents" },
   { id: "agenda", href: "/agenda", icon: "calendar", labelKey: "nav_agenda" },
 ];
 
 const ADMIN: NavItem[] = [
   { id: "catalog", href: "/catalog", icon: "store", labelKey: "nav_catalog" },
-  { id: "campaigns", href: "/campaigns", icon: "send", labelKey: "nav_campaigns" },
+  // Campañas hidden from the sidebar (route still exists, just not shown).
   { id: "reports", href: "/reports", icon: "layers", labelKey: "nav_reports" },
   { id: "flows", href: "/flows", icon: "bolt", labelKey: "nav_flows" },
-  { id: "agents", href: "/agents", icon: "agents", labelKey: "nav_agents" },
   { id: "canned", href: "/canned", icon: "canned", labelKey: "nav_canned" },
   { id: "business", href: "/business", icon: "sliders", labelKey: "nav_business" },
   { id: "settings", href: "/settings", icon: "settings", labelKey: "nav_settings" },
