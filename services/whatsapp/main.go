@@ -962,7 +962,8 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 
 	var contactID, convID, partner string
 	var unread int
-	var muted bool // when the conversation is muted ("stop listening"), drop the message
+	var muted bool          // when the conversation is muted ("stop listening"), drop the message
+	var priorStatus string  // the conversation's status before this message — used to reopen a resolved chat
 	// Sender identity — only set for group messages, so the UI can show a color-coded name per
 	// participant above each bubble. Empty for 1:1 chats (the conversation header already names them).
 	senderName, senderJID := "", ""
@@ -1021,10 +1022,13 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		} else if err != nil {
 			return
 		}
+		// Reuse the contact's most recent conversation — including a resolved one — so the full history
+		// stays in a single thread. A customer who comes back a week after being resolved lands in the
+		// same chat (it gets reopened below), instead of a fresh conversation with no past context.
 		err = m.db.QueryRowContext(ctx,
-			`SELECT id, unread, muted FROM conversations
-			  WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved'
-			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted)
+			`SELECT id, unread, muted, status FROM conversations
+			  WHERE business_id=$1 AND contact_id=$2
+			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted, &priorStatus)
 		if err == sql.ErrNoRows {
 			if err = m.db.QueryRowContext(ctx,
 				`INSERT INTO conversations (business_id, contact_id, status, unread)
@@ -1032,7 +1036,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				m.log.Errorf("conv insert: %v", err)
 				return
 			}
-			unread = 0
+			unread, priorStatus = 0, "open"
 		} else if err != nil {
 			return
 		}
@@ -1076,17 +1080,26 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID))
+	// A resolved chat that gets a new message (either side) is reopened so it leaves the resolved
+	// bucket and the agent sees it — with the full prior history intact.
+	reopened := priorStatus == "resolved"
+	if reopened {
+		m.exec(ctx, `INSERT INTO events (business_id, parent_type, parent_id, kind, text)
+			VALUES ($1,'conversation',$2,'status','Reabierto por nuevo mensaje')`, s.BusinessID, convID)
+	}
 	if dir == "in" {
-		// A new customer message resurfaces the chat: clear snooze/hidden.
-		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
+		// A new customer message resurfaces the chat: clear snooze/hidden and reopen if it was resolved.
+		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false,
+			status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$2`, unread+1, convID)
 		// Off-hours / holiday auto-reply (schedule-based flows). 1:1 chats only — groups never auto-reply.
 		if !v.Info.IsGroup {
 			m.runScheduleAutomations(ctx, s.BusinessID, convID)
 		}
 	} else {
 		// Outbound — including a reply you sent from your phone. It's been answered, so clear the
-		// unread/pending marker on the conversation.
-		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0 WHERE id=$1`, convID)
+		// unread/pending marker; reopen if it was resolved.
+		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0,
+			status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
 }
