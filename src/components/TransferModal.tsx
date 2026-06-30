@@ -7,27 +7,28 @@ import type { PillColor } from "@/lib/types";
 import type { Area } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 
-export interface TransferDest { type: "agent" | "area"; id: string }
+export interface TransferDest { type: "agent" | "area" | "unassign"; id: string }
 
 /** Shared transfer dialog: agent/area toggle, radio-card list, optional note. */
 export function TransferModal({
-  title, agents, areas, onConfirm, onClose,
+  title, agents, areas, onConfirm, onClose, allowUnassign,
 }: {
   title?: string;
   agents: Agent[];
   areas: Area[];
   onConfirm: (dest: TransferDest, note: string) => Promise<void>;
   onClose: () => void;
+  allowUnassign?: boolean; // show a "Sin asignar" option (conversations only — orders don't support it)
 }) {
   const { lang } = useApp();
-  const [tab, setTab] = useState<"agent" | "area">("agent");
+  const [tab, setTab] = useState<"agent" | "area" | "unassign">("agent");
   const [sel, setSel] = useState("");
   const [note, setNote] = useState("");
   const [pending, start] = useTransition();
 
   function confirm() {
-    if (!sel) return;
-    start(async () => { await onConfirm({ type: tab, id: sel }, note.trim()); onClose(); });
+    if (tab !== "unassign" && !sel) return;
+    start(async () => { await onConfirm({ type: tab, id: tab === "unassign" ? "" : sel }, note.trim()); onClose(); });
   }
 
   return (
@@ -43,9 +44,15 @@ export function TransferModal({
           <div className="seg" style={{ width: "100%" }}>
             <button className={tab === "agent" ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => { setTab("agent"); setSel(""); }}>{lang === "es" ? "A un agente" : "To an agent"}</button>
             <button className={tab === "area" ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => { setTab("area"); setSel(""); }}>{lang === "es" ? "A un área" : "To an area"}</button>
+            {allowUnassign && <button className={tab === "unassign" ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => { setTab("unassign"); setSel(""); }}>{lang === "es" ? "Sin asignar" : "Unassign"}</button>}
           </div>
           <div className="col gap-2 scroll" style={{ maxHeight: 260 }}>
-            {tab === "agent" ? agents.filter((a) => a.role !== "viewer").map((a) => (
+            {tab === "unassign" ? (
+              <div className="row gap-2" style={{ alignItems: "flex-start", padding: 12, borderRadius: 10, background: "var(--surface-2)" }}>
+                <Icon name="agents" size={18} />
+                <span className="t-sm muted">{lang === "es" ? "La conversación quedará sin asignar y disponible para que cualquier agente la tome." : "The conversation will be left unassigned and available for any agent to pick up."}</span>
+              </div>
+            ) : tab === "agent" ? agents.filter((a) => a.role !== "viewer").map((a) => (
               <button key={a.id} onClick={() => setSel(a.id)} style={{ display: "flex", gap: 10, alignItems: "center", padding: 10, borderRadius: 10, textAlign: "left", cursor: "pointer", background: sel === a.id ? "var(--brand-50)" : "var(--surface)", border: "1px solid " + (sel === a.id ? "var(--brand)" : "var(--border)") }}>
                 <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={28} />
                 <span style={{ fontWeight: 600 }}>{a.name}</span>
@@ -65,7 +72,7 @@ export function TransferModal({
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={pending || !sel} onClick={confirm}><Icon name="swap" size={15} />{lang === "es" ? "Transferir" : "Transfer"}</button>
+          <button className="btn btn-primary" disabled={pending || (tab !== "unassign" && !sel)} onClick={confirm}><Icon name="swap" size={15} />{tab === "unassign" ? (lang === "es" ? "Quitar asignación" : "Unassign") : (lang === "es" ? "Transferir" : "Transfer")}</button>
         </div>
       </div>
     </div>

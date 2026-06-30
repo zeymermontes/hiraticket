@@ -446,7 +446,7 @@ export async function snoozeConv(convId: string, untilISO: string | null): Promi
 
 export async function transferConv(
   convId: string,
-  mode: "agent" | "area",
+  mode: "agent" | "area" | "unassign",
   destId: string,
 ): Promise<void> {
   const { supabase, userId } = await ctx();
@@ -454,7 +454,9 @@ export async function transferConv(
   if (!businessId) return;
 
   // A manual transfer is a deliberate reassignment, so it releases any "mantener conmigo" lock.
-  if (mode === "agent") {
+  if (mode === "unassign") {
+    await supabase.from("conversations").update({ assignee_id: null, locked_to: null }).eq("id", convId);
+  } else if (mode === "agent") {
     await supabase.from("conversations").update({ assignee_id: destId, locked_to: null }).eq("id", convId);
   } else {
     // Route to the area's default agent, if set.
@@ -471,6 +473,6 @@ export async function transferConv(
     parent_id: convId,
     actor_id: userId,
     kind: "swap",
-    text: "Transferido",
+    text: mode === "unassign" ? "Devuelto a sin asignar" : "Transferido",
   });
 }

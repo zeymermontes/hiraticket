@@ -1746,14 +1746,15 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
   const { ref, open, rect, toggle, close } = usePopover();
   const [pending, start] = useTransition();
 
-  async function pick(mode: "agent" | "area", id: string) {
+  async function pick(mode: "agent" | "area" | "unassign", id: string) {
     close();
     // Pinned ("mantener conmigo") + reassigning elsewhere → confirm; transferring releases the lock.
-    if (detail.locked_to && (mode === "area" || id !== detail.locked_to)) {
+    if (detail.locked_to && (mode !== "agent" || id !== detail.locked_to)) {
       const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
       if (!(await ask(lockConfirmOpts(name, lang)))) return;
     }
-    if (mode === "agent") patch({ assignee_id: id, locked_to: null });
+    if (mode === "unassign") patch({ assignee_id: null, locked_to: null });
+    else if (mode === "agent") patch({ assignee_id: id, locked_to: null });
     else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
     start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
@@ -1780,6 +1781,12 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
                 <Pill color={ar.color as PillColor}>{ar.name}</Pill>
               </button>
             ))}
+            {detail.assignee_id && <>
+              <div className="menu-sep" />
+              <button className="menu-item" onClick={() => pick("unassign", "")}>
+                <Pill color="slate"><Icon name="agents" size={11} />{lang === "es" ? "Sin asignar" : "Unassign"}</Pill>
+              </button>
+            </>}
           </div>
         </>
       )}
@@ -1958,14 +1965,15 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       </div>
       <div className="col-resizer" onPointerDown={onResizeStart} title="" />
       {showXfer && (
-        <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
+        <TransferModal agents={agents} areas={areas} allowUnassign onClose={() => setShowXfer(false)}
           onConfirm={async (dest) => {
             // Pinned + reassigning elsewhere → confirm; transferring releases the lock.
-            if (detail.locked_to && (dest.type === "area" || dest.id !== detail.locked_to)) {
+            if (detail.locked_to && (dest.type !== "agent" || dest.id !== detail.locked_to)) {
               const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
               if (!(await ask(lockConfirmOpts(name, lang)))) return;
             }
-            if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });
+            if (dest.type === "unassign") patch({ assignee_id: null, locked_to: null });
+            else if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });
             else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
             await transferConv(detail.id, dest.type, dest.id); refresh();
           }} />
