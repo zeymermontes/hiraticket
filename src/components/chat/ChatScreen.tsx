@@ -1747,7 +1747,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu scroll" style={{ position: "fixed", top: rect.bottom + 6, right: window.innerWidth - rect.right, width: 220, maxHeight: 340, zIndex: 201 }}>
+          <div className="menu scroll" style={menuStyle(rect, { width: 220, height: 360, align: "right" })}>
             <div className="menu-label">{lang === "es" ? "A un agente" : "To an agent"}</div>
             {agents.filter((a) => a.role !== "viewer").map((a) => (
               <button className="menu-item" key={a.id} onClick={() => pick("agent", a.id)}>
