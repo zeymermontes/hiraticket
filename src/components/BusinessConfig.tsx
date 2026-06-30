@@ -37,8 +37,15 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
   );
 }
 
+const TIMEZONES = [
+  "America/Mexico_City", "America/Tijuana", "America/Cancun", "America/Monterrey",
+  "America/Bogota", "America/Lima", "America/Santiago", "America/Argentina/Buenos_Aires",
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+  "America/Sao_Paulo", "Europe/Madrid", "UTC",
+];
+
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode,
+  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
 }: {
   businessId: string;
   businessName: string;
@@ -52,6 +59,7 @@ export function BusinessConfig({
   showTyping: boolean;
   allowGroups: boolean;
   mode: "business" | "personal";
+  timezone: string;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -174,6 +182,16 @@ export function BusinessConfig({
               })}>
                 {allowGroups ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
               </button>
+            </div>
+            <div className="row gap-2" style={{ alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Zona horaria" : "Timezone"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Usada por los flujos de horario y asueto para saber qué hora es donde estás." : "Used by schedule & holiday flows to know your local time."}</div>
+              </div>
+              <select className="select" style={{ width: 220 }} value={TIMEZONES.includes(timezone) ? timezone : "America/Mexico_City"}
+                onChange={(e) => run(() => updateBusinessProfile(businessId, { timezone: e.target.value }))}>
+                {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>)}
+              </select>
             </div>
           </div>
         </section>

@@ -30,6 +30,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed the IANA tz database so business timezones resolve on distroless
 
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow"
@@ -165,6 +166,13 @@ end $$;`); err != nil {
 	// "Stop listening": when a conversation is muted, incoming messages are dropped (not stored). Idempotent.
 	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists muted boolean not null default false`); err != nil {
 		logger.Warnf("add muted column: %v", err)
+	}
+	// Schedule-based flows (off-hours / holiday auto-reply): per-business timezone + per-flow config. Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table businesses add column if not exists timezone text not null default 'America/Mexico_City'`); err != nil {
+		logger.Warnf("add timezone column: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `alter table automations add column if not exists trigger_config jsonb not null default '{}'::jsonb`); err != nil {
+		logger.Warnf("add trigger_config column: %v", err)
 	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
@@ -1071,12 +1079,153 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
+		// Off-hours / holiday auto-reply (schedule-based flows). 1:1 chats only — groups never auto-reply.
+		if !v.Info.IsGroup {
+			m.runScheduleAutomations(ctx, s.BusinessID, convID)
+		}
 	} else {
 		// Outbound — including a reply you sent from your phone. It's been answered, so clear the
 		// unread/pending marker on the conversation.
 		m.exec(ctx, `UPDATE conversations SET last_message_at=now(), unread=0 WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
+}
+
+// scheduleCfg is the per-flow config stored in automations.trigger_config for the time/date triggers.
+type scheduleCfg struct {
+	OpenFrom      string `json:"open_from"` // "HH:MM" business opens (message_hours)
+	OpenTo        string `json:"open_to"`   // "HH:MM" business closes (message_hours)
+	Date          string `json:"date"`      // "YYYY-MM-DD" holiday (message_date)
+	Recurring     bool   `json:"recurring"` // holiday repeats every year (month+day only)
+	CooldownHours int    `json:"cooldown_hours"`
+}
+
+var placeholderRe = regexp.MustCompile(`{{[^}]*}}`)
+
+// hhmmToMin parses "HH:MM" into minutes-since-midnight; -1 if malformed.
+func hhmmToMin(s string) int {
+	var h, mn int
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d:%d", &h, &mn); err != nil {
+		return -1
+	}
+	if h < 0 || h > 23 || mn < 0 || mn > 59 {
+		return -1
+	}
+	return h*60 + mn
+}
+
+// runScheduleAutomations sends an off-hours / holiday auto-reply when an inbound 1:1 message lands
+// outside business hours or on a configured holiday — throttled per conversation by cooldown_hours.
+func (m *Manager) runScheduleAutomations(ctx context.Context, businessID, convID string) {
+	// Resolve the business timezone; fall back to a sane default if missing/invalid.
+	tz := "America/Mexico_City"
+	_ = m.db.QueryRowContext(ctx, `SELECT coalesce(timezone, 'America/Mexico_City') FROM businesses WHERE id=$1`, businessID).Scan(&tz)
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		m.log.Warnf("bad timezone %q for business %s: %v", tz, businessID, err)
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+
+	rows, err := m.db.QueryContext(ctx,
+		`SELECT id, trigger_type, action_payload, trigger_config
+		   FROM automations
+		  WHERE business_id=$1 AND enabled=true AND action_type='send_template'
+		    AND trigger_type IN ('message_hours','message_date')`, businessID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	type flow struct {
+		id, ttype, template string
+		cfg                 scheduleCfg
+	}
+	var flows []flow
+	for rows.Next() {
+		var id, ttype string
+		var payloadRaw, cfgRaw []byte
+		if err := rows.Scan(&id, &ttype, &payloadRaw, &cfgRaw); err != nil {
+			continue
+		}
+		var payload struct {
+			Template string `json:"template"`
+		}
+		_ = json.Unmarshal(payloadRaw, &payload)
+		var cfg scheduleCfg
+		_ = json.Unmarshal(cfgRaw, &cfg)
+		if payload.Template == "" {
+			continue
+		}
+		flows = append(flows, flow{id: id, ttype: ttype, template: payload.Template, cfg: cfg})
+	}
+	rows.Close()
+
+	for _, f := range flows {
+		match := false
+		switch f.ttype {
+		case "message_hours":
+			openMin, closeMin := hhmmToMin(f.cfg.OpenFrom), hhmmToMin(f.cfg.OpenTo)
+			if openMin >= 0 && closeMin >= 0 && openMin != closeMin {
+				nowMin := now.Hour()*60 + now.Minute()
+				if openMin < closeMin {
+					match = nowMin < openMin || nowMin >= closeMin // outside daytime hours
+				} else {
+					// Overnight business (opens in the evening) — closed window is the gap [close, open).
+					match = nowMin >= closeMin && nowMin < openMin
+				}
+			}
+		case "message_date":
+			if d, derr := time.Parse("2006-01-02", strings.TrimSpace(f.cfg.Date)); derr == nil {
+				if f.cfg.Recurring {
+					match = d.Month() == now.Month() && d.Day() == now.Day()
+				} else {
+					match = d.Year() == now.Year() && d.Month() == now.Month() && d.Day() == now.Day()
+				}
+			}
+		}
+		if !match {
+			continue
+		}
+
+		// Throttle: skip if we already auto-replied to this conversation within the cooldown window.
+		cool := f.cfg.CooldownHours
+		if cool < 0 {
+			cool = 0
+		}
+		var recently bool
+		_ = m.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM messages
+			   WHERE conversation_id=$1 AND direction='out' AND (meta->>'autoreply')='true'
+			     AND created_at > now() - make_interval(hours => $2))`, convID, cool).Scan(&recently)
+		if recently {
+			continue
+		}
+
+		// Resolve the template body + a friendly first name for {{name}}; strip any other placeholders.
+		var bodyTpl string
+		if err := m.db.QueryRowContext(ctx, `SELECT body FROM canned_messages WHERE business_id=$1 AND title=$2 LIMIT 1`, businessID, f.template).Scan(&bodyTpl); err != nil || strings.TrimSpace(bodyTpl) == "" {
+			continue
+		}
+		var contactName string
+		_ = m.db.QueryRowContext(ctx, `SELECT coalesce(c.name,'') FROM conversations cv JOIN contacts c ON c.id=cv.contact_id WHERE cv.id=$1`, convID).Scan(&contactName)
+		first := contactName
+		if i := strings.IndexByte(first, ' '); i > 0 {
+			first = first[:i]
+		}
+		out := strings.ReplaceAll(bodyTpl, "{{name}}", first)
+		out = placeholderRe.ReplaceAllString(out, "")
+		out = strings.TrimSpace(out)
+		if out == "" {
+			continue
+		}
+
+		m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, meta)
+			VALUES ($1,$2,'out','text',$3,'queued','{"autoreply":true}'::jsonb)`, businessID, convID, out)
+		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
+		m.exec(ctx, `UPDATE automations SET runs = coalesce(runs,0)+1 WHERE id=$1`, f.id)
+		m.log.Infof("auto-reply (%s) sent to conv %s", f.ttype, convID)
+	}
 }
 
 // allowGroups reports whether the business has opted into group chats (default off).

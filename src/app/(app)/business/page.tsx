@@ -29,6 +29,7 @@ export default async function BusinessPage() {
       showTyping={business.show_typing ?? true}
       allowGroups={business.allow_groups ?? false}
       mode={business.mode ?? "business"}
+      timezone={business.timezone ?? "America/Mexico_City"}
     />
   );
 }

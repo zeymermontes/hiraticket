@@ -13,10 +13,14 @@ const TRIGGERS: Record<string, { es: string; en: string }> = {
   order_stage: { es: "Un pedido cambia de etapa", en: "An order changes stage" },
   conversation_status: { es: "Una conversación cambia de estado", en: "A conversation changes status" },
   conversation_new: { es: "Inicia un chat nuevo", en: "A new chat starts" },
+  message_hours: { es: "Llega un mensaje fuera de horario", en: "A message arrives outside hours" },
+  message_date: { es: "Llega un mensaje en un día de asueto", en: "A message arrives on a holiday" },
 };
 const TRIGGER_ICON: Record<string, string> = {
   order_stage: "orders", conversation_status: "chat", conversation_new: "bell",
+  message_hours: "moon", message_date: "calendar",
 };
+const isSchedule = (t: string) => t === "message_hours" || t === "message_date";
 const triggerLabel = (key: string, personal: boolean, lang: "es" | "en") =>
   key === "order_stage" && personal ? (lang === "es" ? "Una tarea cambia de etapa" : "A task changes stage") : (TRIGGERS[key]?.[lang] ?? key);
 
@@ -25,6 +29,14 @@ const CONV_STATUS: Record<string, { es: string; en: string }> = {
   pending: { es: "Pendiente", en: "Pending" },
   resolved: { es: "Resuelto", en: "Resolved" },
 };
+
+/** Human label for a holiday date — "25 dic (cada año)" if recurring, else the full date. */
+function holidayLabel(date: string | undefined, recurring: boolean | undefined, lang: "es" | "en"): string {
+  if (!date) return "—";
+  const d = new Date(date + "T00:00:00");
+  if (recurring) return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" }) + (lang === "es" ? " (cada año)" : " (yearly)");
+  return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" });
+}
 
 const ACTIONS: Record<string, { es: string; en: string; icon: string }> = {
   send_template: { es: "Enviar plantilla", en: "Send template", icon: "send" },
@@ -42,11 +54,16 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
 
   const payload = w.action_payload as { template?: string; area?: string; agent?: string; tag?: string };
   const act = ACTIONS[w.action_type] ?? { es: w.action_type, en: w.action_type, icon: "bolt" };
-  const triggerVal = w.trigger_value
-    ? (w.trigger_type === "conversation_status"
-        ? CONV_STATUS[w.trigger_value]?.[lang]
-        : stages.find((s) => s.id === w.trigger_value)?.name)
-    : null;
+  const cfg = (w.trigger_config ?? {}) as { open_from?: string; open_to?: string; date?: string; recurring?: boolean };
+  const triggerVal = w.trigger_type === "message_hours"
+    ? `${cfg.open_from ?? "?"}–${cfg.open_to ?? "?"}`
+    : w.trigger_type === "message_date"
+      ? holidayLabel(cfg.date, cfg.recurring, lang)
+      : w.trigger_value
+        ? (w.trigger_type === "conversation_status"
+            ? CONV_STATUS[w.trigger_value]?.[lang]
+            : stages.find((s) => s.id === w.trigger_value)?.name)
+        : null;
   const areaName = payload.area ? areas.find((a) => a.id === payload.area)?.name : null;
   const agentName = payload.agent ? agents.find((a) => a.id === payload.agent)?.name : null;
 
@@ -101,6 +118,12 @@ export function FlowsScreen({
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [tag, setTag] = useState("");
+  // Schedule config (message_hours / message_date triggers).
+  const [openFrom, setOpenFrom] = useState("10:00");
+  const [openTo, setOpenTo] = useState("17:00");
+  const [holidayDate, setHolidayDate] = useState("");
+  const [recurring, setRecurring] = useState(true);
+  const [cooldown, setCooldown] = useState("6");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -111,34 +134,52 @@ export function FlowsScreen({
     setEditId(null); setName(""); setTag("");
     setTrigger("order_stage"); setStageId(""); setStatusVal("open"); setAction("send_template");
     setTemplate(cannedTitles[0] ?? ""); setAreaId(areas[0]?.id ?? ""); setAgentId(agents[0]?.id ?? "");
+    setOpenFrom("10:00"); setOpenTo("17:00"); setHolidayDate(""); setRecurring(true); setCooldown("6");
   }
 
   function startEdit(w: Automation) {
     const p = (w.action_payload ?? {}) as { template?: string; area?: string; agent?: string; tag?: string };
+    const cfg = (w.trigger_config ?? {}) as { open_from?: string; open_to?: string; date?: string; recurring?: boolean; cooldown_hours?: number };
     setEditId(w.id);
     setName(w.name);
     setTrigger(w.trigger_type);
     setStageId(w.trigger_type === "order_stage" ? (w.trigger_value ?? "") : "");
     setStatusVal(w.trigger_type === "conversation_status" ? (w.trigger_value ?? "open") : "open");
-    setAction(w.action_type);
+    // Schedule triggers always send a template; otherwise keep the stored action.
+    setAction(isSchedule(w.trigger_type) ? "send_template" : w.action_type);
     setTemplate(p.template ?? cannedTitles[0] ?? "");
     setAreaId(p.area ?? areas[0]?.id ?? "");
     setAgentId(p.agent ?? agents[0]?.id ?? "");
     setTag(p.tag ?? "");
+    setOpenFrom(cfg.open_from ?? "10:00");
+    setOpenTo(cfg.open_to ?? "17:00");
+    setHolidayDate(cfg.date ?? "");
+    setRecurring(cfg.recurring ?? true);
+    setCooldown(String(cfg.cooldown_hours ?? 6));
     if (typeof document !== "undefined") document.querySelector(".page")?.scrollTo?.({ top: 0 });
   }
 
   function save() {
     if (!name.trim()) return;
+    if (trigger === "message_date" && !holidayDate) return;
+    // The time/date triggers fire on inbound messages and only ever send a template.
+    const effAction = isSchedule(trigger) ? "send_template" : action;
+    const cool = Math.max(0, Math.round(Number(cooldown) || 0));
+    const schedule = trigger === "message_hours"
+      ? { open_from: openFrom, open_to: openTo, cooldown_hours: cool }
+      : trigger === "message_date"
+        ? { date: holidayDate, recurring, cooldown_hours: cool }
+        : undefined;
     const input = {
       name,
       trigger_type: trigger,
       trigger_value: trigger === "order_stage" ? (stageId || null) : trigger === "conversation_status" ? statusVal : null,
-      action_type: action,
-      template: action === "send_template" ? template : undefined,
-      area: action === "transfer_area" ? areaId : undefined,
-      agent: action === "assign_agent" ? agentId : undefined,
-      tag: action === "add_tag" ? tag.trim() : undefined,
+      action_type: effAction,
+      template: effAction === "send_template" ? template : undefined,
+      area: effAction === "transfer_area" ? areaId : undefined,
+      agent: effAction === "assign_agent" ? agentId : undefined,
+      tag: effAction === "add_tag" ? tag.trim() : undefined,
+      schedule,
     };
     const id = editId;
     start(async () => {
@@ -198,32 +239,60 @@ export function FlowsScreen({
                 {Object.keys(CONV_STATUS).map((k) => <option key={k} value={k}>{CONV_STATUS[k][lang]}</option>)}
               </select>
             )}
+            {trigger === "message_hours" && (
+              <>
+                <div className="row gap-2">
+                  <div className="col gap-1 grow"><label className="lbl">{lang === "es" ? "Abre" : "Opens"}</label><input className="inp-inline" type="time" value={openFrom} onChange={(e) => setOpenFrom(e.target.value)} /></div>
+                  <div className="col gap-1 grow"><label className="lbl">{lang === "es" ? "Cierra" : "Closes"}</label><input className="inp-inline" type="time" value={openTo} onChange={(e) => setOpenTo(e.target.value)} /></div>
+                </div>
+                <span className="t-xs muted">{lang === "es" ? `Fuera de ${openFrom}–${openTo} (hora del negocio) se responde con la plantilla.` : `Outside ${openFrom}–${openTo} (business time) the template is sent.`}</span>
+              </>
+            )}
+            {trigger === "message_date" && (
+              <>
+                <input className="inp-inline" type="date" value={holidayDate} onChange={(e) => setHolidayDate(e.target.value)} />
+                <label className="row gap-2" style={{ alignItems: "center", cursor: "pointer" }}>
+                  <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
+                  <span className="t-sm">{lang === "es" ? "Repetir cada año (asueto permanente)" : "Repeat every year (permanent holiday)"}</span>
+                </label>
+              </>
+            )}
+            {isSchedule(trigger) && (
+              <div className="col gap-1">
+                <label className="lbl">{lang === "es" ? "No repetir antes de (horas)" : "Don't repeat before (hours)"}</label>
+                <input className="inp-inline" type="number" min={0} value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
+              </div>
+            )}
 
             <label className="lbl">{lang === "es" ? "Entonces" : "Then"}</label>
-            <select className="select" value={action} onChange={(e) => setAction(e.target.value)}>
-              {Object.keys(ACTIONS).map((k) => <option key={k} value={k}>{ACTIONS[k][lang]}</option>)}
-            </select>
-            {action === "send_template" && (
+            {isSchedule(trigger) ? (
+              <div className="row gap-2" style={{ alignItems: "center" }}><Pill color="brand"><Icon name="send" size={13} />{lang === "es" ? "Enviar plantilla" : "Send template"}</Pill></div>
+            ) : (
+              <select className="select" value={action} onChange={(e) => setAction(e.target.value)}>
+                {Object.keys(ACTIONS).map((k) => <option key={k} value={k}>{ACTIONS[k][lang]}</option>)}
+              </select>
+            )}
+            {(isSchedule(trigger) || action === "send_template") && (
               <select className="select" value={template} onChange={(e) => setTemplate(e.target.value)}>
                 {cannedTitles.length === 0 && <option value="">{lang === "es" ? "(crea una plantilla)" : "(create a template)"}</option>}
                 {cannedTitles.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             )}
-            {action === "transfer_area" && (
+            {!isSchedule(trigger) && action === "transfer_area" && (
               <select className="select" value={areaId} onChange={(e) => setAreaId(e.target.value)}>
                 {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             )}
-            {action === "assign_agent" && (
+            {!isSchedule(trigger) && action === "assign_agent" && (
               <select className="select" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
                 {agents.filter((a) => a.role !== "viewer").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             )}
-            {action === "add_tag" && (
+            {!isSchedule(trigger) && action === "add_tag" && (
               <input className="inp-inline" placeholder={lang === "es" ? "Etiqueta (ej. VIP)" : "Tag (e.g. VIP)"} value={tag} onChange={(e) => setTag(e.target.value)} />
             )}
 
-            <button className="btn btn-primary btn-block" disabled={pending || !name.trim()} onClick={save}>
+            <button className="btn btn-primary btn-block" disabled={pending || !name.trim() || (trigger === "message_date" && !holidayDate)} onClick={save}>
               <Icon name={editId ? "check" : "plus"} size={15} />{editId ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear flujo" : "Create flow")}
             </button>
             {editId && <button className="btn btn-outline btn-block" onClick={resetForm}>{lang === "es" ? "Cancelar" : "Cancel"}</button>}

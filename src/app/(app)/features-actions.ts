@@ -13,53 +13,47 @@ export async function deleteAutomation(id: string) {
   await supabase.from("automations").delete().eq("id", id);
   revalidatePath("/flows");
 }
-export async function createAutomation(
-  businessId: string,
-  input: {
-    name: string; trigger_type: string; trigger_value: string | null;
-    action_type: string; template?: string; area?: string; agent?: string; tag?: string;
-  },
-) {
-  const supabase = await createClient();
+export interface AutomationInput {
+  name: string; trigger_type: string; trigger_value: string | null;
+  action_type: string; template?: string; area?: string; agent?: string; tag?: string;
+  // Schedule config for the time/date triggers (message_hours / message_date).
+  schedule?: Record<string, unknown>;
+}
+
+function actionPayload(input: AutomationInput): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (input.action_type === "send_template" && input.template) payload.template = input.template;
   if (input.action_type === "transfer_area" && input.area) payload.area = input.area;
   if (input.action_type === "assign_agent" && input.agent) payload.agent = input.agent;
   if (input.action_type === "add_tag" && input.tag) payload.tag = input.tag;
+  return payload;
+}
 
+export async function createAutomation(businessId: string, input: AutomationInput) {
+  const supabase = await createClient();
   await supabase.from("automations").insert({
     business_id: businessId,
     name: input.name.trim() || "Flujo",
     trigger_type: input.trigger_type,
     trigger_value: input.trigger_value,
     action_type: input.action_type,
-    action_payload: payload,
+    action_payload: actionPayload(input),
+    trigger_config: input.schedule ?? {},
     enabled: true,
   });
   revalidatePath("/flows");
 }
 
 /** Edit an existing flow's trigger/action/config (keeps its enabled state + run count). */
-export async function updateAutomation(
-  id: string,
-  input: {
-    name: string; trigger_type: string; trigger_value: string | null;
-    action_type: string; template?: string; area?: string; agent?: string; tag?: string;
-  },
-) {
+export async function updateAutomation(id: string, input: AutomationInput) {
   const supabase = await createClient();
-  const payload: Record<string, unknown> = {};
-  if (input.action_type === "send_template" && input.template) payload.template = input.template;
-  if (input.action_type === "transfer_area" && input.area) payload.area = input.area;
-  if (input.action_type === "assign_agent" && input.agent) payload.agent = input.agent;
-  if (input.action_type === "add_tag" && input.tag) payload.tag = input.tag;
-
   await supabase.from("automations").update({
     name: input.name.trim() || "Flujo",
     trigger_type: input.trigger_type,
     trigger_value: input.trigger_value,
     action_type: input.action_type,
-    action_payload: payload,
+    action_payload: actionPayload(input),
+    trigger_config: input.schedule ?? {},
   }).eq("id", id);
   revalidatePath("/flows");
 }

@@ -12,6 +12,7 @@ export interface Business {
   show_typing: boolean; // appear "online" to receive customers' typing indicators
   mode: "business" | "personal"; // 'personal' → tasks/subtasks, no prices/payments
   allow_groups: boolean; // opt-in: show/reply to WhatsApp group chats (chat-only, no orders)
+  timezone: string; // IANA tz (e.g. America/Mexico_City) — used by schedule-based flows
 }
 
 export interface OrderRow {

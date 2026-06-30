@@ -10,17 +10,25 @@ export interface Automation {
   trigger_value: string | null;
   action_type: string;
   action_payload: Record<string, unknown>;
+  trigger_config: Record<string, unknown>;
   enabled: boolean;
   runs: number;
 }
 export async function getAutomations(businessId: string): Promise<Automation[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  // trigger_config (0043) may not be applied yet — fall back without it.
+  let { data, error } = await supabase
     .from("automations")
-    .select("id, name, trigger_type, trigger_value, action_type, action_payload, enabled, runs")
+    .select("id, name, trigger_type, trigger_value, action_type, action_payload, trigger_config, enabled, runs")
     .eq("business_id", businessId)
     .order("name");
-  return (data ?? []) as Automation[];
+  if (error) {
+    const r = await supabase.from("automations")
+      .select("id, name, trigger_type, trigger_value, action_type, action_payload, enabled, runs")
+      .eq("business_id", businessId).order("name");
+    data = r.data as typeof data;
+  }
+  return (data ?? []).map((w) => ({ ...(w as Automation), trigger_config: ((w as { trigger_config?: Record<string, unknown> }).trigger_config) ?? {} })) as Automation[];
 }
 
 export interface Product {
