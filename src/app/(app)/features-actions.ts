@@ -96,6 +96,11 @@ export async function setAppointmentStatus(id: string, status: "scheduled" | "do
   await supabase.from("appointments").update({ status }).eq("id", id);
   revalidatePath("/agenda");
 }
+export async function deleteAppointment(id: string) {
+  const supabase = await createClient();
+  await supabase.from("appointments").delete().eq("id", id);
+  revalidatePath("/agenda");
+}
 
 /* ---------- campaigns ---------- */
 export async function sendCampaign(businessId: string, input: { name: string; template: string; audience: string }) {
