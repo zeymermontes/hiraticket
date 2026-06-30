@@ -194,9 +194,6 @@ label.lbl { font-size: 12px; font-weight: 600; color: var(--text-muted); display
   box-shadow: var(--sh-lg); padding: 6px; min-width: 200px; z-index: 70;
   animation: ht-pop .14s var(--ease-out);
 }
-/* A scrollable menu must actually scroll when it hits its max-height — `.scroll` only styles the
-   scrollbar, it doesn't set overflow, so without this the content spills out of the popover. */
-.menu.scroll { overflow-y: auto; }
 .menu-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 8px 10px; border-radius: var(--r-sm); border: none; background: transparent;
