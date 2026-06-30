@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useTransition } from "react";
+import React, { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -68,6 +68,12 @@ export function BusinessConfig({
   const [newArea, setNewArea] = useState("");
   const [newField, setNewField] = useState("");
   const run = (fn: () => Promise<unknown>) => start(async () => { await fn(); router.refresh(); });
+  // Show each timezone's current local time. Compute only after mount (avoids an SSR/client time
+  // mismatch) and tick once a minute to keep it fresh.
+  const [mounted, setMounted] = useState(false);
+  const [, setTick] = useState(0);
+  useEffect(() => { setMounted(true); const id = setInterval(() => setTick((t) => t + 1), 60000); return () => clearInterval(id); }, []);
+  const tzTime = (tz: string) => { try { return new Date().toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
 
@@ -190,7 +196,7 @@ export function BusinessConfig({
               </div>
               <select className="select" style={{ width: 220 }} value={TIMEZONES.includes(timezone) ? timezone : "America/Mexico_City"}
                 onChange={(e) => run(() => updateBusinessProfile(businessId, { timezone: e.target.value }))}>
-                {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>)}
+                {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}{mounted ? ` · ${tzTime(tz)}` : ""}</option>)}
               </select>
             </div>
           </div>
