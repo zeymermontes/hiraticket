@@ -1970,7 +1970,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
             // Pinned + reassigning elsewhere → confirm; transferring releases the lock.
             if (detail.locked_to && (dest.type !== "agent" || dest.id !== detail.locked_to)) {
               const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
-              if (!(await ask(lockConfirmOpts(name, lang)))) return;
+              if (!(await ask(lockConfirmOpts(name, lang)))) return false; // cancelled → keep the transfer modal open
             }
             if (dest.type === "unassign") patch({ assignee_id: null, locked_to: null });
             else if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });

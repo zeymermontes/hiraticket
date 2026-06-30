@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -16,7 +16,7 @@ export function TransferModal({
   title?: string;
   agents: Agent[];
   areas: Area[];
-  onConfirm: (dest: TransferDest, note: string) => Promise<void>;
+  onConfirm: (dest: TransferDest, note: string) => Promise<void | boolean>; // return false to keep the modal open (e.g. a nested confirm was cancelled)
   onClose: () => void;
   allowUnassign?: boolean; // show a "Sin asignar" option (conversations only — orders don't support it)
 }) {
@@ -24,11 +24,15 @@ export function TransferModal({
   const [tab, setTab] = useState<"agent" | "area" | "unassign">("agent");
   const [sel, setSel] = useState("");
   const [note, setNote] = useState("");
-  const [pending, start] = useTransition();
+  const [pending, setPending] = useState(false);
 
-  function confirm() {
+  // Plain async (not useTransition): onConfirm may open the lock-release confirm dialog, and a
+  // transition would defer that modal's state update so it never shows — leaving the flow stuck.
+  async function confirm() {
     if (tab !== "unassign" && !sel) return;
-    start(async () => { await onConfirm({ type: tab, id: tab === "unassign" ? "" : sel }, note.trim()); onClose(); });
+    setPending(true);
+    try { const r = await onConfirm({ type: tab, id: tab === "unassign" ? "" : sel }, note.trim()); if (r !== false) onClose(); }
+    finally { setPending(false); }
   }
 
   return (
