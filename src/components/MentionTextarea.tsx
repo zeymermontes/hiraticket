@@ -65,7 +65,7 @@ export function MentionTextarea({
           {filtered.map((a, i) => (
             <button type="button" key={a.id} className={"menu-item" + (i === sel ? " on" : "")} style={i === sel ? { background: "var(--surface-2)" } : undefined}
               onMouseEnter={() => setSel(i)} onMouseDown={(e) => { e.preventDefault(); insert(a); }}>
-              <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={22} />{a.name}
+              <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={22} />{a.name}
             </button>
           ))}
         </div>

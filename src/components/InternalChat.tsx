@@ -393,7 +393,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
                   {mentionMatches.map((a, i) => (
                     <button type="button" key={a.id} className={"menu-item" + (i === mentionSel ? " on" : "")} style={i === mentionSel ? { background: "var(--surface-2)" } : undefined}
                       onMouseEnter={() => setMentionSel(i)} onMouseDown={(e) => { e.preventDefault(); insertMention(a); }}>
-                      <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={22} />{a.name}
+                      <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={22} />{a.name}
                     </button>
                   ))}
                 </div>

@@ -35,6 +35,7 @@ export interface Agent {
   id: string;
   name: string;
   color: string;
+  avatar_url: string | null;
   role: "admin" | "agent" | "viewer";
 }
 
@@ -137,10 +138,9 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
   if (!members?.length) return [];
 
   const ids = members.map((m) => m.user_id as string);
-  const { data: profs } = await supabase
-    .from("profiles")
-    .select("id, full_name, avatar_color")
-    .in("id", ids);
+  // avatar_url (0045) may not be applied yet — fall back without it.
+  let profs = (await supabase.from("profiles").select("id, full_name, avatar_color, avatar_url").in("id", ids)).data as Record<string, unknown>[] | null;
+  if (!profs) profs = (await supabase.from("profiles").select("id, full_name, avatar_color").in("id", ids)).data as Record<string, unknown>[] | null;
 
   const pmap = new Map((profs ?? []).map((p) => [p.id as string, p]));
   return members.map((m) => {
@@ -149,6 +149,7 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
       id: m.user_id as string,
       name: (p?.full_name as string) || "Agente",
       color: (p?.avatar_color as string) || "#5A6373",
+      avatar_url: (p?.avatar_url as string | null) ?? null,
       role: m.role as Agent["role"],
     };
   });

@@ -54,7 +54,7 @@ export function TransferModal({
               </div>
             ) : tab === "agent" ? agents.filter((a) => a.role !== "viewer").map((a) => (
               <button key={a.id} onClick={() => setSel(a.id)} style={{ display: "flex", gap: 10, alignItems: "center", padding: 10, borderRadius: 10, textAlign: "left", cursor: "pointer", background: sel === a.id ? "var(--brand-50)" : "var(--surface)", border: "1px solid " + (sel === a.id ? "var(--brand)" : "var(--border)") }}>
-                <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={28} />
+                <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={28} />
                 <span style={{ fontWeight: 600 }}>{a.name}</span>
               </button>
             )) : areas.map((ar) => (

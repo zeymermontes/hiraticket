@@ -67,7 +67,7 @@ export function AgentsScreen({
               <tr key={a.id}>
                 <td>
                   <div className="cust" style={{ gap: 10 }}>
-                    <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={34} presence="online" />
+                    <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={34} presence="online" />
                     <div style={{ minWidth: 0, lineHeight: 1.3 }}>
                       <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{a.name}</div>
                       {a.email && <div className="t-xs muted truncate">{a.email}</div>}
@@ -170,7 +170,7 @@ function EditAgentModal({ businessId, agent, areas, onClose }: { businessId: str
     <div className="modal-wrap">
       <div className="scrim" onClick={onClose} />
       <div className="modal">
-        <div className="modal-head"><Avatar name={agent.name} initials={deriveInitials(agent.name)} color={agent.color} size={36} /><h3 className="grow">{lang === "es" ? "Editar agente" : "Edit agent"}</h3><button className="iconbtn" onClick={onClose}><Icon name="x" /></button></div>
+        <div className="modal-head"><Avatar name={agent.name} initials={deriveInitials(agent.name)} color={agent.color} src={agent.avatar_url ?? undefined} size={36} /><h3 className="grow">{lang === "es" ? "Editar agente" : "Edit agent"}</h3><button className="iconbtn" onClick={onClose}><Icon name="x" /></button></div>
         <div className="modal-body col gap-3">
           <div>
             <label className="lbl">{lang === "es" ? "Nombre" : "Name"}</label>

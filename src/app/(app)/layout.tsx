@@ -43,10 +43,14 @@ export default async function AppLayout({
     );
   }
 
-  // Display name from the profile (matches @mention tokens + agent list), with fallbacks.
-  const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+  // Display name + avatar from the profile (matches @mention tokens + agent list), with fallbacks.
+  let prof: Record<string, unknown> | null = null;
+  const pr = await supabase.from("profiles").select("full_name, avatar_color, avatar_url").eq("id", user.id).maybeSingle();
+  prof = pr.error
+    ? ((await supabase.from("profiles").select("full_name, avatar_color").eq("id", user.id).maybeSingle()).data as Record<string, unknown> | null)
+    : (pr.data as Record<string, unknown> | null);
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
-  const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName };
+  const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName, color: (prof?.avatar_color as string) || "#0E8C82", avatarUrl: (prof?.avatar_url as string | null) ?? null };
 
   const [chatBadges, notifications, sessions, stages, internalUnread] = await Promise.all([
     getChatBadges(business.id, user.id),

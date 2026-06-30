@@ -142,6 +142,8 @@ export interface ShellUser {
   id: string;
   name: string;
   email: string;
+  color?: string;
+  avatarUrl?: string | null;
 }
 
 function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser }) {
@@ -181,7 +183,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
       <div className="rail-nav">{ADMIN.map(renderItem)}</div>
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
         <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
-          <Avatar name={user.name} initials={deriveInitials(user.name)} color="#0E8C82" size={28} presence="online" />
+          <Avatar name={user.name} initials={deriveInitials(user.name)} color={user.color || "#0E8C82"} size={28} presence="online" src={user.avatarUrl ?? undefined} />
           <span className="rl truncate">{user.name}</span>
         </button>
         {profOpen && profRect && (
@@ -190,8 +192,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
             <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - profRect.top + 6, left: profRect.left, width: 220, zIndex: 201 }}>
               <div style={{ padding: "8px 12px" }}><div style={{ fontWeight: 700 }} className="truncate">{user.name}</div><div className="t-xs muted truncate">{user.email}</div></div>
               <div className="menu-sep" />
-              <Link className="menu-item" href="/settings" onClick={() => setProfOpen(false)}><Icon name="settings" size={15} />{t("nav_settings")}</Link>
-              <Link className="menu-item" href="/" onClick={() => setProfOpen(false)}><Icon name="store" size={15} />{lang === "es" ? "Sitio público" : "Public site"}</Link>
+              <Link className="menu-item" href="/profile" onClick={() => setProfOpen(false)}><Icon name="user" size={15} />{lang === "es" ? "Perfil" : "Profile"}</Link>
               <div className="menu-sep" />
               <form action="/auth/signout" method="post"><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
             </div>

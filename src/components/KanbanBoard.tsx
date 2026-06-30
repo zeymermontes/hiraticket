@@ -152,7 +152,7 @@ export function KanbanBoard({
                           <span className="t-xs muted truncate">{it.contact?.name ?? "—"}</span>
                         </div>
                         <div className="kcard-foot">
-                          {ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null}
+                          {ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /> : null}
                           <span className="grow" />
                           <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === it.order_id}
                             onClick={(e) => { e.stopPropagation(); openDrawer(it.order_id); }} onPointerDown={(e) => e.stopPropagation()}>
@@ -178,7 +178,7 @@ export function KanbanBoard({
                         <span className="t-xs muted truncate">{o.contact?.name ?? "—"}</span>
                       </div>
                       <div className="kcard-foot">
-                        {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={20} /> : null; })()}
+                        {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /> : null; })()}
                         <span className="grow" />
                         {o.due_at && (() => { const od = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name); return <span className="row gap-1" style={{ color: od ? "var(--red)" : "var(--text-muted)", fontWeight: od ? 700 : 500, fontSize: 11.5 }}><Icon name={od ? "clock" : "calendar"} size={11} />{new Date(o.due_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>; })()}
                         {!personal && <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}

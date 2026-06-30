@@ -916,7 +916,7 @@ export function ChatScreen({
                 ? (["open", "pending", "resolved"] as const).map((s) => <button key={s} className="menu-item" onClick={() => runBulk(() => bulkSetStatus([...selected], s))}><Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill></button>)
                 : <>
                     <button className="menu-item" onClick={() => runBulkAssign(null)}><Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill></button>
-                    {agents.filter((a) => a.role !== "viewer").map((a) => <button key={a.id} className="menu-item" onClick={() => runBulkAssign(a.id)}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
+                    {agents.filter((a) => a.role !== "viewer").map((a) => <button key={a.id} className="menu-item" onClick={() => runBulkAssign(a.id)}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={20} />{a.name}</button>)}
                   </>}
             </div>
           </>
@@ -954,7 +954,7 @@ export function ChatScreen({
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
                       {(c.contact?.tags ?? []).slice(0, 3).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
                       <span className="grow" />
-                      {a ? <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} /> : <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
+                      {a ? <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={20} /> : <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
                       {c.unread > 0 && <span className="badge badge-red">{c.unread}</span>}
                     </div>
                   </div>
@@ -1771,7 +1771,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
             <div className="menu-label">{lang === "es" ? "A un agente" : "To an agent"}</div>
             {agents.filter((a) => a.role !== "viewer").map((a) => (
               <button className="menu-item" key={a.id} onClick={() => pick("agent", a.id)}>
-                <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}
+                <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={20} />{a.name}
               </button>
             ))}
             <div className="menu-sep" />

@@ -5,6 +5,7 @@ export interface DetailedAgent {
   id: string;
   name: string;
   color: string;
+  avatar_url: string | null;
   role: "admin" | "agent" | "viewer";
   email: string | null;
   area: { id: string; name: string; color: string } | null;
@@ -23,14 +24,16 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
   if (!members?.length) return [];
 
   const ids = members.map((m) => m.user_id as string);
-  const [{ data: profs }, { data: areas }, { data: convs }, { data: orders }] = await Promise.all([
-    supabase.from("profiles").select("id, full_name, avatar_color").in("id", ids),
+  const [{ data: profsRaw }, { data: areas }, { data: convs }, { data: orders }] = await Promise.all([
+    supabase.from("profiles").select("id, full_name, avatar_color, avatar_url").in("id", ids),
     supabase.from("areas").select("id, name, color").eq("business_id", businessId),
     supabase.from("conversations").select("assignee_id").eq("business_id", businessId).neq("status", "resolved"),
     supabase.from("orders").select("assignee_id").eq("business_id", businessId),
   ]);
+  // avatar_url (0045) may not be applied yet — fall back without it.
+  const profs = profsRaw ?? (await supabase.from("profiles").select("id, full_name, avatar_color").in("id", ids)).data;
 
-  const pmap = new Map((profs ?? []).map((p) => [p.id as string, p]));
+  const pmap = new Map(((profs ?? []) as Record<string, unknown>[]).map((p) => [p.id as string, p]));
   const amap = new Map((areas ?? []).map((a) => [a.id as string, a]));
   const chatCount = new Map<string, number>();
   (convs ?? []).forEach((c) => { if (c.assignee_id) chatCount.set(c.assignee_id as string, (chatCount.get(c.assignee_id as string) ?? 0) + 1); });
@@ -54,6 +57,7 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
       id: uid,
       name: (p?.full_name as string) || "Agente",
       color: (p?.avatar_color as string) || "#5A6373",
+      avatar_url: (p?.avatar_url as string | null) ?? null,
       role: m.role as DetailedAgent["role"],
       email: emailMap.get(uid) ?? null,
       area: ar ? { id: ar.id as string, name: ar.name as string, color: ar.color as string } : null,

@@ -76,7 +76,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, businessId, con
                       {o.items.map((li, i) => <div className="o360-item" key={i}><span className="nm truncate">{li.name}</span><span className="t-xs muted mono">×{li.qty}</span>{!personal && <span className="mono" style={{ fontWeight: 700 }}>{money(li.subtotal)}</span>}</div>)}
                     </div>
                     <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" />{!personal && <span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span>}</div>
-                    <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} size={22} />}<button className="btn btn-sm btn-outline" disabled={loadingId === o.id} onClick={() => openDrawer(o.id)}>{loadingId === o.id ? "…" : "Abrir"}<Icon name="arrowr" size={13} /></button></div>
+                    <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={22} />}<button className="btn btn-sm btn-outline" disabled={loadingId === o.id} onClick={() => openDrawer(o.id)}>{loadingId === o.id ? "…" : "Abrir"}<Icon name="arrowr" size={13} /></button></div>
                   </div>
                 );
               })}

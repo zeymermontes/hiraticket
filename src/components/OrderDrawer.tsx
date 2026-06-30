@@ -331,7 +331,7 @@ export function OrderDrawer({
             {xfer && (
               <div className="menu scroll" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 240, maxHeight: 300, zIndex: 50 }}>
                 <div className="menu-label">{lang === "es" ? "A un agente" : "To an agent"}</div>
-                {agents.filter((a) => a.role !== "viewer").map((a) => <button className="menu-item" key={a.id} onClick={() => { setXfer(false); runOpt({ assignee_id: a.id }, () => assignOrder(detail.id, a.id)); }}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
+                {agents.filter((a) => a.role !== "viewer").map((a) => <button className="menu-item" key={a.id} onClick={() => { setXfer(false); runOpt({ assignee_id: a.id }, () => assignOrder(detail.id, a.id)); }}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={20} />{a.name}</button>)}
                 <div className="menu-sep" />
                 <div className="menu-label">{lang === "es" ? "A un área" : "To an area"}</div>
                 {areas.map((ar) => <button className="menu-item" key={ar.id} onClick={() => { setXfer(false); runOpt({ area_id: ar.id, area: { name: ar.name, color: ar.color } }, () => moveOrderArea(detail.id, ar.id)); }}><Pill color={ar.color as PillColor}>{ar.name}</Pill></button>)}
