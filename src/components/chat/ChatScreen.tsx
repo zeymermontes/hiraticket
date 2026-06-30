@@ -27,6 +27,7 @@ import {
   deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
 } from "@/app/(app)/chat/actions";
 import { menuStyle } from "@/lib/popover";
+import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useToast, useFlowToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
@@ -501,11 +502,17 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
   resolved: { es: "Resuelto", en: "Resolved" },
 };
 
-/** Confirm before a reassignment that would release a "mantener conmigo" lock. true = proceed. */
-function confirmReleaseLock(agentName: string, lang: "es" | "en"): boolean {
-  return confirm(lang === "es"
-    ? `🔒 Este cliente está mantenido con ${agentName}. Transferirlo soltará el candado.\n\n¿Transferir de todos modos?`
-    : `🔒 This client is kept with ${agentName}. Transferring will release the pin.\n\nTransfer anyway?`);
+/** Custom-confirm options shown before a reassignment that would release a "mantener conmigo" lock. */
+function lockConfirmOpts(agentName: string, lang: "es" | "en"): ConfirmOpts {
+  return {
+    icon: "lock", danger: true,
+    title: lang === "es" ? "Cliente mantenido" : "Pinned client",
+    message: lang === "es"
+      ? `Este cliente está mantenido con ${agentName}. Transferirlo soltará el candado. ¿Transferir de todos modos?`
+      : `This client is kept with ${agentName}. Transferring will release the pin. Transfer anyway?`,
+    confirmLabel: lang === "es" ? "Transferir" : "Transfer",
+    cancelLabel: lang === "es" ? "Mantener" : "Keep",
+  };
 }
 
 export function ChatScreen({
@@ -524,6 +531,7 @@ export function ChatScreen({
 }) {
   const { lang } = useApp();
   const router = useRouter();
+  const ask = useConfirm();
   const [show360, setShow360] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
@@ -728,11 +736,21 @@ export function ChatScreen({
   };
   const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); await liveList(businessId).then(setList).catch(() => {}); exitSelect(); })(); };
   // Bulk reassign: warn if any selected chat is pinned ("mantener conmigo") — reassigning releases it.
-  const runBulkAssign = (agentId: string | null) => {
+  const runBulkAssign = async (agentId: string | null) => {
+    setBulkMenu(null);
     const lockedN = [...selected].filter((id) => list.find((c) => c.id === id)?.locked_to).length;
-    if (lockedN && !confirm(lang === "es"
-      ? `🔒 ${lockedN} chat(s) están mantenidos con un agente. Reasignarlos soltará el candado.\n\n¿Continuar?`
-      : `🔒 ${lockedN} chat(s) are pinned to an agent. Reassigning will release the pin.\n\nContinue?`)) return;
+    if (lockedN) {
+      const ok = await ask({
+        icon: "lock", danger: true,
+        title: lang === "es" ? "Clientes mantenidos" : "Pinned clients",
+        message: lang === "es"
+          ? `${lockedN} chat(s) están mantenidos con un agente. Reasignarlos soltará el candado. ¿Continuar?`
+          : `${lockedN} chat(s) are pinned to an agent. Reassigning will release the pin. Continue?`,
+        confirmLabel: lang === "es" ? "Reasignar" : "Reassign",
+        cancelLabel: lang === "es" ? "Mantener" : "Keep",
+      });
+      if (!ok) return;
+    }
     runBulk(() => bulkAssign([...selected], agentId));
   };
 
@@ -1724,16 +1742,17 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
   const { lang } = useApp();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
+  const ask = useConfirm();
   const { ref, open, rect, toggle, close } = usePopover();
   const [pending, start] = useTransition();
 
-  function pick(mode: "agent" | "area", id: string) {
+  async function pick(mode: "agent" | "area", id: string) {
+    close();
     // Pinned ("mantener conmigo") + reassigning elsewhere → confirm; transferring releases the lock.
     if (detail.locked_to && (mode === "area" || id !== detail.locked_to)) {
       const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
-      if (!confirmReleaseLock(name, lang)) { close(); return; }
+      if (!(await ask(lockConfirmOpts(name, lang)))) return;
     }
-    close();
     if (mode === "agent") patch({ assignee_id: id, locked_to: null });
     else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
     start(async () => { await transferConv(detail.id, mode, id); refresh(); });
@@ -1775,6 +1794,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
   const refresh = useChatRefresh();
   const patch = useChatPatch();
   const flowToast = useFlowToast();
+  const ask = useConfirm();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
@@ -1943,7 +1963,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
             // Pinned + reassigning elsewhere → confirm; transferring releases the lock.
             if (detail.locked_to && (dest.type === "area" || dest.id !== detail.locked_to)) {
               const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
-              if (!confirmReleaseLock(name, lang)) return;
+              if (!(await ask(lockConfirmOpts(name, lang)))) return;
             }
             if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });
             else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }

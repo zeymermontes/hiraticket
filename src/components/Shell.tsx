@@ -6,6 +6,7 @@ import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
+import { ConfirmProvider } from "@/components/Confirm";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import { NavProgress } from "@/components/NavProgress";
 import { GlobalSearch } from "@/components/GlobalSearch";
@@ -275,15 +276,17 @@ export function Shell({
   return (
     <AppProvider personal={personal}>
       <ToastProvider>
-        <NavProgress />
-        <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
-        <div className="app">
-          <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} />
-          <div className="main">
-            <TopBar notifications={notifs} connected={connected} businessId={businessId} />
-            {children}
+        <ConfirmProvider>
+          <NavProgress />
+          <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
+          <div className="app">
+            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} />
+            <div className="main">
+              <TopBar notifications={notifs} connected={connected} businessId={businessId} />
+              {children}
+            </div>
           </div>
-        </div>
+        </ConfirmProvider>
       </ToastProvider>
     </AppProvider>
   );
