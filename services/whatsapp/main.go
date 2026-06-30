@@ -174,6 +174,10 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table automations add column if not exists trigger_config jsonb not null default '{}'::jsonb`); err != nil {
 		logger.Warnf("add trigger_config column: %v", err)
 	}
+	// "Mantener conmigo": a pinned conversation always stays assigned to locked_to. Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists locked_to uuid`); err != nil {
+		logger.Warnf("add locked_to column: %v", err)
+	}
 
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
@@ -1089,8 +1093,10 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	}
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden and reopen if it was resolved.
+		// A pinned chat ("mantener conmigo") keeps its agent — restore assignee from locked_to.
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false,
-			status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$2`, unread+1, convID)
+			status = CASE WHEN status='resolved' THEN 'open' ELSE status END,
+			assignee_id = coalesce(locked_to, assignee_id) WHERE id=$2`, unread+1, convID)
 		// Off-hours / holiday auto-reply (schedule-based flows). 1:1 chats only — groups never auto-reply.
 		if !v.Info.IsGroup {
 			m.runScheduleAutomations(ctx, s.BusinessID, convID)

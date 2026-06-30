@@ -52,13 +52,14 @@ export async function liveConvHeader(convId: string): Promise<Partial<ConvDetail
   const cols = (typing: string) =>
     `id, status, assignee_id, unread, hidden, snoozed_until, ${typing}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
   let convRaw, error;
-  ({ data: convRaw, error } = await supabase.from("conversations").select(cols("typing_until, muted, ")).eq("id", convId).maybeSingle());
+  ({ data: convRaw, error } = await supabase.from("conversations").select(cols("typing_until, muted, locked_to, ")).eq("id", convId).maybeSingle());
   if (error) ({ data: convRaw } = await supabase.from("conversations").select(cols("")).eq("id", convId).maybeSingle());
   if (!convRaw) return null;
   const conv = convRaw as unknown as Record<string, unknown>;
   return {
     status: conv.status as ConvDetail["status"],
     assignee_id: conv.assignee_id as string | null,
+    locked_to: ((conv as { locked_to?: string | null }).locked_to) ?? null,
     unread: (conv.unread as number) ?? 0,
     hidden: conv.hidden as boolean,
     snoozed_until: conv.snoozed_until as string | null,

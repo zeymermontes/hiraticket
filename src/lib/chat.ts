@@ -44,6 +44,7 @@ export interface ConvListItem {
   unread: number;
   last_message_at: string | null;
   assignee_id: string | null;
+  locked_to: string | null; // pinned to this agent ("mantener conmigo") — never auto-reassigned
   hidden: boolean;
   snoozed_until: string | null;
   area: { name: string; color: string } | null;
@@ -111,6 +112,7 @@ export interface ConvDetail {
   id: string;
   status: "open" | "pending" | "resolved";
   assignee_id: string | null;
+  locked_to: string | null; // pinned to this agent ("mantener conmigo")
   unread: number;
   hidden: boolean;
   snoozed_until: string | null;
@@ -184,9 +186,9 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   const supabase = await createClient();
   const cols = (opt: string) =>
     `id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state,type,deleted)`;
-  // typing_until (0027) / is_group (0032) may not exist yet — fall back to the base columns.
+  // typing_until (0027) / is_group (0032) / locked_to (0044) may not exist yet — fall back to the base columns.
   let { data, error } = await supabase
-    .from("conversations").select(cols("typing_until, is_group, muted, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
+    .from("conversations").select(cols("typing_until, is_group, muted, locked_to, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
   if (error) {
     ({ data, error } = await supabase
       .from("conversations").select(cols("")).eq("business_id", businessId).order("last_message_at", { ascending: false }));
@@ -206,6 +208,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       unread: c.unread,
       last_message_at: c.last_message_at,
       assignee_id: c.assignee_id,
+      locked_to: (c.locked_to as string) ?? null,
       hidden: c.hidden,
       snoozed_until: c.snoozed_until,
       area: c.area,
@@ -266,7 +269,7 @@ export async function getConversationDetail(
   const convCols = (opt: string) =>
     `id, status, assignee_id, contact_id, unread, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
   let convRaw, convErr;
-  ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, is_group, muted, ")).eq("id", convId).maybeSingle());
+  ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, is_group, muted, locked_to, ")).eq("id", convId).maybeSingle());
   if (convErr) ({ data: convRaw } = await supabase.from("conversations").select(convCols("")).eq("id", convId).maybeSingle());
   if (!convRaw) return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -300,6 +303,7 @@ export async function getConversationDetail(
     id: conv.id,
     status: conv.status,
     assignee_id: conv.assignee_id,
+    locked_to: ((conv as { locked_to?: string | null }).locked_to) ?? null,
     unread: conv.unread ?? 0,
     hidden: conv.hidden,
     snoozed_until: conv.snoozed_until,

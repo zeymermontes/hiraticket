@@ -236,8 +236,14 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
     .from("automations").select("id, name, action_type, action_payload, trigger_value, runs")
     .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "conversation_status");
 
+  // A pinned conversation ("mantener conmigo") is never auto-reassigned by flows.
+  const { data: lockRow } = await supabase.from("conversations").select("locked_to").eq("id", convId).maybeSingle();
+  const locked = !!(lockRow as { locked_to?: string | null } | null)?.locked_to;
+
   for (const a of autos ?? []) {
     if (a.trigger_value && a.trigger_value !== status) continue;
+    // Skip auto-reassignment on a pinned conversation (don't count it as a run either).
+    if (locked && (a.action_type === "assign_agent" || a.action_type === "transfer_area")) continue;
     const payload = (a.action_payload as { template?: string; area?: string; agent?: string; tag?: string }) ?? {};
 
     if (a.action_type === "send_template" && payload.template) {
@@ -293,6 +299,31 @@ export async function acceptConv(convId: string): Promise<void> {
   });
 }
 
+/** "Mantener conmigo": pin the conversation to the current agent. It stays assigned to them
+ *  through status changes / reopens and is skipped by auto-assign & area-routing flows. */
+export async function lockConvToMe(convId: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  if (!businessId || !userId) return;
+  await supabase.from("conversations").update({ locked_to: userId, assignee_id: userId }).eq("id", convId);
+  await supabase.from("events").insert({
+    business_id: businessId, parent_type: "conversation", parent_id: convId,
+    actor_id: userId, kind: "lock", text: "Cliente mantenido con el agente",
+  });
+}
+
+/** "Soltar cliente": release the pin so the conversation can be reassigned again. */
+export async function unlockConv(convId: string): Promise<void> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  if (!businessId) return;
+  await supabase.from("conversations").update({ locked_to: null }).eq("id", convId);
+  await supabase.from("events").insert({
+    business_id: businessId, parent_type: "conversation", parent_id: convId,
+    actor_id: userId, kind: "lock", text: "Cliente soltado",
+  });
+}
+
 export async function addConvNote(convId: string, body: string): Promise<void> {
   const text = body.trim();
   if (!text) return;
@@ -326,11 +357,11 @@ export async function bulkSetStatus(convIds: string[], status: "open" | "pending
   await supabase.from("conversations").update(status === "resolved" ? { status, unread: 0 } : { status }).in("id", convIds);
 }
 
-/** Bulk-assign several conversations to an agent (or null to unassign). */
+/** Bulk-assign several conversations to an agent (or null to unassign). Releases any lock. */
 export async function bulkAssign(convIds: string[], agentId: string | null): Promise<void> {
   if (!convIds.length) return;
   const { supabase } = await ctx();
-  await supabase.from("conversations").update({ assignee_id: agentId }).in("id", convIds);
+  await supabase.from("conversations").update({ assignee_id: agentId, locked_to: null }).in("id", convIds);
 }
 
 /** Bulk-delete several conversations (messages cascade; notes/events cleared). */
@@ -422,15 +453,16 @@ export async function transferConv(
   const businessId = await businessOf(convId);
   if (!businessId) return;
 
+  // A manual transfer is a deliberate reassignment, so it releases any "mantener conmigo" lock.
   if (mode === "agent") {
-    await supabase.from("conversations").update({ assignee_id: destId }).eq("id", convId);
+    await supabase.from("conversations").update({ assignee_id: destId, locked_to: null }).eq("id", convId);
   } else {
     // Route to the area's default agent, if set.
     const { data: area } = await supabase
       .from("areas").select("route_to").eq("id", destId).maybeSingle();
     await supabase
       .from("conversations")
-      .update({ area_id: destId, assignee_id: (area?.route_to as string) ?? null })
+      .update({ area_id: destId, assignee_id: (area?.route_to as string) ?? null, locked_to: null })
       .eq("id", convId);
   }
   await supabase.from("events").insert({

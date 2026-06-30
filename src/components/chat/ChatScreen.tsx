@@ -24,7 +24,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs,
+  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
 } from "@/app/(app)/chat/actions";
 import { menuStyle } from "@/lib/popover";
 import { useToast, useFlowToast } from "@/components/Toast";
@@ -75,7 +75,7 @@ const _prefetching = new Set<string>();
 /** Minimal detail from a list item — shows the header instantly before the full detail loads. */
 function skeletonDetail(c: ConvListItem): ConvDetail {
   return {
-    id: c.id, status: c.status, assignee_id: c.assignee_id, unread: c.unread,
+    id: c.id, status: c.status, assignee_id: c.assignee_id, locked_to: c.locked_to, unread: c.unread,
     hidden: c.hidden, snoozed_until: c.snoozed_until, area: c.area,
     contact: c.contact
       ? { id: c.contact.id, name: c.contact.name, phone: c.contact.phone, tags: c.contact.tags ?? [], avatar_url: c.contact.avatar_url, created_at: null }
@@ -501,6 +501,13 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
   resolved: { es: "Resuelto", en: "Resolved" },
 };
 
+/** Confirm before a reassignment that would release a "mantener conmigo" lock. true = proceed. */
+function confirmReleaseLock(agentName: string, lang: "es" | "en"): boolean {
+  return confirm(lang === "es"
+    ? `🔒 Este cliente está mantenido con ${agentName}. Transferirlo soltará el candado.\n\n¿Transferir de todos modos?`
+    : `🔒 This client is kept with ${agentName}. Transferring will release the pin.\n\nTransfer anyway?`);
+}
+
 export function ChatScreen({
   list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected,
 }: {
@@ -720,6 +727,14 @@ export function ChatScreen({
     openConv(c);
   };
   const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); await liveList(businessId).then(setList).catch(() => {}); exitSelect(); })(); };
+  // Bulk reassign: warn if any selected chat is pinned ("mantener conmigo") — reassigning releases it.
+  const runBulkAssign = (agentId: string | null) => {
+    const lockedN = [...selected].filter((id) => list.find((c) => c.id === id)?.locked_to).length;
+    if (lockedN && !confirm(lang === "es"
+      ? `🔒 ${lockedN} chat(s) están mantenidos con un agente. Reasignarlos soltará el candado.\n\n¿Continuar?`
+      : `🔒 ${lockedN} chat(s) are pinned to an agent. Reassigning will release the pin.\n\nContinue?`)) return;
+    runBulk(() => bulkAssign([...selected], agentId));
+  };
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const areaNames = useMemo(() => [...new Set(list.map((c) => c.area?.name).filter(Boolean))] as string[], [list]);
@@ -882,8 +897,8 @@ export function ChatScreen({
               {bulkMenu.kind === "status"
                 ? (["open", "pending", "resolved"] as const).map((s) => <button key={s} className="menu-item" onClick={() => runBulk(() => bulkSetStatus([...selected], s))}><Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill></button>)
                 : <>
-                    <button className="menu-item" onClick={() => runBulk(() => bulkAssign([...selected], null))}><Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill></button>
-                    {agents.filter((a) => a.role !== "viewer").map((a) => <button key={a.id} className="menu-item" onClick={() => runBulk(() => bulkAssign([...selected], a.id))}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
+                    <button className="menu-item" onClick={() => runBulkAssign(null)}><Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill></button>
+                    {agents.filter((a) => a.role !== "viewer").map((a) => <button key={a.id} className="menu-item" onClick={() => runBulkAssign(a.id)}><Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} size={20} />{a.name}</button>)}
                   </>}
             </div>
           </>
@@ -916,6 +931,7 @@ export function ChatScreen({
                         ? <Pill color="violet"><Icon name="clock" size={11} />{new Date(c.snoozed_until).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</Pill>
                         : <Pill color={STATUS_COLOR[c.status]} dot>{STATUS_LABEL[c.status][lang]}</Pill>}
                       {c.hidden && <Pill color="slate"><Icon name="eye" size={11} /></Pill>}
+                      {c.locked_to && <Pill color="amber" title={lang === "es" ? "Mantenido con un agente" : "Pinned to an agent"}><Icon name="lock" size={11} /></Pill>}
                       {c.muted && <Pill color="slate" title={lang === "es" ? "Chat desconectado — no se guardan mensajes" : "Chat disconnected — messages not saved"}><Icon name="wifioff" size={11} /></Pill>}
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
                       {(c.contact?.tags ?? []).slice(0, 3).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
@@ -933,7 +949,7 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
@@ -1329,6 +1345,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           <div className="row gap-2">
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
             <span className="pill pill-green" style={{ height: 18, padding: "0 6px" }}><Icon name="whatsapp" size={11} />WhatsApp</span>
+            {detail.locked_to && <span className="pill pill-amber" style={{ height: 18, padding: "0 6px" }} title={lang === "es" ? "Mantenido con un agente" : "Pinned to an agent"}><Icon name="lock" size={11} />{lang === "es" ? "Mantenido" : "Pinned"}</span>}
           </div>
           <div className="t-xs muted">{isTyping(detail.typing_until) ? <span className="typing-ind">{lang === "es" ? "escribiendo…" : "typing…"}</span> : assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
         </div>
@@ -1711,9 +1728,14 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
   const [pending, start] = useTransition();
 
   function pick(mode: "agent" | "area", id: string) {
+    // Pinned ("mantener conmigo") + reassigning elsewhere → confirm; transferring releases the lock.
+    if (detail.locked_to && (mode === "area" || id !== detail.locked_to)) {
+      const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
+      if (!confirmReleaseLock(name, lang)) { close(); return; }
+    }
     close();
-    if (mode === "agent") patch({ assignee_id: id });
-    else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area }); }
+    if (mode === "agent") patch({ assignee_id: id, locked_to: null });
+    else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
     start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
 
@@ -1747,7 +1769,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -1868,7 +1890,7 @@ function Workspace({ detail, agents, areas, stages, products, businessId, connec
           <div className="ws-block-body"><div className="timeline">
             {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
               detail.events.map((e) => (
-                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
+                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : e.kind === "lock" ? "lock" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
               ))}
           </div></div>
         )}
@@ -1918,8 +1940,13 @@ function Workspace({ detail, agents, areas, stages, products, businessId, connec
       {showXfer && (
         <TransferModal agents={agents} areas={areas} onClose={() => setShowXfer(false)}
           onConfirm={async (dest) => {
-            if (dest.type === "agent") patch({ assignee_id: dest.id });
-            else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area }); }
+            // Pinned + reassigning elsewhere → confirm; transferring releases the lock.
+            if (detail.locked_to && (dest.type === "area" || dest.id !== detail.locked_to)) {
+              const name = agents.find((a) => a.id === detail.locked_to)?.name ?? (lang === "es" ? "un agente" : "an agent");
+              if (!confirmReleaseLock(name, lang)) return;
+            }
+            if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });
+            else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
             await transferConv(detail.id, dest.type, dest.id); refresh();
           }} />
       )}
@@ -1945,6 +1972,13 @@ function Workspace({ detail, agents, areas, stages, products, businessId, connec
               <button className={"act" + (detail.muted ? " warn" : "")} disabled={pending} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
                 <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
               </button>
+              {detail.locked_to
+                ? <button className="act warn" disabled={pending} title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); refresh(); }); }}>
+                    <Icon name="lock" />{lang === "es" ? "Soltar cliente" : "Release client"}
+                  </button>
+                : <button className="act" disabled={pending} title={lang === "es" ? "Mantener este cliente asignado a ti pase lo que pase" : "Keep this client assigned to you no matter what"} onClick={() => { patch({ locked_to: meId, assignee_id: meId }); start(async () => { await lockConvToMe(detail.id); refresh(); }); }}>
+                    <Icon name="lock" />{lang === "es" ? "Mantener conmigo" : "Keep with me"}
+                  </button>}
               {detail.status === "resolved"
                 ? <button className="act full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
                 : <button className="act good full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
