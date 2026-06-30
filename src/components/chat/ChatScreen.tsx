@@ -13,6 +13,7 @@ import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { NewOrderModal } from "@/components/OrdersTable";
+import type { Product } from "@/lib/extras";
 import { loadOrderDetail } from "@/app/(app)/orders/actions";
 import type { OrderDetail } from "@/lib/orders";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
@@ -501,7 +502,7 @@ const STATUS_LABEL: Record<string, { es: string; en: string }> = {
 };
 
 export function ChatScreen({
-  list: listProp, detail: detailProp, selectedId, agents, areas, stages, meId, businessId, connected,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected,
 }: {
   list: ConvListItem[];
   detail: ConvDetail | null;
@@ -509,6 +510,7 @@ export function ChatScreen({
   agents: Agent[];
   areas: Area[];
   stages: Stage[];
+  products: Product[];
   meId: string;
   businessId: string;
   connected: boolean;
@@ -931,7 +933,7 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
@@ -1745,7 +1747,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, stages, products, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -1956,7 +1958,7 @@ function Workspace({ detail, agents, areas, stages, businessId, connected, onRes
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
       {showNewTask && (
-        <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={[]} contacts={[]}
+        <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={products} contacts={[]}
           defaultContact={detail.contact?.name ?? ""}
           onClose={() => setShowNewTask(false)} onCreated={() => { setShowNewTask(false); refresh(); }} />
       )}
