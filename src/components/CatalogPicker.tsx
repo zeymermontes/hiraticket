@@ -1,9 +1,23 @@
 "use client";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "@/components/Icon";
-import { menuStyle } from "@/lib/popover";
 import { formatMoney } from "@/lib/types";
 import type { Product } from "@/lib/extras";
+
+/** Anchor the popover to the trigger: open just below it (so the search box sits right under the
+ *  icon), flipping above only when there's genuinely no room below. Clamped into the viewport. */
+function popStyle(rect: DOMRect): CSSProperties {
+  const W = 264, m = 8, gap = 4;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  let left = rect.right - W;                          // right-align to the trigger
+  left = Math.min(Math.max(m, left), vw - W - m);
+  const below = vh - rect.bottom - m;
+  const above = rect.top - m;
+  const base: CSSProperties = { position: "fixed", left, width: W, zIndex: 201 };
+  if (below < 200 && above > below) return { ...base, bottom: vh - rect.top + gap, maxHeight: Math.min(340, above - gap) };
+  return { ...base, top: rect.bottom + gap, maxHeight: Math.min(340, below - gap) };
+}
 
 /** Searchable, alphabetically-sorted catalog picker (replaces a plain <select> so it can be filtered).
  *  `compact` renders just the dropdown-arrow trigger (for a line-item row); otherwise a full-width
@@ -39,7 +53,7 @@ export function CatalogPicker({ products, onPick, personal, lang, compact }: {
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ ...menuStyle(rect, { width: 264, height: 320 }), overflowY: "hidden", padding: 6, display: "flex", flexDirection: "column" }}>
+          <div className="menu" style={{ ...popStyle(rect), overflowY: "hidden", padding: 6, display: "flex", flexDirection: "column" }}>
             <div className="field field-sm field-filled" style={{ marginBottom: 4, flex: "none" }}>
               <Icon name="search" size={14} />
               <input autoFocus placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} />
