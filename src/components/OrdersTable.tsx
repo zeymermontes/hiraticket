@@ -12,6 +12,7 @@ import type { ConvDetail } from "@/lib/chat";
 import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
+import { CatalogPicker } from "@/components/CatalogPicker";
 import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder } from "@/app/(app)/orders/actions";
 import { moveOrderArea } from "@/app/(app)/actions";
 
@@ -371,10 +372,7 @@ export function NewOrderModal({
           {products.length > 0 && (
             <>
               <label className="lbl">{personal ? (lang === "es" ? "Agregar tarea repetitiva" : "Add recurring task") : (lang === "es" ? "Agregar del catálogo" : "Add from catalog")}</label>
-              <select className="select" value="" onChange={(e) => { addFromCatalog(e.target.value); e.target.value = ""; }}>
-                <option value="">{personal ? (lang === "es" ? "— elige una tarea —" : "— pick a task —") : (lang === "es" ? "— elige un producto —" : "— pick a product —")}</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name}{!personal && ` · $${formatMoney(p.price)}`}</option>)}
-              </select>
+              <CatalogPicker products={products} personal={personal} lang={lang} onPick={(p) => addFromCatalog(p.id)} />
             </>
           )}
           <label className="lbl">{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items")}</label>
