@@ -971,7 +971,7 @@ export function ChatScreen({
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId}
             onAccepted={(id) => { setTab("mine"); setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d)); setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c))); }} />
-          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
+          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
@@ -2031,7 +2031,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
         </>
       )}
       {openOrder && (
-        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
+        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={products} businessId={businessId}
           convDetail={detail} connected={connected}
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}

@@ -281,6 +281,7 @@ export function OrdersTable({
           stages={stages}
           areas={areas}
           agents={agents}
+          products={products}
           businessId={businessId}
           convDetail={convDetail}
           connected={connected}

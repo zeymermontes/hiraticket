@@ -7,6 +7,7 @@ import { type PillColor, priorityColor, PRIORITY_LABEL, tagColor } from "@/lib/t
 import type { ConvDetail, Agent } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import type { OrderDetail } from "@/lib/orders";
+import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { loadOrderDetail } from "@/app/(app)/orders/actions";
 import { useApp } from "@/components/AppContext";
@@ -14,7 +15,7 @@ import { useApp } from "@/components/AppContext";
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
-export function CustomerOverlay({ detail, agents, areas, stages, businessId, connected, onClose }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; businessId: string; connected: boolean; onClose: () => void }) {
+export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void }) {
   const router = useRouter();
   const { personal } = useApp();
   const ORDERS = personal ? "Tareas" : "Pedidos";
@@ -115,6 +116,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, businessId, con
           stages={stages}
           areas={areas}
           agents={agents}
+          products={products}
           businessId={businessId}
           convDetail={detail}
           connected={connected}

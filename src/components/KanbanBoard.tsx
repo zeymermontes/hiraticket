@@ -9,19 +9,21 @@ import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO } from
 import type { KanbanOrder, KanbanItem } from "@/lib/kanban";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
+import type { Product as CatalogProduct } from "@/lib/extras";
 import type { OrderDetail } from "@/lib/orders";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { loadOrderDetail, setItemStage } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 
 export function KanbanBoard({
-  orders, items = [], stages, areas, agents, businessId, connected, productStages = false,
+  orders, items = [], stages, areas, agents, catalog = [], businessId, connected, productStages = false,
 }: {
   orders: KanbanOrder[];
   items?: KanbanItem[];
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
+  catalog?: CatalogProduct[];
   businessId: string;
   connected: boolean;
   productStages?: boolean;
@@ -197,7 +199,7 @@ export function KanbanBoard({
         </div>
       </div>
       {openOrder && (
-        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} businessId={businessId}
+        <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={catalog} businessId={businessId}
           convDetail={null} connected={connected}
           onClose={() => { setOpenOrder(null); router.refresh(); }} />
       )}
