@@ -112,6 +112,12 @@
 
 /* message thread */
 .thread { flex: 1; overflow-y: auto; min-height: 0; padding: 18px 18px 8px; display: flex; flex-direction: column; gap: 3px; background: var(--bg); }
+/* Drag-and-drop file overlay (both chats). pointer-events:none so the drop still reaches the container. */
+.drop-overlay { position: absolute; inset: 10px; z-index: 60; pointer-events: none; display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--brand); border-radius: var(--r-xl); background: var(--brand-50); opacity: .96; animation: ht-fade .12s var(--ease-out); }
+[data-theme="dark"] .drop-overlay { background: color-mix(in srgb, var(--brand-50) 70%, transparent); }
+.drop-inner { text-align: center; color: var(--brand-700); background: var(--surface); padding: 22px 30px; border-radius: var(--r-lg); box-shadow: var(--sh-lg); }
+.drop-ic { display: inline-flex; width: 54px; height: 54px; border-radius: 15px; background: var(--brand-50); color: var(--brand-700); align-items: center; justify-content: center; }
 .thread-wa-tint { background:
   radial-gradient(circle at 18% 12%, rgba(31,168,85,.04), transparent 40%),
   var(--bg); }

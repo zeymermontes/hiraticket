@@ -6,6 +6,7 @@ import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
+import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
@@ -209,6 +210,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshMsgs(selRef.current); refreshThreads(); });
   }
   const stageFiles = (files: FileList | File[]) => setStaged((s) => [...s, ...Array.from(files)]);
+  const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
   // Upload staged files, then send (caption goes on the first item, like the WhatsApp chat).
   async function sendStaged() {
     if (!staged.length) return;
@@ -316,7 +318,8 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
       </div>
 
       {/* thread */}
-      <div className="chatcol" style={{ flex: 1, minWidth: 0, background: "var(--bg)" }}>
+      <div className="chatcol" style={{ position: "relative", flex: 1, minWidth: 0, background: "var(--bg)" }} {...dragProps}>
+        {dragOver && <DropOverlay lang={lang} />}
         <div className="thread-head">
           {selThread?.kind === "team"
             ? <span style={{ width: 36, height: 36, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="agents" size={18} /></span>

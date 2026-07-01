@@ -28,6 +28,7 @@ import {
 } from "@/app/(app)/chat/actions";
 import { menuStyle } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
+import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
@@ -1061,6 +1062,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   function stageFiles(files: FileList | File[]) {
     setStaged((s) => [...s, ...Array.from(files)]);
   }
+  const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
 
   // Upload staged files, then send (caption goes on the first item, like WhatsApp).
   async function sendStaged() {
@@ -1358,7 +1360,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
 
   return (
-    <div className="chatcol" style={floating ? { height: "100%", flex: 1, minWidth: 0, width: "100%" } : undefined}>
+    <div className="chatcol" style={{ position: "relative", ...(floating ? { height: "100%", flex: 1, minWidth: 0, width: "100%" } : {}) }} {...dragProps}>
+      {dragOver && <DropOverlay lang={lang} />}
       <div className="thread-head">
         <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38} />
         <div className="grow" style={{ minWidth: 0 }}>
