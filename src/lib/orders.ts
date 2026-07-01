@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export interface OrderItem { id: string; name: string; qty: number; unit_price: number; subtotal: number; stage_id: string | null; stage: { name: string; color: string } | null; note: string | null }
 export interface OrderNote { id: string; body: string; author_id: string | null; created_at: string; item_id: string | null }
-export interface OrderEvent { id: string; kind: string; text: string | null; created_at: string }
+export interface OrderEvent { id: string; kind: string; text: string | null; created_at: string; actor_id: string | null }
 export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string }
 
 export interface OrderDetail {
@@ -43,7 +43,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   const [itemsRes, notesRes, { data: events }, payRes] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, note, stage:stages(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at, item_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
-    supabase.from("events").select("id, kind, text, created_at").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("events").select("id, kind, text, created_at, actor_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payments").select("id, amount, method, note, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
   ]);
   // Fall back to base item columns if stage_id/stage isn't available yet.

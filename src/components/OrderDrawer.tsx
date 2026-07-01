@@ -318,9 +318,23 @@ export function OrderDrawer({
           <div className="ws-block">
             <div className="ws-block-head"><Icon name="clock" size={16} /><h4>{lang === "es" ? "Registro de actividad" : "Activity log"}</h4></div>
             <div style={{ padding: "10px 14px" }}><div className="timeline">
-              {detail.events.length === 0 ? <div className="muted t-sm">—</div> : detail.events.map((e) => (
-                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "plus" ? "plus" : e.kind === "status" ? "dot" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{date(e.created_at)}</div></div></div>
-              ))}
+              {detail.events.length === 0 ? <div className="muted t-sm">—</div> : detail.events.map((e) => {
+                const au = e.actor_id ? agents.find((a) => a.id === e.actor_id) : null;
+                return (
+                  <div className="tl" key={e.id}>
+                    <div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "plus" ? "plus" : e.kind === "status" ? "dot" : "clock"} size={13} /></div></div>
+                    <div className="tl-body">
+                      <div className="row gap-1" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                        {au
+                          ? <Avatar name={au.name} initials={deriveInitials(au.name)} color={au.color} src={au.avatar_url ?? undefined} size={16} />
+                          : <span title={lang === "es" ? "Automático" : "Automated"} style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--surface-3)", color: "var(--text-faint)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="bolt" size={10} /></span>}
+                        <span>{e.text}</span>
+                      </div>
+                      <div className="tl-time">{(au?.name ? au.name + " · " : "") + date(e.created_at)}</div>
+                    </div>
+                  </div>
+                );
+              })}
             </div></div>
           </div>
         </div>
