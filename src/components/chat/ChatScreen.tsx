@@ -968,7 +968,8 @@ export function ChatScreen({
       {detail && detailInView ? (
         <>
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
-          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} />
+          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId}
+            onAccepted={(id) => { setTab("mine"); setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d)); setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c))); }} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
       ) : (
@@ -1039,7 +1040,7 @@ function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en";
 }
 
 /* ---------- Thread (right column) ---------- */
-export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean }) {
+export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean; onAccepted?: (convId: string) => void }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
@@ -1373,7 +1374,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           </button>
         )}
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => start(async () => { await acceptConv(detail.id); refresh(); })}>
+          <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
