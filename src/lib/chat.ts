@@ -93,6 +93,7 @@ export interface ConvEvent {
   kind: string;
   text: string | null;
   created_at: string;
+  actor_id: string | null; // which agent performed the action (null = system/automation)
 }
 
 export interface ChatOrderCard {
@@ -287,7 +288,7 @@ export async function getConversationDetail(
         .order("created_at", { ascending: true }),
       supabase
         .from("events")
-        .select("id, kind, text, created_at")
+        .select("id, kind, text, created_at, actor_id")
         .eq("parent_type", "conversation")
         .eq("parent_id", convId)
         .order("created_at", { ascending: false }),

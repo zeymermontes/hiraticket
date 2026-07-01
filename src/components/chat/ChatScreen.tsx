@@ -1918,9 +1918,23 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
         {actOpen && (
           <div className="ws-block-body"><div className="timeline">
             {detail.events.length === 0 ? <div className="muted t-sm">—</div> :
-              detail.events.map((e) => (
-                <div className="tl" key={e.id}><div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : e.kind === "lock" ? "lock" : "clock"} size={13} /></div></div><div className="tl-body">{e.text}<div className="tl-time">{relTime(e.created_at, lang)}</div></div></div>
-              ))}
+              detail.events.map((e) => {
+                const au = e.actor_id ? agentMap.get(e.actor_id) : null;
+                return (
+                  <div className="tl" key={e.id}>
+                    <div className="tl-dot"><div className="tl-ic"><Icon name={e.kind === "swap" ? "swap" : e.kind === "check" ? "check" : e.kind === "lock" ? "lock" : "clock"} size={13} /></div></div>
+                    <div className="tl-body">
+                      <div className="row gap-1" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                        {au
+                          ? <Avatar name={au.name} initials={deriveInitials(au.name)} color={au.color} src={au.avatar_url ?? undefined} size={16} />
+                          : <span title={lang === "es" ? "Automático" : "Automated"} style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--surface-3)", color: "var(--text-faint)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="bolt" size={10} /></span>}
+                        <span>{e.text}</span>
+                      </div>
+                      <div className="tl-time">{(au?.name ? au.name + " · " : "") + relTime(e.created_at, lang)}</div>
+                    </div>
+                  </div>
+                );
+              })}
           </div></div>
         )}
       </>
