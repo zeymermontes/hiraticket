@@ -782,7 +782,8 @@ export function ChatScreen({
   const archivedN = list.filter((c) => isArchived(c) && !isStale(c)).length;
 
   const mineN = list.filter((c) => c.assignee_id === meId).length;
-  const unN = list.filter((c) => c.assignee_id == null).length;
+  // "Sin asignar" badge counts only active chats (open/pending, not stale, not archived).
+  const unN = list.filter((c) => c.assignee_id == null && !isStale(c) && !isArchived(c) && (c.status === "open" || c.status === "pending")).length;
 
   // Counts for the filter chips — scoped by the active tab/area/archived view (not by the
   // status/unread filters themselves).
