@@ -99,13 +99,13 @@ export async function moveOrderArea(orderId: string, areaId: string): Promise<vo
   const { supabase, userId } = await actorCtx();
   const businessId = await orderBusiness(orderId);
   if (!businessId) return;
-  const { data: area } = await supabase.from("areas").select("route_to").eq("id", areaId).maybeSingle();
+  const { data: area } = await supabase.from("areas").select("route_to, name").eq("id", areaId).maybeSingle();
   await supabase.from("orders")
     .update({ area_id: areaId, assignee_id: (area?.route_to as string) ?? null, updated_at: new Date().toISOString() })
     .eq("id", orderId);
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId,
-    actor_id: userId, kind: "swap", text: "Movido de área",
+    actor_id: userId, kind: "swap", text: `Movido al área ${(area?.name as string) ?? ""}`.trim(),
   });
   revalidatePath("/kanban");
   revalidatePath("/orders");

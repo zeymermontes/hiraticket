@@ -168,9 +168,10 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
   await supabase.from("orders").update({ assignee_id: agentId }).eq("id", orderId);
   if (order) {
+    const { data: p } = await supabase.from("profiles").select("full_name").eq("id", agentId).maybeSingle();
     await supabase.from("events").insert({
       business_id: order.business_id, parent_type: "order", parent_id: orderId,
-      actor_id: user?.id ?? null, kind: "swap", text: "Asignado",
+      actor_id: user?.id ?? null, kind: "swap", text: `Asignado a ${(p?.full_name as string) || "un agente"}`,
     });
   }
   revalidatePath("/orders");

@@ -454,18 +454,23 @@ export async function transferConv(
   if (!businessId) return;
 
   // A manual transfer is a deliberate reassignment, so it releases any "mantener conmigo" lock.
+  // Build the activity label with the destination (agent name / area name) so the log shows who.
+  let label = "Devuelto a sin asignar";
   if (mode === "unassign") {
     await supabase.from("conversations").update({ assignee_id: null, locked_to: null }).eq("id", convId);
   } else if (mode === "agent") {
     await supabase.from("conversations").update({ assignee_id: destId, locked_to: null }).eq("id", convId);
+    const { data: p } = await supabase.from("profiles").select("full_name").eq("id", destId).maybeSingle();
+    label = `Transferido a ${(p?.full_name as string) || "un agente"}`;
   } else {
     // Route to the area's default agent, if set.
     const { data: area } = await supabase
-      .from("areas").select("route_to").eq("id", destId).maybeSingle();
+      .from("areas").select("route_to, name").eq("id", destId).maybeSingle();
     await supabase
       .from("conversations")
       .update({ area_id: destId, assignee_id: (area?.route_to as string) ?? null, locked_to: null })
       .eq("id", convId);
+    label = `Transferido al área ${(area?.name as string) ?? ""}`.trim();
   }
   await supabase.from("events").insert({
     business_id: businessId,
@@ -473,6 +478,6 @@ export async function transferConv(
     parent_id: convId,
     actor_id: userId,
     kind: "swap",
-    text: mode === "unassign" ? "Devuelto a sin asignar" : "Transferido",
+    text: label,
   });
 }
