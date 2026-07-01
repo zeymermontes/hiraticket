@@ -1730,8 +1730,15 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
 }
 
 export function MediaThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const url = useMemo(() => (file.type.startsWith("image/") || file.type.startsWith("video/") ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  // Create the preview URL in an effect (not useMemo) and revoke it in the same cleanup, so a
+  // re-render/StrictMode remount can't revoke a URL that's still in use → no intermittent broken image.
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!(file.type.startsWith("image/") || file.type.startsWith("video/"))) { setUrl(null); return; }
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
   return (
     <div style={{ position: "relative", width: 86, height: 86, borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       {file.type.startsWith("image/") && url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
