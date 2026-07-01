@@ -14,6 +14,10 @@ that already bit us:
 - A conversation can be reassigned from **three** surfaces (header `TransferControl`, workspace
   `TransferModal`, chat-list **bulk assign**) — a rule about transferring (e.g. the "mantener
   conmigo" lock confirm) must hit all three, plus the **flow** auto-assign and the **worker**.
+- The **activity / event timeline** renders in TWO places from the same `events` table: the chat
+  `Workspace` ("Actividad") and the `OrderDrawer` ("Registro de actividad"). Adding the acting
+  agent's avatar meant touching `ConvEvent`+`getConversationDetail` AND `OrderEvent`+`getOrderDetail`
+  AND both renderers — doing only the chat one left the order detail behind.
 
 So: before writing code, map the surfaces. After writing, verify each one.
 
@@ -45,8 +49,14 @@ check each that applies:
   by the **worker** (`services/whatsapp/main.go`, e.g. reopen, auto-reply, lock-preserve) and by
   **flows/automations** (`runConvStatusAutomations`, `runStageAutomations`). A rule enforced only in
   the UI is bypassable by the worker/flow path — enforce it there too.
-- **Orders side vs conversations side.** Orders and conversations both have `assignee_id`, stages,
-  soft-delete, etc. A change to one may have a mirror on the other — check both before assuming.
+- **Orders side vs conversations side.** Orders and conversations mirror each other constantly, from
+  the same underlying tables — check BOTH before assuming a change is one-sided:
+  - `assignee_id`, stages/status, soft-delete, tags.
+  - **`events` timeline** → chat `Workspace` "Actividad" (`ConvEvent` / `getConversationDetail`) **and**
+    `OrderDrawer` "Registro de actividad" (`OrderEvent` / `getOrderDetail`).
+  - **`notes`** → conversation notes **and** order notes.
+  A field or render tweak on a conversation event/note almost always has an order twin (and vice
+  versa). Grep `parent_type` and the render component in both files.
 
 Write the list out (even just inline) so coverage is explicit.
 
