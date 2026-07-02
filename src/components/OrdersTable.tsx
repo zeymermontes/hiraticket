@@ -18,6 +18,9 @@ import { moveOrderArea } from "@/app/(app)/actions";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 
+/** Numeric part of an order code ("HIR-1144" → 1144) so codes sort numerically, not lexically. */
+const codeNum = (code: string) => { const m = /(\d+)\s*$/.exec(code || ""); return m ? Number(m[1]) : 0; };
+
 function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
   return <Pill color={priorityColor(p as never)}><Icon name="flag" size={11} />{PRIO_LABEL[p]?.[lang] ?? p}</Pill>;
 }
@@ -79,7 +82,7 @@ export function OrdersTable({
       else if (sortKey === "updated_at") { av = a.updated_at; bv = b.updated_at; }
       else if (sortKey === "created_at") { av = a.created_at ?? a.updated_at; bv = b.created_at ?? b.updated_at; }
       else if (sortKey === "due_at") { av = a.due_at ?? "9999"; bv = b.due_at ?? "9999"; } // no deadline sorts last
-      else { av = a.code; bv = b.code; }
+      else { av = codeNum(a.code); bv = codeNum(b.code); } // by HIR- number (numeric, not lexical)
       const r = av < bv ? -1 : av > bv ? 1 : 0;
       return dir === "asc" ? r : -r;
     });
@@ -99,7 +102,7 @@ export function OrdersTable({
     <th className="sortable" onClick={() => sortBy(k)} style={{ cursor: "pointer" }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         {children}
-        {sortKey === k && <Icon name="chevd" size={12} />}
+        {sortKey === k && <span style={{ display: "inline-flex", transform: dir === "asc" ? "rotate(180deg)" : undefined }}><Icon name="chevd" size={12} /></span>}
       </span>
     </th>
   );

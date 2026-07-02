@@ -38,7 +38,6 @@ export function KanbanBoard({
   const openDrawer = (id: string) => { setLoadingId(id); startLoad(async () => { const d = await loadOrderDetail(id); setOpenOrder(d); setLoadingId(null); }); };
   const [view, setView] = useState<"orders" | "products">("orders");
   const [group, setGroup] = useState<"status" | "area">("status");
-  const [sortDue, setSortDue] = useState(false);
   const [sortCode, setSortCode] = useState<"" | "asc" | "desc">(""); // sort by the HIR- number
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
@@ -63,7 +62,6 @@ export function KanbanBoard({
   const colOrders = (colId: string) => {
     const l = pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
     if (sortCode) l.sort((a, b) => (sortCode === "asc" ? codeNum(a) - codeNum(b) : codeNum(b) - codeNum(a)));
-    else if (sortDue) l.sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999")); // soonest first, none last
     return l;
   };
 
@@ -104,8 +102,7 @@ export function KanbanBoard({
             <button className={group === "status" ? "on" : ""} onClick={() => setGroup("status")}><Icon name="kanban" size={14} />{lang === "es" ? "Etapa" : "Stage"}</button>
             <button className={group === "area" ? "on" : ""} onClick={() => setGroup("area")}><Icon name="layers" size={14} />{lang === "es" ? "Área" : "Area"}</button>
           </div>
-          <button className={"chip" + (sortDue ? " on" : "")} onClick={() => { setSortCode(""); setSortDue((v) => !v); }} title={lang === "es" ? "Ordenar por fecha límite" : "Sort by deadline"}><Icon name="calendar" size={13} />{lang === "es" ? "Por fecha" : "By date"}</button>
-          <button className={"chip" + (sortCode ? " on" : "")} onClick={() => { setSortDue(false); setSortCode((s) => (s === "" ? "asc" : s === "asc" ? "desc" : "")); }} title={lang === "es" ? "Ordenar por número (HIR-)" : "Sort by number (HIR-)"}><Icon name="orders" size={13} />{lang === "es" ? "Por ID" : "By ID"}{sortCode && <span style={{ marginLeft: 1, fontWeight: 800 }}>{sortCode === "asc" ? "↑" : "↓"}</span>}</button>
+          <button className={"chip" + (sortCode ? " on" : "")} onClick={() => setSortCode((s) => (s === "" ? "asc" : s === "asc" ? "desc" : ""))} title={lang === "es" ? "Ordenar por número (HIR-)" : "Sort by number (HIR-)"}><Icon name="orders" size={13} />{lang === "es" ? "Por ID" : "By ID"}{sortCode && <span style={{ marginLeft: 1, fontWeight: 800 }}>{sortCode === "asc" ? "↑" : "↓"}</span>}</button>
         </>}
       </div>
 
@@ -158,7 +155,7 @@ export function KanbanBoard({
                           <span className="t-xs muted truncate">{it.contact?.name ?? "—"}</span>
                         </div>
                         <div className="kcard-foot">
-                          {ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /> : null}
+                          {ag ? <span className="row gap-1" style={{ alignItems: "center", minWidth: 0 }}><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /><span className="t-xs muted truncate" style={{ maxWidth: 96 }}>{ag.name}</span></span> : null}
                           <span className="grow" />
                           <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === it.order_id}
                             onClick={(e) => { e.stopPropagation(); openDrawer(it.order_id); }} onPointerDown={(e) => e.stopPropagation()}>
@@ -184,7 +181,7 @@ export function KanbanBoard({
                         <span className="t-xs muted truncate">{o.contact?.name ?? "—"}</span>
                       </div>
                       <div className="kcard-foot">
-                        {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /> : null; })()}
+                        {(() => { const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null; return ag ? <span className="row gap-1" style={{ alignItems: "center", minWidth: 0 }}><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={20} /><span className="t-xs muted truncate" style={{ maxWidth: 96 }}>{ag.name}</span></span> : null; })()}
                         <span className="grow" />
                         {o.due_at && (() => { const od = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name); return <span className="row gap-1" style={{ color: od ? "var(--red)" : "var(--text-muted)", fontWeight: od ? 700 : 500, fontSize: 11.5 }}><Icon name={od ? "clock" : "calendar"} size={11} />{new Date(o.due_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>; })()}
                         {!personal && <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}
