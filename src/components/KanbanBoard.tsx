@@ -39,6 +39,7 @@ export function KanbanBoard({
   const [view, setView] = useState<"orders" | "products">("orders");
   const [group, setGroup] = useState<"status" | "area">("status");
   const [sortDue, setSortDue] = useState(false);
+  const [sortCode, setSortCode] = useState<"" | "asc" | "desc">(""); // sort by the HIR- number
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
   const [assigneeF, setAssigneeF] = useState("");
@@ -58,9 +59,11 @@ export function KanbanBoard({
     if (assigneeF && o.assignee_id !== assigneeF) return false;
     return true;
   });
+  const codeNum = (o: KanbanOrder) => { const m = /(\d+)\s*$/.exec(o.code || ""); return m ? Number(m[1]) : 0; };
   const colOrders = (colId: string) => {
     const l = pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
-    if (sortDue) l.sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999")); // soonest first, none last
+    if (sortCode) l.sort((a, b) => (sortCode === "asc" ? codeNum(a) - codeNum(b) : codeNum(b) - codeNum(a)));
+    else if (sortDue) l.sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999")); // soonest first, none last
     return l;
   };
 
@@ -101,7 +104,8 @@ export function KanbanBoard({
             <button className={group === "status" ? "on" : ""} onClick={() => setGroup("status")}><Icon name="kanban" size={14} />{lang === "es" ? "Etapa" : "Stage"}</button>
             <button className={group === "area" ? "on" : ""} onClick={() => setGroup("area")}><Icon name="layers" size={14} />{lang === "es" ? "Área" : "Area"}</button>
           </div>
-          <button className={"chip" + (sortDue ? " on" : "")} onClick={() => setSortDue((v) => !v)} title={lang === "es" ? "Ordenar por fecha límite" : "Sort by deadline"}><Icon name="calendar" size={13} />{lang === "es" ? "Por fecha" : "By date"}</button>
+          <button className={"chip" + (sortDue ? " on" : "")} onClick={() => { setSortCode(""); setSortDue((v) => !v); }} title={lang === "es" ? "Ordenar por fecha límite" : "Sort by deadline"}><Icon name="calendar" size={13} />{lang === "es" ? "Por fecha" : "By date"}</button>
+          <button className={"chip" + (sortCode ? " on" : "")} onClick={() => { setSortDue(false); setSortCode((s) => (s === "" ? "asc" : s === "asc" ? "desc" : "")); }} title={lang === "es" ? "Ordenar por número (HIR-)" : "Sort by number (HIR-)"}><Icon name="orders" size={13} />{lang === "es" ? "Por ID" : "By ID"}{sortCode && <span style={{ marginLeft: 1, fontWeight: 800 }}>{sortCode === "asc" ? "↑" : "↓"}</span>}</button>
         </>}
       </div>
 
