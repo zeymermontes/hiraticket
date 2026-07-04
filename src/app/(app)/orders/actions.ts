@@ -5,6 +5,7 @@ import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 import { getMyBusiness, getDeletedOrders } from "@/lib/queries";
 import type { OrderRow } from "@/lib/types";
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
+import { encryptBody } from "@/lib/msgcrypto";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -61,7 +62,7 @@ export async function chargeOrder(orderId: string): Promise<void> {
   const body = `Hola ${first} 👋 aquí está tu link de pago para el pedido ${order.code} por $${Number(order.total).toLocaleString("es-MX")} MXN: ${link} 💳`;
   await supabase.from("messages").insert({
     business_id: order.business_id, conversation_id: order.conversation_id,
-    direction: "out", type: "text", body, author_id: user?.id ?? null, state: "queued",
+    direction: "out", type: "text", body: encryptBody(order.business_id as string, body), author_id: user?.id ?? null, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
   revalidatePath("/chat");

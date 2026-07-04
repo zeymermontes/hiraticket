@@ -305,7 +305,7 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 				var o outMsg
 				var body, murl, mmime, mname, replyTo, meta sql.NullString
 				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &meta, &o.attempts) == nil {
-					o.body = body.String
+					o.body = decryptBody(o.biz, body.String) // stored encrypted at rest; WhatsApp needs plaintext
 					o.murl = murl.String
 					o.mmime = mmime.String
 					o.mname = mname.String
@@ -787,7 +787,7 @@ func (m *Manager) handleUnavailable(ctx context.Context, s session, client *what
 	}
 	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, sender_name, sender_jid)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		s.BusinessID, convID, dir, "text", "📷 Foto de única vez — ábrela en tu teléfono", state, waID, nullIf(senderName), nullIf(senderJID))
+		s.BusinessID, convID, dir, "text", encryptBody(s.BusinessID, "📷 Foto de única vez — ábrela en tu teléfono"), state, waID, nullIf(senderName), nullIf(senderJID))
 	if dir == "in" {
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false WHERE id=$2`, unread+1, convID)
 	} else {
@@ -1083,7 +1083,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 
 	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		s.BusinessID, convID, dir, mtype, body, state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID))
+		s.BusinessID, convID, dir, mtype, encryptBody(s.BusinessID, body), state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID))
 	// A resolved chat that gets a new message (either side) is reopened so it leaves the resolved
 	// bucket and the agent sees it — with the full prior history intact.
 	reopened := priorStatus == "resolved"
@@ -1267,7 +1267,7 @@ func (m *Manager) runScheduleAutomations(ctx context.Context, businessID, convID
 		}
 
 		m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, meta)
-			VALUES ($1,$2,'out','text',$3,'queued','{"autoreply":true}'::jsonb)`, businessID, convID, out)
+			VALUES ($1,$2,'out','text',$3,'queued','{"autoreply":true}'::jsonb)`, businessID, convID, encryptBody(businessID, out))
 		m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
 		m.exec(ctx, `UPDATE automations SET runs = coalesce(runs,0)+1 WHERE id=$1`, f.id)
 		m.log.Infof("auto-reply (%s) sent to conv %s", f.ttype, convID)
@@ -1346,7 +1346,7 @@ func (m *Manager) handleProtocol(ctx context.Context, s session, pm *waE2E.Proto
 		if txt == "" {
 			txt = em.GetExtendedTextMessage().GetText()
 		}
-		m.exec(ctx, `UPDATE messages SET body=$3, edited=true WHERE business_id=$1 AND wa_id=$2`, s.BusinessID, target, txt)
+		m.exec(ctx, `UPDATE messages SET body=$3, edited=true WHERE business_id=$1 AND wa_id=$2`, s.BusinessID, target, encryptBody(s.BusinessID, txt))
 		m.log.Infof("inbound edit %s", target)
 	}
 }
@@ -1556,9 +1556,9 @@ func strOrNil(s string) *string {
 
 // replyContext builds the quoted-message context for a reply.
 func (m *Manager) replyContext(ctx context.Context, client *whatsmeow.Client, chatJID types.JID, replyToID string) *waE2E.ContextInfo {
-	var waID, body, dir sql.NullString
+	var waID, body, dir, biz sql.NullString
 	if err := m.db.QueryRowContext(ctx,
-		`SELECT wa_id, body, direction FROM messages WHERE id=$1`, replyToID).Scan(&waID, &body, &dir); err != nil || !waID.Valid || waID.String == "" {
+		`SELECT wa_id, body, direction, business_id FROM messages WHERE id=$1`, replyToID).Scan(&waID, &body, &dir, &biz); err != nil || !waID.Valid || waID.String == "" {
 		return nil
 	}
 	participant := chatJID.String()
@@ -1568,7 +1568,7 @@ func (m *Manager) replyContext(ctx context.Context, client *whatsmeow.Client, ch
 	return &waE2E.ContextInfo{
 		StanzaID:      proto.String(waID.String),
 		Participant:   proto.String(participant),
-		QuotedMessage: &waE2E.Message{Conversation: proto.String(body.String)},
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(decryptBody(biz.String, body.String))},
 	}
 }
 
@@ -1606,7 +1606,7 @@ func (m *Manager) pollOps(ctx context.Context) {
 				var o op
 				var body sql.NullString
 				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op, &o.react, &o.dir) == nil {
-					o.body = body.String
+					o.body = decryptBody(o.biz, body.String) // edits re-send the body to WhatsApp → plaintext
 					ops = append(ops, o)
 				}
 			}

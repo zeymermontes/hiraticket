@@ -6,6 +6,7 @@ import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import { globalSearch, type SearchResults } from "@/app/(app)/search-actions";
+import { searchLocal, type LocalHit } from "@/lib/localCache";
 
 const STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
   open: { color: "blue", es: "Abierto", en: "Open" },
@@ -15,6 +16,7 @@ const STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
 
 type Flat =
   | { kind: "chat"; data: SearchResults["chats"][number] }
+  | { kind: "msg"; data: LocalHit }
   | { kind: "order"; data: SearchResults["orders"][number] }
   | { kind: "customer"; data: SearchResults["customers"][number] };
 
@@ -41,6 +43,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [res, setRes] = useState<SearchResults>({ chats: [], orders: [], customers: [] });
+  const [msgHits, setMsgHits] = useState<LocalHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -50,12 +53,13 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
   useEffect(() => {
     const term = q.trim();
     setActive(0);
-    if (!term) { setRes({ chats: [], orders: [], customers: [] }); setLoading(false); return; }
+    if (!term) { setRes({ chats: [], orders: [], customers: [] }); setMsgHits([]); setLoading(false); return; }
     setLoading(true);
     const id = ++reqId.current;
     const t = setTimeout(async () => {
-      const r = await globalSearch(businessId, term);
-      if (id === reqId.current) { setRes(r); setLoading(false); }
+      // Message text is searched in the device cache (bodies are encrypted server-side).
+      const [r, local] = await Promise.all([globalSearch(businessId, term), searchLocal(businessId, term, 6)]);
+      if (id === reqId.current) { setRes(r); setMsgHits(local); setLoading(false); }
     }, 200);
     return () => clearTimeout(t);
   }, [q, businessId]);
@@ -76,14 +80,16 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
 
   const flat = useMemo<Flat[]>(() => [
     ...res.chats.map((d) => ({ kind: "chat", data: d } as Flat)),
+    ...msgHits.map((d) => ({ kind: "msg", data: d } as Flat)),
     ...res.orders.map((d) => ({ kind: "order", data: d } as Flat)),
     ...res.customers.map((d) => ({ kind: "customer", data: d } as Flat)),
-  ], [res]);
+  ], [res, msgHits]);
 
   function go(f: Flat) {
     setOpen(false);
     setQ("");
     if (f.kind === "chat") router.push(`/chat?c=${f.data.id}`);
+    else if (f.kind === "msg") router.push(f.data.kind === "internal" ? "/internal" : `/chat?c=${f.data.threadId}`);
     else if (f.kind === "order") router.push(`/orders?order=${f.data.id}`);
     else if (f.data.conversationId) router.push(`/chat?c=${f.data.conversationId}`);
     else router.push(`/orders?new=1&contact=${encodeURIComponent(f.data.name)}`);
@@ -104,7 +110,7 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
     idx++;
     const i = idx;
     return (
-      <button key={f.kind + (f.data as { id: string }).id} className={"gs-row" + (i === active ? " on" : "")}
+      <button key={f.kind + ((f.data as { id?: string }).id ?? (f.data as LocalHit).msgId)} className={"gs-row" + (i === active ? " on" : "")}
         onMouseEnter={() => setActive(i)} onMouseDown={(e) => { e.preventDefault(); go(f); }}>
         <span className="gs-ic">{icon}</span>
         <span className="gs-text">
@@ -144,6 +150,15 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
               hl(c.contactName, q),
               hl(c.preview || c.phone, q),
               <Pill color={STATUS[c.status]?.color ?? "slate"} dot>{STATUS[c.status]?.[lang] ?? c.status}</Pill>,
+            ))}
+
+            {msgHits.length > 0 && <div className="gs-group">{lang === "es" ? "Mensajes" : "Messages"}<span className="t-xs muted" style={{ fontWeight: 400, marginLeft: 6 }}>{lang === "es" ? "· de este dispositivo" : "· from this device"}</span></div>}
+            {msgHits.map((m) => row(
+              { kind: "msg", data: m },
+              <span className="gs-ic-sq"><Icon name={m.kind === "internal" ? "agents" : "chat"} size={16} /></span>,
+              hl(m.snippet, q),
+              <>{m.senderName ?? (m.dir === "out" ? (lang === "es" ? "Tú" : "You") : "")} · {new Date(m.ts).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</>,
+              m.kind === "internal" ? <Pill color="violet">{lang === "es" ? "Equipo" : "Team"}</Pill> : null,
             ))}
 
             {res.orders.length > 0 && <div className="gs-group">{personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders")}</div>}

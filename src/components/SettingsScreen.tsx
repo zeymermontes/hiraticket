@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { clearCache } from "@/lib/localCache";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -208,7 +209,7 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false }
           <div className="ws-block-head"><Icon name="lock" size={16} /><h4>{lang === "es" ? "Cuenta" : "Account"}</h4></div>
           <div className="ws-block-body col gap-2">
             {isPlatformAdmin && <a className="btn btn-outline btn-block" href="/platform"><Icon name="shield" size={15} />{lang === "es" ? "Consola de plataforma" : "Platform console"}</a>}
-            <a className="btn btn-outline btn-block" href="/logout"><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
+            <a className="btn btn-outline btn-block" href="/logout" onClick={() => { clearCache().catch(() => {}); }}><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
           </div>
         </section>
        </div>

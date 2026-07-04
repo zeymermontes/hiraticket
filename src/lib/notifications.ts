@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { decryptBody } from "@/lib/msgcrypto";
 
 /** Count of chats with unread messages — badge on the Chat nav item. */
 export async function getMyChatBadge(businessId: string): Promise<number> {
@@ -95,7 +96,7 @@ export async function getNotificationFeed(
   if (unreadOnly) internalRows = internalRows.filter((m) => { const lr = reads.get(m.channel as string); return !lr || (m.created_at as string) > lr; }).slice(0, limit);
   const internal: Notif[] = internalRows.map((m: Record<string, unknown>) => {
     const author = nameMap.get(m.author_id as string) ?? "Agente";
-    return { id: "int-" + (m.id as string), name: author, unread: 1, at: (m.created_at as string) ?? null, kind: "internal" as const, href: "/internal", text: `${author}: ${m.body as string}`.slice(0, 90) };
+    return { id: "int-" + (m.id as string), name: author, unread: 1, at: (m.created_at as string) ?? null, kind: "internal" as const, href: "/internal", text: `${author}: ${decryptBody(businessId, m.body as string)}`.slice(0, 90) };
   });
   const chats: Notif[] = (chatsRes.data ?? []).map((c: Record<string, unknown>) => {
     const cc = c.contact as { name?: string } | { name?: string }[] | null;

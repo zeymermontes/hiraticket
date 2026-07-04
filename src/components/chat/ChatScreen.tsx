@@ -31,6 +31,7 @@ import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
 import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
+import { putMessages, getMeta, setMeta } from "@/lib/localCache";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -574,6 +575,55 @@ export function ChatScreen({
     // URL-guarded effect below can miss it and the "last chat" cookie would get stuck).
     try { document.cookie = `ht_lastChat=${c.id}; path=/; max-age=2592000; SameSite=Lax`; } catch {}
   }, []);
+
+  // Background backfill of the local search cache (WhatsApp Web model): walk recent conversations
+  // and page their history (up to ~90 days) into IndexedDB, one page at a time, throttled, resumable
+  // across sessions via a per-conversation cursor. Runs only while the app is open.
+  useEffect(() => {
+    let stop = false;
+    const CUTOFF = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const persist = (convId: string, ms: ChatMessage[]) =>
+      putMessages(ms.filter((m) => m.body && !m.deleted).map((m) => ({
+        businessId, kind: "wa" as const, threadId: convId, msgId: m.id,
+        body: m.body!, senderName: m.sender_name ?? null, dir: m.direction, ts: m.created_at,
+      })));
+    const run = async () => {
+      await sleep(8000); // let the app settle first
+      for (const c of listProp) {
+        if (stop) return;
+        if ((c.last_message_at ?? "") < CUTOFF) continue;
+        const key = `bf:${businessId}:${c.id}`;
+        const cur = (await getMeta(key)) as string | null; // "done" | oldest-cursor | null
+        if (cur === "done") continue;
+        try {
+          let cursor = cur;
+          if (!cursor) {
+            const page = await liveMessages(c.id);
+            if (stop) return;
+            await persist(c.id, page);
+            if (page.length < MSG_PAGE) { await setMeta(key, "done"); continue; }
+            cursor = page[0]?.created_at ?? null;
+            if (cursor) await setMeta(key, cursor);
+          }
+          for (let i = 0; i < 40 && cursor && !stop; i++) { // hard cap per conv per session
+            await sleep(1500);
+            const older = await loadOlderMessages(c.id, cursor);
+            if (stop) return;
+            await persist(c.id, older);
+            if (older.length < MSG_PAGE || (older[0]?.created_at ?? "") < CUTOFF) { await setMeta(key, "done"); cursor = null; break; }
+            cursor = older[0]?.created_at ?? null;
+            if (cursor) await setMeta(key, cursor);
+          }
+        } catch { /* offline / RLS hiccup — retry next session */ }
+        await sleep(2000);
+      }
+    };
+    run();
+    return () => { stop = true; };
+    // Deliberately keyed on businessId only: one sweep per mount over the initial list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessId]);
 
   // Targeted refresh used by click handlers instead of refresh(): refetches the open
   // conversation (incl. notes/orders, which aren't realtime-published) + the list — not the route.
@@ -1179,6 +1229,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [msgs, setMsgs] = useState<ChatMessage[]>(detail.messages);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(detail.messages.length >= MSG_PAGE);
+  // Persist text messages to the per-device cache (bodies are encrypted in the DB, so message
+  // search runs locally — the WhatsApp Web model). Best-effort, never blocks rendering.
+  useEffect(() => {
+    putMessages(msgs.filter((m) => m.body && !m.deleted && !m.id.startsWith("tmp")).map((m) => ({
+      businessId, kind: "wa" as const, threadId: detail.id, msgId: m.id,
+      body: m.body!, senderName: m.sender_name ?? null, dir: m.direction, ts: m.created_at,
+    }))).catch(() => {});
+  }, [msgs, businessId, detail.id]);
   const lastConvRef = useRef<string | null>(null);
   const atBottomRef = useRef(true);
   const scrollAction = useRef<"bottom" | "preserve" | "follow">("bottom");

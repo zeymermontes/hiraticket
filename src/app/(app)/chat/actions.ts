@@ -1,6 +1,23 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
+import { getConversationDetail, type ConvDetail } from "@/lib/chat";
+import { encryptBody, decryptBody } from "@/lib/msgcrypto";
+
+/** Load a single conversation's full detail (for the order drawer's embedded chat). */
+export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
+  return getConversationDetail(convId);
+}
+
+/** Decrypted, truncated body for a toast preview. Realtime payloads carry the STORED (possibly
+ *  encrypted) body, so the notifier calls this instead of reading the payload. RLS-scoped. */
+export async function getToastPreview(kind: "wa" | "internal", id: string): Promise<string> {
+  const { supabase } = await ctx();
+  const table = kind === "internal" ? "internal_messages" : "messages";
+  const { data } = await supabase.from(table).select("business_id, body").eq("id", id).maybeSingle();
+  if (!data) return "";
+  return decryptBody(data.business_id as string, (data.body as string) ?? "").slice(0, 90);
+}
 
 async function ctx() {
   const supabase = await createClient();
@@ -30,7 +47,7 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
     conversation_id: convId,
     direction: "out",
     type: "text",
-    body,
+    body: encryptBody(businessId, body),
     author_id: userId,
     // 'queued' → the WhatsApp worker picks it up and sends it, then flips to 'sent'.
     state: "queued",
@@ -76,7 +93,7 @@ export async function startConversation(phone: string, firstMessage: string): Pr
 
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: conv.id, direction: "out", type: "text",
-    body: text, author_id: userId, state: "queued",
+    body: encryptBody(businessId, text), author_id: userId, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
   return { ok: true, convId: conv.id };
@@ -111,7 +128,9 @@ export async function editMessage(messageId: string, body: string): Promise<void
   const text = body.trim();
   if (!text) return;
   const { supabase } = await ctx();
-  await supabase.from("messages").update({ body: text, pending_op: "edit" }).eq("id", messageId).eq("direction", "out");
+  const { data: m } = await supabase.from("messages").select("business_id").eq("id", messageId).maybeSingle();
+  if (!m) return;
+  await supabase.from("messages").update({ body: encryptBody(m.business_id as string, text), pending_op: "edit" }).eq("id", messageId).eq("direction", "out");
 }
 
 /** Add/replace/remove the agent's emoji reaction on a message (worker sends it to WhatsApp). */
@@ -141,6 +160,7 @@ export async function forwardMessage(messageId: string, targetConvId: string): P
   if (!businessId) return;
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: targetConvId, direction: "out",
+    // body copied verbatim: if encrypted, the target conv is the same business → same tenant key.
     type: m.type, body: m.body, author_id: userId, state: "queued", forwarded: true,
     media_url: m.media_url, media_mime: m.media_mime, media_name: m.media_name,
   });
@@ -198,7 +218,7 @@ export async function sendMediaMessage(
   if (!businessId) return;
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: convId, direction: "out",
-    type: input.type, body: input.caption || null, author_id: userId, state: "queued",
+    type: input.type, body: input.caption ? encryptBody(businessId, input.caption) : null, author_id: userId, state: "queued",
     media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name || null,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
@@ -252,7 +272,7 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
       if (tpl) {
         const first = (((conv?.contact as { name?: string } | null)?.name) ?? "").split(" ")[0];
         const body = String(tpl.body).replace(/\{\{name\}\}/g, first).replace(/\{\{order_number\}\}/g, "").replace(/\{\{total\}\}/g, "");
-        await supabase.from("messages").insert({ business_id: businessId, conversation_id: convId, direction: "out", type: "text", body, author_id: userId, state: "queued" });
+        await supabase.from("messages").insert({ business_id: businessId, conversation_id: convId, direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued" });
         await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
       }
     } else if (a.action_type === "transfer_area" && payload.area) {

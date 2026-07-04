@@ -8,6 +8,7 @@ import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
+import { putMessages } from "@/lib/localCache";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
@@ -56,6 +57,15 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const [threads, setThreads] = useState(initial.threads);
   const [sel, setSel] = useState<string>(initial.threads[0]?.key ?? "team");
   const [msgs, setMsgs] = useState<InternalMsg[]>([]);
+  // Persist text messages to the per-device cache (bodies are encrypted in the DB, so message
+  // search runs locally — same as the clients chat). Best-effort, never blocks rendering.
+  useEffect(() => {
+    const nameOf = (uid: string | null) => initial.agents.find((a) => a.id === uid)?.name ?? null;
+    putMessages(msgs.filter((m) => m.body && !m.deleted && !m.id.startsWith("tmp")).map((m) => ({
+      businessId, kind: "internal" as const, threadId: m.channel, msgId: m.id,
+      body: m.body, senderName: nameOf(m.author_id), dir: m.author_id === initial.meId ? "out" as const : "in" as const, ts: m.created_at,
+    }))).catch(() => {});
+  }, [msgs, businessId, initial.agents, initial.meId]);
   const [extra, setExtra] = useState<InternalMsg[]>([]); // optimistic bubbles, kept out of msgs so the real row can't dup
   const [text, setText] = useState("");
   const [reply, setReply] = useState<InternalMsg | null>(null);

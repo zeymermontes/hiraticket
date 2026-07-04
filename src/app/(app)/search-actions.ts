@@ -1,5 +1,6 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
+import { decryptBody } from "@/lib/msgcrypto";
 
 export interface SearchResults {
   chats: { id: string; contactName: string; phone: string; preview: string; status: "open" | "pending" | "resolved" }[];
@@ -24,11 +25,8 @@ export async function globalSearch(businessId: string, qRaw: string): Promise<Se
     .limit(20);
   const contactIds = (contactHits ?? []).map((c) => c.id as string);
 
-  // Conversations that had a message matching the text.
-  const { data: msgHits } = await supabase
-    .from("messages").select("conversation_id")
-    .eq("business_id", businessId).ilike("body", like).limit(30);
-  const convIdsFromMsgs = [...new Set((msgHits ?? []).map((m) => m.conversation_id as string).filter(Boolean))];
+  // NOTE: message-TEXT search moved to the local device cache (GlobalSearch searches IndexedDB):
+  // bodies are encrypted at rest (encm:v1:), so a server-side ILIKE can't see new messages.
 
   // Order items matching by name → their order ids.
   const { data: itemHits } = await supabase
@@ -37,10 +35,9 @@ export async function globalSearch(businessId: string, qRaw: string): Promise<Se
 
   const inList = (ids: string[]) => `(${ids.join(",")})`;
 
-  // --- Conversations ---
+  // --- Conversations (matched by contact; message-text hits come from the local cache) ---
   const convOr: string[] = [];
   if (contactIds.length) convOr.push(`contact_id.in.${inList(contactIds)}`);
-  if (convIdsFromMsgs.length) convOr.push(`id.in.${inList(convIdsFromMsgs)}`);
   let chats: SearchResults["chats"] = [];
   if (convOr.length) {
     const { data } = await supabase
@@ -52,7 +49,7 @@ export async function globalSearch(businessId: string, qRaw: string): Promise<Se
       const msgs = (c.messages as { body: string; created_at: string }[]) ?? [];
       const last = msgs.reduce<{ body: string; created_at: string } | null>((a, m) => (!a || m.created_at > a.created_at ? m : a), null);
       const ct = c.contact as { name?: string; phone?: string } | null;
-      return { id: c.id as string, contactName: ct?.name ?? "—", phone: ct?.phone ?? "", preview: last?.body ?? "", status: (c.status as SearchResults["chats"][number]["status"]) };
+      return { id: c.id as string, contactName: ct?.name ?? "—", phone: ct?.phone ?? "", preview: decryptBody(businessId, last?.body ?? ""), status: (c.status as SearchResults["chats"][number]["status"]) };
     });
   }
 

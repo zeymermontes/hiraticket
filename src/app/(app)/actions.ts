@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { encryptBody } from "@/lib/msgcrypto";
 
 async function actorCtx() {
   const supabase = await createClient();
@@ -59,7 +60,7 @@ export async function runStageAutomations(orderId: string, businessId: string, s
             .replace(/\{\{total\}\}/g, String(order.total));
           await supabase.from("messages").insert({
             business_id: businessId, conversation_id: order.conversation_id,
-            direction: "out", type: "text", body, author_id: userId, state: "queued",
+            direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued",
             // Stagger bulk sends so the worker spaces them out (anti-spam); null = send now.
             next_retry_at: sendAfter ?? null,
           });

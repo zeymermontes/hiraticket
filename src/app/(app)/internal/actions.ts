@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
 import { getInternalThreads, getInternalMessages, type InternalThread, type InternalMsg } from "@/lib/internal";
 import type { Agent } from "@/lib/chat";
+import { encryptBody } from "@/lib/msgcrypto";
 
 async function ctx() {
   const supabase = await createClient();
@@ -30,7 +31,7 @@ export async function sendInternalMessage(channel: string, body: string, replyTo
   const { supabase, userId, businessId } = await ctx();
   if (!userId || !businessId) return;
   await supabase.from("internal_messages").insert({
-    business_id: businessId, channel, author_id: userId, body: text, mentions: mentions ?? [], reply_to: replyTo ?? null,
+    business_id: businessId, channel, author_id: userId, body: encryptBody(businessId, text), mentions: mentions ?? [], reply_to: replyTo ?? null,
   });
   // Author has implicitly "read" their own send.
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
@@ -41,7 +42,7 @@ export async function sendInternalMedia(channel: string, input: { type: string; 
   const { supabase, userId, businessId } = await ctx();
   if (!userId || !businessId) return;
   await supabase.from("internal_messages").insert({
-    business_id: businessId, channel, author_id: userId, body: input.caption || "",
+    business_id: businessId, channel, author_id: userId, body: input.caption ? encryptBody(businessId, input.caption) : "",
     type: input.type, media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name ?? null,
   });
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
@@ -77,9 +78,9 @@ export async function forwardInternalMessage(messageId: string, toChannel: strin
 export async function editInternalMessage(id: string, body: string): Promise<void> {
   const text = body.trim();
   if (!text) return;
-  const { supabase, userId } = await ctx();
-  if (!userId) return;
-  await supabase.from("internal_messages").update({ body: text, edited: true }).eq("id", id).eq("author_id", userId);
+  const { supabase, userId, businessId } = await ctx();
+  if (!userId || !businessId) return;
+  await supabase.from("internal_messages").update({ body: encryptBody(businessId, text), edited: true }).eq("id", id).eq("author_id", userId);
 }
 
 /** Delete (soft) your own internal message. */

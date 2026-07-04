@@ -10,6 +10,7 @@ import { ConfirmProvider } from "@/components/Confirm";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import { NavProgress } from "@/components/NavProgress";
 import { GlobalSearch } from "@/components/GlobalSearch";
+import { clearCache } from "@/lib/localCache";
 import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
@@ -133,6 +134,7 @@ const ADMIN: NavItem[] = [
   // Campañas hidden from the sidebar (route still exists, just not shown).
   { id: "reports", href: "/reports", icon: "layers", labelKey: "nav_reports" },
   { id: "flows", href: "/flows", icon: "bolt", labelKey: "nav_flows" },
+  { id: "plugins", href: "/plugins", icon: "sparkles", labelKey: "nav_plugins" },
   { id: "canned", href: "/canned", icon: "canned", labelKey: "nav_canned" },
   { id: "business", href: "/business", icon: "sliders", labelKey: "nav_business" },
   { id: "settings", href: "/settings", icon: "settings", labelKey: "nav_settings" },
@@ -194,7 +196,8 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
               <div className="menu-sep" />
               <Link className="menu-item" href="/profile" onClick={() => setProfOpen(false)}><Icon name="user" size={15} />{lang === "es" ? "Perfil" : "Profile"}</Link>
               <div className="menu-sep" />
-              <form action="/auth/signout" method="post"><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
+              {/* Wipe the local message cache (plaintext on this device) before the session ends. */}
+              <form action="/auth/signout" method="post" onSubmit={() => { clearCache().catch(() => {}); }}><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
             </div>
           </>
         )}

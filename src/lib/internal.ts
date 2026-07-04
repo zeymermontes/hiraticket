@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAgents, type Agent } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
+import { decryptBody } from "@/lib/msgcrypto";
 
 /** Replace stored media paths with short-lived signed URLs (private 'media' bucket). */
 async function signInternalMedia(msgs: InternalMsg[]): Promise<InternalMsg[]> {
@@ -63,7 +64,7 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
   ]);
   const reads = new Map<string, string>(((readsRes.data ?? []) as { channel: string; last_read_at: string }[]).map((r) => [r.channel, r.last_read_at]));
   const mediaPreview = (t?: string) => (t === "image" ? "📷 Foto" : t && t !== "text" ? "📎 Archivo" : "");
-  const msgs = ((msgsRes.data ?? []) as { id: string; channel: string; author_id: string | null; body: string; created_at: string; type?: string }[]).map((m) => ({ ...m, body: m.body || mediaPreview(m.type) }));
+  const msgs = ((msgsRes.data ?? []) as { id: string; channel: string; author_id: string | null; body: string; created_at: string; type?: string }[]).map((m) => ({ ...m, body: decryptBody(businessId, m.body) || mediaPreview(m.type) }));
 
   // Aggregate last message + unread per channel (msgs are newest-first → first seen is the last message).
   const agg = new Map<string, { last: typeof msgs[number]; unread: number }>();
@@ -115,7 +116,7 @@ export async function getInternalMessages(businessId: string, channel: string, o
   let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
   if (opts?.before) q = q.lt("created_at", opts.before);
   const { data } = await q;
-  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
+  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, body: m.body ? decryptBody(businessId, m.body) : m.body, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
   msgs.reverse();
   return signInternalMedia(msgs);
 }

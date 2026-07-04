@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MSG_PAGE } from "@/lib/types";
+import { decryptBody } from "@/lib/msgcrypto";
 
 const PUBLIC_MEDIA_MARKER = "/object/public/media/";
 /** Stored media_url → storage path (handles raw paths and legacy full public URLs). */
@@ -215,7 +216,7 @@ export async function getConversationList(businessId: string): Promise<ConvListI
       snoozed_until: c.snoozed_until,
       area: c.area,
       contact: c.contact,
-      preview: last?.body ?? "",
+      preview: decryptBody(businessId, last?.body ?? ""),
       lastOut: last?.direction === "out",
       lastState: last?.state ?? null,
       lastType: last?.type ?? "text",
@@ -227,8 +228,8 @@ export async function getConversationList(businessId: string): Promise<ConvListI
   });
 }
 
-const MSG_FULL = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";
-const MSG_BASE = "id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
+const MSG_FULL = "id, business_id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";
+const MSG_BASE = "id, business_id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted";
 
 /** Signed messages for a conversation — the high-frequency realtime read (no notes/events/orders).
  *  Loads the most recent `limit` messages, or (with `before`) the page just older than a cursor,
@@ -259,6 +260,8 @@ export async function getConversationMessages(
   } else {
     messages = ((res.data ?? []) as unknown as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
   }
+  // Decrypt at-rest bodies (legacy plaintext passes through untouched).
+  messages = messages.map((m) => ({ ...m, body: m.body ? decryptBody((m as unknown as { business_id?: string }).business_id ?? "", m.body) : m.body }));
   messages.reverse(); // chronological (oldest first)
   return signMedia(messages);
 }

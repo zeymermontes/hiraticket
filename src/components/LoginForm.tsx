@@ -19,6 +19,10 @@ function Inner() {
   const [info, setInfo] = useState<string | null>(null);
   const [remember, setRemember] = useState(true);
 
+  // Safety net: reaching the login screen means no active session — wipe the device message cache
+  // (it holds plaintext chat text) in case the sign-out click handler didn't run (expired session).
+  React.useEffect(() => { import("@/lib/localCache").then((m) => m.clearCache()).catch(() => {}); }, []);
+
   async function forgot() {
     if (!email) { setErr(lang === "es" ? "Escribe tu correo primero." : "Enter your email first."); return; }
     setErr(null);
