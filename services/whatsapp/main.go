@@ -1093,10 +1093,13 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	}
 	if dir == "in" {
 		// A new customer message resurfaces the chat: clear snooze/hidden and reopen if it was resolved.
-		// A pinned chat ("mantener conmigo") keeps its agent — restore assignee from locked_to.
+		// A reactivated chat (resolved → open) comes back UNASSIGNED so anyone can take it — except a
+		// pinned one ("mantener conmigo"), which returns to locked_to. An already-open chat keeps its
+		// agent (restored from locked_to if pinned).
 		m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false,
 			status = CASE WHEN status='resolved' THEN 'open' ELSE status END,
-			assignee_id = coalesce(locked_to, assignee_id) WHERE id=$2`, unread+1, convID)
+			assignee_id = CASE WHEN status='resolved' THEN locked_to ELSE coalesce(locked_to, assignee_id) END
+			WHERE id=$2`, unread+1, convID)
 		// Off-hours / holiday auto-reply (schedule-based flows). 1:1 chats only — groups never auto-reply.
 		if !v.Info.IsGroup {
 			m.runScheduleAutomations(ctx, s.BusinessID, convID)
