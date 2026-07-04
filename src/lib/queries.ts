@@ -4,18 +4,24 @@ import type { Business, OrderRow } from "@/lib/types";
 /** The caller's first business (tenant), or null if they haven't created one. */
 export async function getMyBusiness(): Promise<Business | null> {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  // Scope to the business the user is a MEMBER of. A platform admin can read every business via RLS,
+  // so "the first readable business" would return someone else's tenant — we must filter by membership.
+  const { data: mem } = await supabase.from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();
+  if (!mem?.business_id) return null;
+  const bizId = mem.business_id as string;
+
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
     .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone`)
-    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+    .eq("id", bizId).maybeSingle();
   if (error) {
     // timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
-    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`)
-      .order("created_at", { ascending: true }).limit(1).maybeSingle();
-    if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`)
-      .order("created_at", { ascending: true }).limit(1).maybeSingle();
-    if (r.error) r = await supabase.from("businesses").select(BASE).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`).eq("id", bizId).maybeSingle();
+    if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`).eq("id", bizId).maybeSingle();
+    if (r.error) r = await supabase.from("businesses").select(BASE).eq("id", bizId).maybeSingle();
     data = r.data as typeof data;
   }
   if (!data) return null;
