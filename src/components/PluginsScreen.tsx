@@ -13,6 +13,18 @@ const MASK = "••••••••";
 
 const addonOf = (p: PluginPricing) => Number(p.addon_monthly ?? 0);
 
+/** Catalogue icon: an image path (/plugins/*.png — real brand logo) or an Icon name. */
+function PluginLogo({ icon, size = 40 }: { icon: string | null; size?: number }) {
+  const isImg = !!icon && (icon.startsWith("/") || icon.startsWith("http"));
+  return (
+    <span style={{ width: size, height: size, borderRadius: size * 0.28, background: isImg ? "var(--surface-2)" : "var(--brand-50)", color: "var(--brand-700)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", overflow: "hidden", border: isImg ? "1px solid var(--border)" : "none" }}>
+      {isImg
+        ? <img src={icon!} alt="" style={{ width: "72%", height: "72%", objectFit: "contain" }} />
+        : <Icon name={icon || "sparkles"} size={size / 2} />}
+    </span>
+  );
+}
+
 const CATEGORY_LABEL: Record<string, { es: string; en: string }> = {
   payments: { es: "Pagos", en: "Payments" },
   invoicing: { es: "Facturación", en: "Invoicing" },
@@ -72,7 +84,7 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
                 <section key={e.id} className="ws-block" style={{ margin: 0 }}>
                   <div style={{ padding: "14px 16px" }} className="col gap-2">
                     <div className="row gap-2" style={{ alignItems: "flex-start" }}>
-                      <span style={{ width: 40, height: 40, borderRadius: 11, background: "var(--brand-50)", color: "var(--brand-700)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={e.icon || "sparkles"} size={20} /></span>
+                      <PluginLogo icon={e.icon} />
                       <div className="grow" style={{ minWidth: 0 }}>
                         <div className="row gap-1" style={{ alignItems: "center", flexWrap: "wrap" }}>
                           <span style={{ fontWeight: 700, fontSize: 15 }}>{e.name}</span>
@@ -131,7 +143,7 @@ function GuideModal({ entry, lang, onClose, onConfigure }: { entry: CatalogEntry
     <div className="modal-wrap" onClick={onClose}>
       <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name={entry.icon || "sparkles"} /></span>
+          <PluginLogo icon={entry.icon} size={38} />
           <h3 className="grow">{lang === "es" ? "Cómo configurar" : "How to set up"} {entry.name}</h3>
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
@@ -181,7 +193,7 @@ function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId
     <div className="modal-wrap" onClick={onClose}>
       <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name={entry.icon || "sparkles"} /></span>
+          <PluginLogo icon={entry.icon} size={38} />
           <h3 className="grow">{lang === "es" ? "Configurar" : "Configure"} {entry.name}</h3>
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
