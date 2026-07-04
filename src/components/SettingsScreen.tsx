@@ -138,9 +138,14 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false }
           <div className="ws-block-head">
             <Icon name="whatsapp" size={16} />
             <h4 className="grow">{lang === "es" ? "Conexión de WhatsApp" : "WhatsApp connection"}</h4>
-            <button className="btn btn-sm btn-outline" onClick={() => run(() => addSession(businessId, lang === "es" ? "Número" : "Number"))}>
-              <Icon name="plus" size={14} />{lang === "es" ? "Agregar número" : "Add number"}
-            </button>
+            {sessions.length === 0 ? (
+              <button className="btn btn-sm btn-outline" onClick={() => run(() => addSession(businessId, lang === "es" ? "Número" : "Number"))}>
+                <Icon name="plus" size={14} />{lang === "es" ? "Agregar número" : "Add number"}
+              </button>
+            ) : (
+              // TEMP: one number per business for now (mirrors the addSession server cap).
+              <Pill color="slate">{lang === "es" ? "1 número por cuenta" : "1 number per account"}</Pill>
+            )}
           </div>
           <div className="ws-block-body col gap-3">
             {sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}

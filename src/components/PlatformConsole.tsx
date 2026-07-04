@@ -161,8 +161,8 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
             )}
 
             {tab === "plugins" && (
-              <div className="ws-block">
-                <table className="tbl">
+              <div className="tablewrap">
+                <table className="tbl" style={{ minWidth: 720 }}>
                   <thead><tr><th>Plugin</th><th>{lang === "es" ? "Categoría" : "Category"}</th><th>{lang === "es" ? "Precio" : "Pricing"}</th><th>{lang === "es" ? "Instalados" : "Installs"}</th><th>MRR</th><th>{lang === "es" ? "Estado" : "Status"}</th></tr></thead>
                   <tbody>
                     {data.pluginCatalog.map((p) => {

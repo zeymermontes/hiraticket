@@ -21,8 +21,15 @@ export async function disconnectSession(sessionId: string): Promise<void> {
   revalidatePath("/settings");
 }
 
+// TEMP cap: multi-number support isn't production-ready in the worker yet — one number per
+// business for now, regardless of plan. Lift by raising/removing this constant.
+const MAX_WHATSAPP_SESSIONS = 1;
+
 export async function addSession(businessId: string, label: string): Promise<void> {
   const supabase = await createClient();
+  const { count } = await supabase
+    .from("whatsapp_sessions").select("id", { count: "exact", head: true }).eq("business_id", businessId);
+  if ((count ?? 0) >= MAX_WHATSAPP_SESSIONS) return; // cap reached — UI hides the button too
   await supabase
     .from("whatsapp_sessions")
     .insert({ business_id: businessId, label: label.trim() || "Número", status: "disconnected" });
