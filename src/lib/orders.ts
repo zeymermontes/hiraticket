@@ -5,6 +5,8 @@ export interface OrderNote { id: string; body: string; author_id: string | null;
 export interface OrderEvent { id: string; kind: string; text: string | null; created_at: string; actor_id: string | null }
 export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string }
 export interface PaymentProof { id: string; method: string; account_ref: string | null; image_url: string; image_mime: string | null; amount: number | null; payer_note: string | null; status: string; reviewed_by: string | null; created_at: string }
+export interface OrderShipment { id: string; provider: string; carrier: string | null; service: string | null; tracking_number: string | null; label_url: string | null; cost: number | null; status: string; created_at: string }
+export interface OrderInvoice { id: string; uuid: string | null; total: number | null; pdf_url: string | null; verification_url: string | null; status: string; created_at: string }
 
 export interface OrderDetail {
   id: string;
@@ -30,6 +32,8 @@ export interface OrderDetail {
   events: OrderEvent[];
   payments: OrderPayment[];
   proofs: PaymentProof[];
+  shipments: OrderShipment[];
+  invoices: OrderInvoice[];
   paid: number;
   product_stages: boolean;
 }
@@ -48,12 +52,14 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   if (orderErr) ({ data: order } = await supabase.from("orders").select(base("")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
-  const [itemsRes, notesRes, { data: events }, payRes, proofRes] = await Promise.all([
+  const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, note, stage:stages(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at, item_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
     supabase.from("events").select("id, kind, text, created_at, actor_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payments").select("id, amount, method, note, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payment_proofs").select("id, method, account_ref, image_url, image_mime, amount, payer_note, status, reviewed_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("shipments").select("id, provider, carrier, service, tracking_number, label_url, cost, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
   ]);
   // Fall back to base item columns if stage_id/stage isn't available yet.
   let items = itemsRes.data;
@@ -72,6 +78,10 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   // payment_proofs table may not exist yet (0048 not applied).
   const proofs = (proofRes.error ? [] : (proofRes.data ?? [])) as unknown as PaymentProof[];
+  // shipments table may not exist yet (0054 not applied).
+  const shipments = (shipRes.error ? [] : (shipRes.data ?? [])) as unknown as OrderShipment[];
+  // invoices table may not exist yet (0055 not applied).
+  const invoices = (invRes.error ? [] : (invRes.data ?? [])) as unknown as OrderInvoice[];
 
   return {
     ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "proofs" | "paid" | "contact" | "stage" | "area">),
@@ -87,6 +97,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     events: (events ?? []) as OrderEvent[],
     payments,
     proofs,
+    shipments,
+    invoices,
     paid,
     product_stages: ((order.business as unknown as { product_stages?: boolean } | null)?.product_stages) ?? false,
   };

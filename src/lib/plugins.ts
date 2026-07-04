@@ -88,6 +88,19 @@ export async function getPluginRuntimeConfig(businessId: string, pluginId: strin
   return out;
 }
 
+/** Which integration surfaces are live for this business (drives UI visibility — one query).
+ *  shipping: the active shipping plugin id (skydropx | enviosperros) or null.
+ *  invoicing: whether Facturapi is active. */
+export async function getActiveIntegrations(businessId: string): Promise<{ shipping: string | null; invoicing: boolean }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("business_plugins").select("plugin_id")
+    .eq("business_id", businessId).eq("status", "active").in("plugin_id", ["skydropx", "enviosperros", "facturapi"]);
+  if (error) return { shipping: null, invoicing: false };
+  const ids = new Set((data ?? []).map((r) => r.plugin_id as string));
+  return { shipping: ids.has("skydropx") ? "skydropx" : ids.has("enviosperros") ? "enviosperros" : null, invoicing: ids.has("facturapi") };
+}
+
 /** Catalogue merged with this business's installs (secrets masked). */
 export async function getBusinessCatalog(businessId: string): Promise<CatalogEntry[]> {
   const supabase = await createClient();

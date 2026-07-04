@@ -5,6 +5,7 @@ import { getProducts } from "@/lib/extras";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveIntegrations } from "@/lib/plugins";
 import { ChatScreen } from "@/components/chat/ChatScreen";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,7 @@ export default async function ChatPage({
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
+  const integrations = await getActiveIntegrations(business.id);
 
   return (
     <ChatScreen
@@ -49,6 +51,8 @@ export default async function ChatPage({
       businessId={business.id}
       connected={isConnected(sessions)}
       invoice={{ add: business.invoice_add_tax ?? true, rate: business.invoice_tax_rate ?? 16 }}
+      shipping={integrations.shipping}
+      invoicing={integrations.invoicing}
     />
   );
 }

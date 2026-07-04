@@ -18,6 +18,10 @@ import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
+import { ShippingModal } from "@/components/ShippingModal";
+import { notifyTracking } from "@/app/(app)/shipping/actions";
+import { InvoiceModal } from "@/components/InvoiceModal";
+import { notifyInvoice } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -34,10 +38,12 @@ function toLocalInput(iso: string | null): string {
 }
 
 export function OrderDrawer({
-  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [],
+  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean; products?: Product[];
+  shipping?: string | null; // active shipping plugin id — gates the Envío block entirely
+  invoicing?: boolean; // Facturapi active — gates the Factura (CFDI) block entirely
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -83,6 +89,10 @@ export function OrderDrawer({
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const [chatW, setChatW] = useState(380);
+  const [shipOpen, setShipOpen] = useState(false);
+  const [trackSent, setTrackSent] = useState<string | null>(null); // shipment id whose tracking was just WhatsApped
+  const [invOpen, setInvOpen] = useState(false);
+  const [invSent, setInvSent] = useState<string | null>(null); // invoice id just WhatsApped
   const run = (fn: () => Promise<unknown>) => start(async () => {
     await fn();
     const fresh = await loadOrderDetail(detailProp.id);
@@ -356,6 +366,82 @@ export function OrderDrawer({
           </div>
           )}
 
+          {/* shipping — only when the business has an active shipping plugin */}
+          {!personal && shipping && (
+            <div className="ws-block">
+              <div className="ws-block-head"><Icon name="send" size={16} /><h4 className="grow">{lang === "es" ? "Envío" : "Shipping"}</h4>{detail.shipments.length > 0 && <Pill color="green" dot>{detail.shipments.length === 1 ? (lang === "es" ? "Guía generada" : "Label created") : `${detail.shipments.length} ${lang === "es" ? "guías" : "labels"}`}</Pill>}</div>
+              <div style={{ padding: "12px 14px" }} className="col gap-2">
+                {detail.shipments.map((s) => (
+                  <div key={s.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                    <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 13.5 }}>{s.carrier || "Paquetería"}</span>
+                      {s.service && <span className="t-xs muted">{s.service}</span>}
+                      <span className="grow" />
+                      {s.cost != null && s.cost > 0 && <span className="mono t-sm">${formatMoney(s.cost)}</span>}
+                    </div>
+                    {s.tracking_number && (
+                      <div className="row gap-2" style={{ alignItems: "center" }}>
+                        <span className="mono t-sm" style={{ fontWeight: 700 }}>{s.tracking_number}</span>
+                        <button className="iconbtn sm" title={lang === "es" ? "Copiar rastreo" : "Copy tracking"} onClick={() => { try { navigator.clipboard.writeText(s.tracking_number!); } catch {} }}><Icon name="file" size={13} /></button>
+                      </div>
+                    )}
+                    <div className="row gap-2" style={{ marginTop: 2 }}>
+                      {s.label_url && <a className="btn btn-sm btn-outline" href={s.label_url} target="_blank" rel="noreferrer"><Icon name="download" size={13} />{lang === "es" ? "Etiqueta" : "Label"}</a>}
+                      {detail.conversation_id && (
+                        <button className="btn btn-sm btn-outline" disabled={pending || trackSent === s.id}
+                          onClick={() => start(async () => { const r = await notifyTracking(detail.id, s.id); if (r.ok) setTrackSent(s.id); })}>
+                          <Icon name="whatsapp" size={13} />{trackSent === s.id ? (lang === "es" ? "Enviado ✓" : "Sent ✓") : (lang === "es" ? "Enviar rastreo" : "Send tracking")}
+                        </button>
+                      )}
+                      <span className="grow" />
+                      <span className="t-xs muted">{new Date(s.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
+                    </div>
+                  </div>
+                ))}
+                <button className="btn btn-sm btn-outline" onClick={() => setShipOpen(true)}>
+                  <Icon name="plus" size={14} />{detail.shipments.length ? (lang === "es" ? "Nueva guía" : "New label") : (lang === "es" ? "Generar guía de envío" : "Create shipping label")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* CFDI invoicing — only when Facturapi is active */}
+          {!personal && invoicing && (
+            <div className="ws-block">
+              <div className="ws-block-head"><Icon name="file" size={16} /><h4 className="grow">{lang === "es" ? "Factura (CFDI)" : "Invoice (CFDI)"}</h4>
+                {detail.requires_invoice && detail.invoices.length === 0 && <Pill color="amber" dot>{lang === "es" ? "Pendiente" : "Pending"}</Pill>}
+                {detail.invoices.length > 0 && <Pill color="green" dot>{lang === "es" ? "Emitida" : "Issued"}</Pill>}
+              </div>
+              <div style={{ padding: "12px 14px" }} className="col gap-2">
+                {detail.invoices.map((inv) => (
+                  <div key={inv.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                    <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                      <span className="mono t-xs truncate" style={{ fontWeight: 700, maxWidth: 220 }} title={inv.uuid ?? undefined}>{inv.uuid ?? "—"}</span>
+                      <span className="grow" />
+                      {inv.total != null && <span className="mono t-sm">${formatMoney(inv.total)}</span>}
+                    </div>
+                    <div className="row gap-2" style={{ marginTop: 2 }}>
+                      {inv.pdf_url && <a className="btn btn-sm btn-outline" href={inv.pdf_url} target="_blank" rel="noreferrer"><Icon name="download" size={13} />PDF</a>}
+                      {detail.conversation_id && (
+                        <button className="btn btn-sm btn-outline" disabled={pending || invSent === inv.id}
+                          onClick={() => start(async () => { const r = await notifyInvoice(detail.id, inv.id); if (r.ok) setInvSent(inv.id); })}>
+                          <Icon name="whatsapp" size={13} />{invSent === inv.id ? (lang === "es" ? "Enviada ✓" : "Sent ✓") : (lang === "es" ? "Enviar factura" : "Send invoice")}
+                        </button>
+                      )}
+                      <span className="grow" />
+                      <span className="t-xs muted">{new Date(inv.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
+                    </div>
+                  </div>
+                ))}
+                {detail.invoices.length === 0 && (
+                  <button className="btn btn-sm btn-outline" onClick={() => setInvOpen(true)}>
+                    <Icon name="plus" size={14} />{lang === "es" ? "Emitir factura" : "Issue invoice"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* notes */}
           {(() => {
             const subLabel = personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos" : "Items");
@@ -492,6 +578,14 @@ export function OrderDrawer({
             </div>
           )}
         </div>
+      )}
+      {shipOpen && (
+        <ShippingModal orderId={detail.id} contact={detail.contact ? { id: detail.contact.id, name: detail.contact.name, phone: detail.contact.phone } : null} lang={lang}
+          onClose={() => setShipOpen(false)} onCreated={() => run(() => Promise.resolve())} />
+      )}
+      {invOpen && (
+        <InvoiceModal orderId={detail.id} contactId={detail.contact?.id ?? null} total={detail.total} lang={lang}
+          onClose={() => setInvOpen(false)} onCreated={() => run(() => Promise.resolve())} />
       )}
       {tagRect && (
         <TagPicker businessId={businessId} current={detail.contact?.tags ?? []} rect={tagRect}

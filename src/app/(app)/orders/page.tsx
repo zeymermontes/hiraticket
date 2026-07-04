@@ -5,6 +5,7 @@ import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getProducts } from "@/lib/extras";
 import { getOrderDetail } from "@/lib/orders";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveIntegrations } from "@/lib/plugins";
 import { OrdersTable } from "@/components/OrdersTable";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export default async function OrdersPage({
   const openOrder = sp.order ? await getOrderDetail(sp.order) : null;
   const convDetail = openOrder?.conversation_id ? await getConversationDetail(openOrder.conversation_id) : null;
   const connected = isConnected(await getSessions(business.id));
+  const integrations = await getActiveIntegrations(business.id);
 
   return (
     <OrdersTable
@@ -47,6 +49,8 @@ export default async function OrdersPage({
       products={products}
       contacts={(contacts ?? []) as { id: string; name: string }[]}
       invoice={{ add: business.invoice_add_tax ?? true, rate: business.invoice_tax_rate ?? 16 }}
+      shipping={integrations.shipping}
+      invoicing={integrations.invoicing}
     />
   );
 }
