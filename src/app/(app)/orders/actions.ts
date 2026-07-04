@@ -177,6 +177,23 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
   revalidatePath("/orders");
 }
 
+/** Bulk-move several orders to a stage in one round trip (used by the orders table selection bar).
+ *  Logs a "Cambio de etapa" event per order; skips per-order flow automations to avoid a storm. */
+export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<void> {
+  if (!orderIds.length) return;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: first } = await supabase.from("orders").select("business_id").eq("id", orderIds[0]).maybeSingle();
+  await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).in("id", orderIds);
+  if (first?.business_id) {
+    await supabase.from("events").insert(orderIds.map((id) => ({
+      business_id: first.business_id, parent_type: "order", parent_id: id,
+      actor_id: user?.id ?? null, kind: "status", text: "Cambio de etapa",
+    })));
+  }
+  revalidatePath("/orders"); revalidatePath("/kanban");
+}
+
 /** order.total := sum of its line-item subtotals. */
 async function recomputeOrderTotal(supabase: SB, orderId: string): Promise<void> {
   const { data: items } = await supabase.from("order_items").select("subtotal").eq("order_id", orderId);

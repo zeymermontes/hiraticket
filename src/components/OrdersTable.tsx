@@ -13,8 +13,9 @@ import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
 import { CatalogPicker } from "@/components/CatalogPicker";
-import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder } from "@/app/(app)/orders/actions";
+import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder, bulkMoveOrderStage } from "@/app/(app)/orders/actions";
 import { moveOrderArea } from "@/app/(app)/actions";
+import { menuStyle } from "@/lib/popover";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 
@@ -57,6 +58,9 @@ export function OrdersTable({
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [showXfer, setShowXfer] = useState(false);
+  const [stageMenu, setStageMenu] = useState<DOMRect | null>(null); // bulk "change stage" popover
+  const [, startBulk] = useTransition();
+  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { await bulkMoveOrderStage(ids, stageId); setSel(new Set()); router.refresh(); }); };
   const [trashView, setTrashView] = useState(false);
   const [trashRows, setTrashRows] = useState<OrderRow[]>([]);
   const PER = 25;
@@ -171,9 +175,23 @@ export function OrdersTable({
         <div className="row gap-2" style={{ margin: "0 24px 10px", padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--brand)", borderRadius: 10, alignItems: "center" }}>
           <strong>{sel.size}</strong><span className="t-sm">{lang === "es" ? "seleccionados" : "selected"}</span>
           <span className="grow" />
+          <button className="btn btn-sm btn-outline" onClick={(e) => setStageMenu(e.currentTarget.getBoundingClientRect())}><Icon name="kanban" size={14} />{lang === "es" ? "Cambiar etapa" : "Change stage"}</button>
           <button className="btn btn-sm btn-outline" onClick={() => setShowXfer(true)}><Icon name="swap" size={14} />{lang === "es" ? "Transferir" : "Transfer"}</button>
           <button className="btn btn-sm btn-ghost" onClick={() => setSel(new Set())}>{lang === "es" ? "Limpiar" : "Clear"}</button>
         </div>
+      )}
+      {stageMenu && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setStageMenu(null)} />
+          <div className="menu scroll" style={menuStyle(stageMenu, { width: 220, height: 300, align: "right" })}>
+            <div className="menu-label">{lang === "es" ? "Mover a etapa" : "Move to stage"}</div>
+            {stages.map((s) => (
+              <button key={s.id} className="menu-item" onClick={() => bulkStage(s.id)}>
+                <Pill color={s.color as PillColor} dot>{s.name}</Pill>
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       <div className={"tablewrap scroll" + (dense ? " dense" : "")}>
