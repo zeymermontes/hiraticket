@@ -74,6 +74,11 @@ func main() {
 	if dsn == "" {
 		panic("DATABASE_URL is required")
 	}
+	if os.Getenv("MESSAGE_SECRET_KEY") == "" {
+		// Not fatal (legacy plaintext still flows), but new outbound bodies written by the web app
+		// are encrypted and will FAIL to send until this is set to the same value as the web service.
+		fmt.Println("WARNING: MESSAGE_SECRET_KEY is not set — encrypted outbound messages will be marked failed instead of sent")
+	}
 	// Tell Go the container's memory ceiling so the GC stays aggressive near the limit instead of
 	// letting the heap grow into an OOM kill (Go can't read the cgroup limit on its own). Default to
 	// ~450MiB for a 512MB instance; override with MEM_LIMIT_MIB.
@@ -306,6 +311,14 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 				var body, murl, mmime, mname, replyTo, meta sql.NullString
 				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &meta, &o.attempts) == nil {
 					o.body = decryptBody(o.biz, body.String) // stored encrypted at rest; WhatsApp needs plaintext
+					// Guard: an encrypted body we can't decrypt (MESSAGE_SECRET_KEY missing/mismatched)
+					// must NOT go out as an empty or garbled message — fail it loudly instead. It can
+					// be retried from the app once the env is fixed.
+					if isEncryptedBody(body.String) && o.body == "" {
+						m.log.Errorf("cannot decrypt outbound %s — MESSAGE_SECRET_KEY missing or does not match the web app's; marking failed", o.id)
+						m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+						continue
+					}
 					o.murl = murl.String
 					o.mmime = mmime.String
 					o.mname = mname.String
@@ -1607,6 +1620,11 @@ func (m *Manager) pollOps(ctx context.Context) {
 				var body sql.NullString
 				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op, &o.react, &o.dir) == nil {
 					o.body = decryptBody(o.biz, body.String) // edits re-send the body to WhatsApp → plaintext
+					if o.op == "edit" && isEncryptedBody(body.String) && o.body == "" {
+						m.log.Errorf("cannot decrypt edit %s — MESSAGE_SECRET_KEY missing/mismatched; dropping the op", o.id)
+						m.exec(ctx, `UPDATE messages SET pending_op=NULL WHERE id=$1`, o.id)
+						continue
+					}
 					ops = append(ops, o)
 				}
 			}
