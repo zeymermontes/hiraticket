@@ -577,19 +577,25 @@ export function ChatScreen({
   }, []);
 
   // Background backfill of the local search cache (WhatsApp Web model): walk recent conversations
-  // and page their history (up to ~90 days) into IndexedDB, one page at a time, throttled, resumable
-  // across sessions via a per-conversation cursor. Runs only while the app is open.
+  // and page their history (up to ~90 days) into IndexedDB, throttled, resumable across sessions
+  // via a per-conversation cursor. Uses the /chat/backfill ROUTE (plain fetch) — NOT server actions:
+  // React serializes actions per client, so backfill-on-actions queued ahead of the realtime
+  // refetches and froze new-message/read/preview updates while a chat was open.
   useEffect(() => {
     let stop = false;
     const CUTOFF = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    const persist = (convId: string, ms: ChatMessage[]) =>
-      putMessages(ms.filter((m) => m.body && !m.deleted).map((m) => ({
-        businessId, kind: "wa" as const, threadId: convId, msgId: m.id,
-        body: m.body!, senderName: m.sender_name ?? null, dir: m.direction, ts: m.created_at,
-      })));
+    type BfPage = { messages: { id: string; body: string; senderName: string | null; dir: "in" | "out"; ts: string }[]; pageSize: number; oldest: string | null };
+    const fetchPage = async (convId: string, before: string | null): Promise<BfPage> => {
+      const u = `/chat/backfill?conv=${convId}` + (before ? `&before=${encodeURIComponent(before)}` : "");
+      const r = await fetch(u, { cache: "no-store" });
+      if (!r.ok) throw new Error("backfill");
+      return (await r.json()) as BfPage;
+    };
+    const persist = (convId: string, p: BfPage) =>
+      putMessages(p.messages.map((m) => ({ businessId, kind: "wa" as const, threadId: convId, msgId: m.id, body: m.body, senderName: m.senderName, dir: m.dir, ts: m.ts })));
     const run = async () => {
-      await sleep(8000); // let the app settle first
+      await sleep(10000); // let the app settle first
       for (const c of listProp) {
         if (stop) return;
         if ((c.last_message_at ?? "") < CUTOFF) continue;
@@ -597,26 +603,18 @@ export function ChatScreen({
         const cur = (await getMeta(key)) as string | null; // "done" | oldest-cursor | null
         if (cur === "done") continue;
         try {
-          let cursor = cur;
-          if (!cursor) {
-            const page = await liveMessages(c.id);
+          let cursor: string | null = cur;
+          for (let i = 0; i < 25 && !stop; i++) { // hard cap per conv per session
+            const p = await fetchPage(c.id, cursor);
             if (stop) return;
-            await persist(c.id, page);
-            if (page.length < MSG_PAGE) { await setMeta(key, "done"); continue; }
-            cursor = page[0]?.created_at ?? null;
-            if (cursor) await setMeta(key, cursor);
+            await persist(c.id, p);
+            if (p.pageSize < 50 || !p.oldest || p.oldest < CUTOFF) { await setMeta(key, "done"); break; }
+            cursor = p.oldest;
+            await setMeta(key, cursor);
+            await sleep(2500);
           }
-          for (let i = 0; i < 40 && cursor && !stop; i++) { // hard cap per conv per session
-            await sleep(1500);
-            const older = await loadOlderMessages(c.id, cursor);
-            if (stop) return;
-            await persist(c.id, older);
-            if (older.length < MSG_PAGE || (older[0]?.created_at ?? "") < CUTOFF) { await setMeta(key, "done"); cursor = null; break; }
-            cursor = older[0]?.created_at ?? null;
-            if (cursor) await setMeta(key, cursor);
-          }
-        } catch { /* offline / RLS hiccup — retry next session */ }
-        await sleep(2000);
+        } catch { /* offline / auth hiccup — retry next session */ }
+        await sleep(2500);
       }
     };
     run();
