@@ -7,7 +7,7 @@ import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { PlatformConsoleData, TenantDetail } from "@/lib/platform";
-import { updatePlan } from "@/app/platform/actions";
+import { updatePlan, extendSubscription, setBusinessPlan } from "@/app/platform/actions";
 
 const SUB: Record<string, { color: PillColor; es: string; en: string }> = {
   active: { color: "green", es: "Activo", en: "Active" },
@@ -217,13 +217,18 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
         </div>
       </div>
 
-      {openTenant && <TenantDrawer t={openTenant} planName={planName(openTenant.plan)} onClose={() => setOpenTenant(null)} />}
+      {openTenant && <TenantDrawer t={openTenant} planName={planName(openTenant.plan)} plans={data.plans} onClose={() => setOpenTenant(null)} />}
     </div>
   );
 }
 
-function TenantDrawer({ t, planName, onClose }: { t: TenantDetail; planName: string; onClose: () => void }) {
+function TenantDrawer({ t, planName, plans, onClose }: { t: TenantDetail; planName: string; plans: PlatformConsoleData["plans"]; onClose: () => void }) {
   const { lang } = useApp();
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const changePlan = (planId: string) => { if (planId && planId !== t.plan) start(async () => { await setBusinessPlan(t.id, planId); router.refresh(); }); };
+  const addMonths = (m: number) => start(async () => { await extendSubscription(t.id, m); router.refresh(); });
+  const periodEnd = t.current_period_end ? new Date(t.current_period_end) : null;
   return (
     <>
       <div className="scrim" onClick={onClose} />
@@ -236,8 +241,18 @@ function TenantDrawer({ t, planName, onClose }: { t: TenantDetail; planName: str
         <div className="drawer-body scroll">
           <div className="ws-block"><div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Suscripción" : "Subscription"}</h4><Pill color={SUB[t.status]?.color ?? "slate"} dot>{SUB[t.status]?.[lang] ?? t.status}</Pill></div>
             <div className="ws-block-body col gap-2">
-              <div className="row gap-2"><span className="grow muted">Plan</span><strong>{planName}</strong></div>
+              <div className="row gap-2" style={{ alignItems: "center" }}><span className="grow muted">Plan</span>
+                <select className="select select-sm" style={{ width: 150 }} disabled={busy} value={t.plan} onChange={(e) => changePlan(e.target.value)}>
+                  {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
               <div className="row gap-2"><span className="grow muted">MRR</span><span className="mono" style={{ fontWeight: 700 }}>{money(t.mrr)}</span></div>
+              {t.extra_seats > 0 && <div className="row gap-2"><span className="grow muted">{lang === "es" ? "Asientos extra" : "Extra seats"}</span><span className="mono">{t.extra_seats}</span></div>}
+              <div className="row gap-2"><span className="grow muted">{lang === "es" ? "Vence" : "Renews"}</span><span className="mono t-sm">{periodEnd ? periodEnd.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</span></div>
+              <div className="row gap-2" style={{ alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                <span className="t-xs muted grow">{lang === "es" ? "Agregar meses pagados" : "Add paid months"}</span>
+                {[1, 3, 6, 12].map((m) => <button key={m} className="btn btn-sm btn-outline" disabled={busy} onClick={() => addMonths(m)}>+{m}m</button>)}
+              </div>
             </div>
           </div>
           <div className="row gap-3" style={{ flexWrap: "wrap" }}>

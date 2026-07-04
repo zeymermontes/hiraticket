@@ -37,6 +37,8 @@ export interface TenantRow {
 export interface TenantDetail extends TenantRow {
   seats: number;
   orders: number;
+  extra_seats: number;
+  current_period_end: string | null;
   phones: { label: string; status: string; phone: string | null }[];
 }
 export interface PlatformPlanFull extends PlatformPlan {
@@ -67,16 +69,20 @@ export async function getPlatformConsole(): Promise<PlatformConsoleData> {
     return { tenants: [], plans: [], audit: [], totals: { tenants: 0, mrr: 0, active: 0, trials: 0, connected: 0, pastDue: 0 } };
   }
   const supabase = createAdminClient();
-  const [{ data: businesses }, { data: subs }, { data: wa }, { data: plans }, { data: members }, { data: orders }, { data: events }] =
+  const [{ data: businesses }, subsRes, { data: wa }, { data: plans }, { data: members }, { data: orders }, { data: events }] =
     await Promise.all([
       supabase.from("businesses").select("id, name, vertical, created_at"),
-      supabase.from("subscriptions").select("business_id, plan_id, status, mrr"),
+      supabase.from("subscriptions").select("business_id, plan_id, status, mrr, current_period_end, extra_seats"),
       supabase.from("whatsapp_sessions").select("business_id, label, status, phone"),
       supabase.from("plans").select("id, name, price_monthly, price_annual, popular, limits, features").order("position"),
       supabase.from("business_members").select("business_id"),
       supabase.from("orders").select("business_id"),
       supabase.from("events").select("id, business_id, kind, text, created_at").order("created_at", { ascending: false }).limit(40),
     ]);
+  // extra_seats (0047) may not be applied yet — fall back without it.
+  const subs = subsRes.error
+    ? (await supabase.from("subscriptions").select("business_id, plan_id, status, mrr, current_period_end")).data
+    : subsRes.data;
 
   const subMap = new Map((subs ?? []).map((s) => [s.business_id as string, s]));
   const bizName = new Map((businesses ?? []).map((b) => [b.id as string, b.name as string]));
@@ -99,7 +105,10 @@ export async function getPlatformConsole(): Promise<PlatformConsoleData> {
     return {
       id: b.id as string, name: b.name as string, vertical: b.vertical as string, created_at: b.created_at as string,
       plan: (s?.plan_id as string) ?? "—", status: (s?.status as string) ?? "—", mrr: Number(s?.mrr ?? 0), wa: bestWa(b.id as string),
-      seats: seatCount.get(b.id as string) ?? 0, orders: orderCount.get(b.id as string) ?? 0, phones: phonesByBiz.get(b.id as string) ?? [],
+      seats: seatCount.get(b.id as string) ?? 0, orders: orderCount.get(b.id as string) ?? 0,
+      extra_seats: Number((s as { extra_seats?: number } | undefined)?.extra_seats ?? 0),
+      current_period_end: ((s as { current_period_end?: string } | undefined)?.current_period_end) ?? null,
+      phones: phonesByBiz.get(b.id as string) ?? [],
     };
   });
 

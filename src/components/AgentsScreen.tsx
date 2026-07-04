@@ -8,7 +8,7 @@ import { useConfirm } from "@/components/Confirm";
 import type { PillColor } from "@/lib/types";
 import type { DetailedAgent } from "@/lib/agents";
 import type { Area } from "@/lib/business";
-import { setAgentRole, setAgentName, setAgentArea, inviteAgent, deactivateAgent } from "@/app/(app)/agents/actions";
+import { setAgentRole, setAgentName, setAgentArea, inviteAgent, deactivateAgent, getSeatStatus, addSeat } from "@/app/(app)/agents/actions";
 import { createInviteLink, listInvites, revokeInvite, type InviteRow } from "@/app/(app)/invites/actions";
 
 const ROLE_COLOR = { admin: "brand", agent: "blue", viewer: "slate" } as const;
@@ -40,6 +40,11 @@ export function AgentsScreen({
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const loadInvites = useCallback(() => { if (isAdmin) listInvites(businessId).then(setInvites).catch(() => {}); }, [businessId, isAdmin]);
   useEffect(() => { loadInvites(); }, [loadInvites]);
+  // Seat gate: over the agent limit (and not in trial) → prompt to remove an agent or add a seat.
+  const [seat, setSeat] = useState<Awaited<ReturnType<typeof getSeatStatus>> | null>(null);
+  const [gateDismissed, setGateDismissed] = useState(false);
+  const refreshSeat = useCallback(() => { if (isAdmin) getSeatStatus(businessId).then(setSeat).catch(() => {}); }, [businessId, isAdmin]);
+  useEffect(() => { refreshSeat(); }, [refreshSeat, agents.length]);
 
   return (
     <div className="page">
@@ -112,6 +117,37 @@ export function AgentsScreen({
 
       {showInvite && <InviteModal businessId={businessId} areas={areas} onClose={() => setShowInvite(false)} onChanged={loadInvites} />}
       {editAgent && <EditAgentModal businessId={businessId} agent={editAgent} areas={areas} onClose={() => setEditAgent(null)} />}
+      {isAdmin && seat?.needsAction && !gateDismissed && (
+        <SeatGateModal seat={seat} businessId={businessId} onDismiss={() => setGateDismissed(true)} onResolved={() => { setGateDismissed(false); refreshSeat(); router.refresh(); }} />
+      )}
+    </div>
+  );
+}
+
+function SeatGateModal({ seat, businessId, onResolved, onDismiss }: { seat: { current: number; allowed: number; price: number }; businessId: string; onResolved: () => void; onDismiss: () => void }) {
+  const { lang } = useApp();
+  const [busy, setBusy] = useState(false);
+  const add = () => { setBusy(true); addSeat(businessId).then(onResolved).finally(() => setBusy(false)); };
+  return (
+    <div className="modal-wrap" style={{ zIndex: 1100 }}>
+      <div className="scrim" />
+      <div className="modal" style={{ width: 460, maxWidth: "92vw" }} role="alertdialog" aria-modal="true">
+        <div className="modal-head">
+          <span className="t-ic" style={{ color: "var(--red)" }}><Icon name="agents" size={18} /></span>
+          <h3 className="grow">{lang === "es" ? "Excediste tus agentes" : "You're over your agent limit"}</h3>
+        </div>
+        <div className="modal-body">
+          <p style={{ margin: 0, lineHeight: 1.55 }}>
+            {lang === "es"
+              ? `Tienes ${seat.current} agentes pero tu plan permite ${seat.allowed}. Para seguir, elimina un agente o agrega un asiento por $${seat.price} MXN/mes.`
+              : `You have ${seat.current} agents but your plan allows ${seat.allowed}. To continue, remove an agent or add a seat for $${seat.price} MXN/mo.`}
+          </p>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-outline grow" disabled={busy} onClick={onDismiss}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar un agente" : "Remove an agent"}</button>
+          <button className="btn btn-primary grow" disabled={busy} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? `Agregar asiento (+$${seat.price})` : `Add a seat (+$${seat.price})`}</button>
+        </div>
+      </div>
     </div>
   );
 }
