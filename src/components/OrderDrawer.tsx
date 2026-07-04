@@ -200,9 +200,9 @@ export function OrderDrawer({
                     <CatalogPicker products={products} personal={personal} lang={lang} compact
                       onPick={(p) => runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, name: p.name, unit_price: p.price, subtotal: (it.qty || 1) * p.price } : it)) }, () => updateOrderItem(li.id, { name: p.name, unit_price: p.price }))} />
                   )}
-                  <input key={"q" + li.qty} className="inp-inline" style={{ width: 48 }} defaultValue={String(li.qty)} title={lang === "es" ? "Cantidad" : "Qty"} onBlur={(e) => { const q = Number(e.target.value) || 1; if (q !== li.qty) run(() => updateOrderItem(li.id, { qty: q })); }} />
-                  {!personal && <input key={"p" + li.unit_price} className="inp-inline" style={{ width: 80 }} defaultValue={String(li.unit_price)} title={lang === "es" ? "Precio unit." : "Unit price"} placeholder="$" onBlur={(e) => { const p = Number(e.target.value) || 0; if (p !== li.unit_price) run(() => updateOrderItem(li.id, { unit_price: p })); }} />}
-                  <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }} onClick={() => run(() => deleteOrderItem(li.id))}><Icon name="trash" size={14} /></button>
+                  <input key={"q" + li.qty} className="inp-inline" style={{ width: 48 }} defaultValue={String(li.qty)} title={lang === "es" ? "Cantidad" : "Qty"} onBlur={(e) => { const q = Number(e.target.value) || 1; if (q !== li.qty) runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, qty: q, subtotal: q * it.unit_price } : it)) }, () => updateOrderItem(li.id, { qty: q })); }} />
+                  {!personal && <input key={"p" + li.unit_price} className="inp-inline" style={{ width: 80 }} defaultValue={String(li.unit_price)} title={lang === "es" ? "Precio unit." : "Unit price"} placeholder="$" onBlur={(e) => { const p = Number(e.target.value) || 0; if (p !== li.unit_price) runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, unit_price: p, subtotal: it.qty * p } : it)) }, () => updateOrderItem(li.id, { unit_price: p })); }} />}
+                  <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }} onClick={() => runOpt({ items: detail.items.filter((it) => it.id !== li.id) }, () => deleteOrderItem(li.id))}><Icon name="trash" size={14} /></button>
                 </div>
               ) : (
                 <div className="lineitem" key={li.id}>
@@ -231,12 +231,18 @@ export function OrderDrawer({
                   <button className="iconbtn sm" disabled={!newItem.name.trim()} title={lang === "es" ? "Agregar" : "Add"} onClick={() => { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); }}><Icon name="plus" size={15} /></button>
                 </div>
               )}
-              {!personal && !editItems && (
-                <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
-                  <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
-                  <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(detail.total)}</span>
-                </div>
-              )}
+              {!personal && (() => {
+                // Live preview while editing: sum the current lines plus the not-yet-added draft row,
+                // so the total tracks every keystroke instead of waiting for the server refetch.
+                const draft = editItems ? (Number(newItem.qty) || 0) * (Number(newItem.price) || 0) : 0;
+                const liveTotal = editItems ? detail.items.reduce((s, it) => s + it.subtotal, 0) + draft : detail.total;
+                return (
+                  <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
+                    <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
+                    <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(liveTotal)}</span>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

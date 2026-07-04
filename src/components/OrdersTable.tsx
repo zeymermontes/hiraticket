@@ -417,7 +417,7 @@ export function NewOrderModal({
           </div>
           {!personal && (
             <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
-              <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Subtotal" : "Subtotal"}</span>
+              <span className="grow" style={{ fontWeight: 700 }}>Total</span>
               <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal)}</span>
             </div>
           )}
