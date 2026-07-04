@@ -16,6 +16,7 @@ import { CatalogPicker } from "@/components/CatalogPicker";
 import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder, bulkMoveOrderStage } from "@/app/(app)/orders/actions";
 import { moveOrderArea } from "@/app/(app)/actions";
 import { menuStyle } from "@/lib/popover";
+import { useFlowToast } from "@/components/Toast";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 
@@ -60,7 +61,8 @@ export function OrdersTable({
   const [showXfer, setShowXfer] = useState(false);
   const [stageMenu, setStageMenu] = useState<DOMRect | null>(null); // bulk "change stage" popover
   const [, startBulk] = useTransition();
-  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { await bulkMoveOrderStage(ids, stageId); setSel(new Set()); router.refresh(); }); };
+  const flowToast = useFlowToast();
+  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { const r = await bulkMoveOrderStage(ids, stageId); flowToast(r.flows, lang); setSel(new Set()); router.refresh(); }); };
   const [trashView, setTrashView] = useState(false);
   const [trashRows, setTrashRows] = useState<OrderRow[]>([]);
   const PER = 25;

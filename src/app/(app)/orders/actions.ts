@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 import { getMyBusiness, getDeletedOrders } from "@/lib/queries";
 import type { OrderRow } from "@/lib/types";
-import { moveOrderStage } from "@/app/(app)/actions";
+import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -178,20 +178,31 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
 }
 
 /** Bulk-move several orders to a stage in one round trip (used by the orders table selection bar).
- *  Logs a "Cambio de etapa" event per order; skips per-order flow automations to avoid a storm. */
-export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<void> {
-  if (!orderIds.length) return;
+ *  Logs a "Cambio de etapa" event per order and fires the order-stage flows for each; returns the
+ *  set of flow names that fired so the caller can toast. */
+export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<{ flows: string[] }> {
+  if (!orderIds.length) return { flows: [] };
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const { data: first } = await supabase.from("orders").select("business_id").eq("id", orderIds[0]).maybeSingle();
+  const businessId = (first?.business_id as string) ?? null;
   await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).in("id", orderIds);
-  if (first?.business_id) {
+  const fired = new Set<string>();
+  if (businessId) {
     await supabase.from("events").insert(orderIds.map((id) => ({
-      business_id: first.business_id, parent_type: "order", parent_id: id,
+      business_id: businessId, parent_type: "order", parent_id: id,
       actor_id: user?.id ?? null, kind: "status", text: "Cambio de etapa",
     })));
+    // Space out the auto-replies so a bulk change doesn't fire a burst of WhatsApp messages at once.
+    const GAP_SEC = 20;
+    const now = Date.now();
+    for (let i = 0; i < orderIds.length; i++) {
+      const sendAfter = i === 0 ? null : new Date(now + i * GAP_SEC * 1000).toISOString();
+      for (const name of await runStageAutomations(orderIds[i], businessId, stageId, user?.id ?? null, sendAfter)) fired.add(name);
+    }
   }
-  revalidatePath("/orders"); revalidatePath("/kanban");
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); revalidatePath("/flows");
+  return { flows: [...fired] };
 }
 
 /** order.total := sum of its line-item subtotals. */

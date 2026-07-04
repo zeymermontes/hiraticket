@@ -34,7 +34,7 @@ export async function moveOrderStage(orderId: string, stageId: string): Promise<
 }
 
 /** Fire enabled automations triggered by an order reaching a stage. Returns fired flow names. */
-async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null): Promise<string[]> {
+export async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null, sendAfter?: string | null): Promise<string[]> {
   const supabase = await createClient();
   const fired: string[] = [];
   const { data: autos } = await supabase
@@ -60,6 +60,8 @@ async function runStageAutomations(orderId: string, businessId: string, stageId:
           await supabase.from("messages").insert({
             business_id: businessId, conversation_id: order.conversation_id,
             direction: "out", type: "text", body, author_id: userId, state: "queued",
+            // Stagger bulk sends so the worker spaces them out (anti-spam); null = send now.
+            next_retry_at: sendAfter ?? null,
           });
           await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
         }
