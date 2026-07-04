@@ -95,7 +95,7 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions }: { businessId: string; sessions: WaSession[] }) {
+export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false }: { businessId: string; sessions: WaSession[]; isPlatformAdmin?: boolean }) {
   const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -207,7 +207,7 @@ export function SettingsScreen({ businessId, sessions }: { businessId: string; s
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="lock" size={16} /><h4>{lang === "es" ? "Cuenta" : "Account"}</h4></div>
           <div className="ws-block-body col gap-2">
-            <a className="btn btn-outline btn-block" href="/platform"><Icon name="shield" size={15} />{lang === "es" ? "Consola de plataforma" : "Platform console"}</a>
+            {isPlatformAdmin && <a className="btn btn-outline btn-block" href="/platform"><Icon name="shield" size={15} />{lang === "es" ? "Consola de plataforma" : "Platform console"}</a>}
             <a className="btn btn-outline btn-block" href="/logout"><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
           </div>
         </section>
