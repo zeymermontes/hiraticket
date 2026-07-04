@@ -38,6 +38,28 @@ export async function extendSubscription(businessId: string, months: number): Pr
   return { ok: true };
 }
 
+/** Toggle a plugin's catalogue availability (available ↔ coming_soon). Platform admins only. */
+export async function setPluginStatus(pluginId: string, status: "available" | "coming_soon"): Promise<void> {
+  if (!(await isPlatformAdmin())) return;
+  const admin = createAdminClient();
+  await admin.from("plugins").update({ status }).eq("id", pluginId);
+  revalidatePath("/platform");
+}
+
+/** Set a plugin's add-on monthly price (updates existing installs' MRR too). Platform admins only. */
+export async function setPluginAddonPrice(pluginId: string, price: number): Promise<void> {
+  if (!(await isPlatformAdmin())) return;
+  const admin = createAdminClient();
+  const { data: p } = await admin.from("plugins").select("pricing").eq("id", pluginId).maybeSingle();
+  const cur = (p?.pricing as Record<string, unknown>) ?? {};
+  const amount = Math.max(0, Math.round(price));
+  const pricing: Record<string, unknown> = { ...cur, addon_monthly: amount };
+  await admin.from("plugins").update({ pricing }).eq("id", pluginId);
+  // Reprice active installs on the add-on model so tenant MRR stays consistent.
+  if (cur.model === "addon") await admin.from("business_plugins").update({ mrr: amount }).eq("plugin_id", pluginId).eq("status", "active");
+  revalidatePath("/platform");
+}
+
 /** Move a business to another plan; recomputes MRR = plan price + paid extra seats × extra price. */
 export async function setBusinessPlan(businessId: string, planId: string): Promise<{ ok: boolean; error?: string }> {
   if (!(await isPlatformAdmin())) return { ok: false, error: "forbidden" };

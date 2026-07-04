@@ -7,7 +7,7 @@ import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { PlatformConsoleData, TenantDetail } from "@/lib/platform";
-import { updatePlan, extendSubscription, setBusinessPlan } from "@/app/platform/actions";
+import { updatePlan, extendSubscription, setBusinessPlan, setPluginStatus, setPluginAddonPrice } from "@/app/platform/actions";
 
 const SUB: Record<string, { color: PillColor; es: string; en: string }> = {
   active: { color: "green", es: "Activo", en: "Active" },
@@ -24,7 +24,7 @@ const WA: Record<string, { color: PillColor; es: string; en: string }> = {
 };
 const money = (n: number) => "$" + new Intl.NumberFormat("es-MX").format(Math.round(n)) + " MXN";
 
-type Tab = "overview" | "tenants" | "plans" | "billing" | "usage" | "audit";
+type Tab = "overview" | "tenants" | "plans" | "plugins" | "billing" | "usage" | "audit";
 
 function Kpi({ icon, label, value }: { icon: string; label: string; value: string | number }) {
   return (
@@ -48,6 +48,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
     { id: "overview", icon: "kanban", es: "Resumen", en: "Overview" },
     { id: "tenants", icon: "store", es: "Negocios", en: "Tenants" },
     { id: "plans", icon: "layers", es: "Planes", en: "Plans" },
+    { id: "plugins", icon: "sparkles", es: "Plugins", en: "Plugins" },
     { id: "billing", icon: "orders", es: "Facturación", en: "Billing" },
     { id: "usage", icon: "sliders", es: "Uso", en: "Usage" },
     { id: "audit", icon: "clock", es: "Auditoría", en: "Audit" },
@@ -159,6 +160,40 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
               </div>
             )}
 
+            {tab === "plugins" && (
+              <div className="ws-block">
+                <table className="tbl">
+                  <thead><tr><th>Plugin</th><th>{lang === "es" ? "Categoría" : "Category"}</th><th>{lang === "es" ? "Precio" : "Pricing"}</th><th>{lang === "es" ? "Instalados" : "Installs"}</th><th>MRR</th><th>{lang === "es" ? "Estado" : "Status"}</th></tr></thead>
+                  <tbody>
+                    {data.pluginCatalog.map((p) => {
+                      const model = (p.pricing.model as string) ?? "free";
+                      return (
+                        <tr key={p.id}>
+                          <td style={{ fontWeight: 600 }}>{p.name}</td>
+                          <td className="t-sm muted">{p.category}</td>
+                          <td className="t-sm">
+                            {model === "addon" ? (
+                              <span className="row gap-1" style={{ alignItems: "baseline" }}>$<input className="inp-inline mono" style={{ width: 70, height: 30 }} defaultValue={String(p.pricing.addon_monthly ?? 0)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== Number(p.pricing.addon_monthly ?? 0)) run(() => setPluginAddonPrice(p.id, v)); }} />/mes</span>
+                            ) : model === "metered" ? <Pill color="slate">${String(p.pricing.metered_price)} / {String(p.pricing.metered_unit)}</Pill>
+                            : model === "revshare" ? <Pill color="slate">{(p.pricing.note as string) || "Rev-share"}</Pill>
+                            : <Pill color="slate">{lang === "es" ? "Gratis" : "Free"}</Pill>}
+                          </td>
+                          <td className="mono">{p.installs}</td>
+                          <td className="mono">{money(p.mrr)}</td>
+                          <td>
+                            <button className={"chip" + (p.status === "available" ? " on" : "")} onClick={() => run(() => setPluginStatus(p.id, p.status === "available" ? "coming_soon" : "available"))}>
+                              {p.status === "available" ? (lang === "es" ? "Disponible" : "Available") : (lang === "es" ? "Próximamente" : "Coming soon")}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {data.pluginCatalog.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 24 }}>—</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {tab === "billing" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 18 }}>
@@ -259,6 +294,19 @@ function TenantDrawer({ t, planName, plans, onClose }: { t: TenantDetail; planNa
             <div className="ws-block" style={{ flex: 1 }}><div className="ws-block-body"><div className="t-xs muted">{lang === "es" ? "Asientos" : "Seats"}</div><div className="mono" style={{ fontSize: 22, fontWeight: 800 }}>{t.seats}</div></div></div>
             <div className="ws-block" style={{ flex: 1 }}><div className="ws-block-body"><div className="t-xs muted">{lang === "es" ? "Pedidos" : "Orders"}</div><div className="mono" style={{ fontSize: 22, fontWeight: 800 }}>{t.orders}</div></div></div>
           </div>
+          {t.plugins.length > 0 && (
+            <div className="ws-block"><div className="ws-block-head"><Icon name="sparkles" size={16} /><h4>Plugins</h4></div>
+              <div className="ws-block-body col gap-2">
+                {t.plugins.map((p) => (
+                  <div key={p.id} className="row gap-2" style={{ alignItems: "center" }}>
+                    <span className="grow">{p.name}</span>
+                    {p.mrr > 0 && <span className="mono t-sm muted">{money(p.mrr)}</span>}
+                    <Pill color={p.status === "active" ? "green" : "slate"} dot>{p.status === "active" ? (lang === "es" ? "Activo" : "Active") : (lang === "es" ? "Pausado" : "Paused")}</Pill>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="ws-block"><div className="ws-block-head"><Icon name="whatsapp" size={16} /><h4>{lang === "es" ? "Números de WhatsApp" : "WhatsApp numbers"}</h4></div>
             <div className="ws-block-body col gap-2">
               {t.phones.length === 0 ? <div className="muted t-sm">—</div> : t.phones.map((p, i) => (
