@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function isPlatformAdmin(): Promise<boolean> {
   const supabase = await createClient();
@@ -58,7 +59,14 @@ export interface PlatformConsoleData {
 }
 
 export async function getPlatformConsole(): Promise<PlatformConsoleData> {
-  const supabase = await createClient();
+  // Only platform admins reach this; use the service-role client so member/order counts are computed
+  // across ALL tenants (the user client is RLS-scoped to the admin's own business → other tenants = 0).
+  const authed = await createClient();
+  const { data: isAdmin } = await authed.rpc("is_platform_admin");
+  if (isAdmin !== true) {
+    return { tenants: [], plans: [], audit: [], totals: { tenants: 0, mrr: 0, active: 0, trials: 0, connected: 0, pastDue: 0 } };
+  }
+  const supabase = createAdminClient();
   const [{ data: businesses }, { data: subs }, { data: wa }, { data: plans }, { data: members }, { data: orders }, { data: events }] =
     await Promise.all([
       supabase.from("businesses").select("id, name, vertical, created_at"),
