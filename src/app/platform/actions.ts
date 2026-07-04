@@ -55,8 +55,8 @@ export async function setPluginAddonPrice(pluginId: string, price: number): Prom
   const amount = Math.max(0, Math.round(price));
   const pricing: Record<string, unknown> = { ...cur, addon_monthly: amount };
   await admin.from("plugins").update({ pricing }).eq("id", pluginId);
-  // Reprice active installs on the add-on model so tenant MRR stays consistent.
-  if (cur.model === "addon") await admin.from("business_plugins").update({ mrr: amount }).eq("plugin_id", pluginId).eq("status", "active");
+  // The activation fee applies to every pricing model — reprice all active installs.
+  await admin.from("business_plugins").update({ mrr: amount }).eq("plugin_id", pluginId).eq("status", "active");
   revalidatePath("/platform");
 }
 

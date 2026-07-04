@@ -1,6 +1,53 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPluginRuntimeConfig } from "@/lib/plugins";
+
+function appBaseUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "https://app.hiraticket.com").replace(/\/+$/, "");
+}
+
+/** Start a card payment via the business's MercadoPago plugin: creates a Checkout Pro preference
+ *  for the order's outstanding balance and returns the redirect URL. Authenticated by pay_token. */
+export async function startCardPayment(token: string): Promise<{ ok: boolean; url?: string; error?: string }> {
+  if (!token) return { ok: false, error: "bad-token" };
+  const admin = createAdminClient();
+  const { data: order } = await admin.from("orders").select("id, code, total, business_id").eq("pay_token", token).maybeSingle();
+  if (!order) return { ok: false, error: "not-found" };
+
+  const cfg = await getPluginRuntimeConfig(order.business_id as string, "mercadopago");
+  const accessToken = cfg?.access_token?.trim();
+  if (!accessToken) return { ok: false, error: "not-configured" };
+
+  const { data: pays } = await admin.from("payments").select("amount").eq("order_id", order.id);
+  const paid = (pays ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const balance = Math.round(((Number(order.total) || 0) - paid) * 100) / 100;
+  if (balance <= 0) return { ok: false, error: "nothing-due" };
+
+  const backUrl = `${appBaseUrl()}/pay/${token}`;
+  try {
+    // x-integrator-id: Hiraticket's MercadoPago Partner id — every tenant's processed volume counts
+    // toward our Partner revenue share. Optional env (set once we're certified).
+    const integratorId = process.env.MP_INTEGRATOR_ID?.trim();
+    const res = await fetch("https://api.mercadopago.com/checkout/preferences", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", ...(integratorId ? { "x-integrator-id": integratorId } : {}) },
+      body: JSON.stringify({
+        items: [{ title: `Pedido ${order.code}`, quantity: 1, unit_price: balance, currency_id: "MXN" }],
+        external_reference: token, // the unguessable pay_token — the webhook maps it back to the order
+        notification_url: `${appBaseUrl()}/api/plugins/mercadopago/webhook?biz=${order.business_id}`,
+        back_urls: { success: `${backUrl}?mp=success`, pending: `${backUrl}?mp=pending`, failure: `${backUrl}?mp=failure` },
+        auto_return: "approved",
+      }),
+    });
+    if (!res.ok) return { ok: false, error: "mp-" + res.status };
+    const pref = (await res.json()) as { init_point?: string };
+    if (!pref.init_point) return { ok: false, error: "mp-no-url" };
+    return { ok: true, url: pref.init_point };
+  } catch {
+    return { ok: false, error: "mp-network" };
+  }
+}
 
 /** Customer uploads a transfer receipt from the public checkout page. Unauthenticated → we use the
  *  service-role client and authenticate the request by the order's pay_token. The proof lands as

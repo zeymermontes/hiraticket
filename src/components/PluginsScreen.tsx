@@ -4,11 +4,14 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useToast } from "@/components/Toast";
 import type { CatalogEntry, PluginPricing } from "@/lib/plugins";
 import { installPlugin, uninstallPlugin, setPluginEnabled, savePluginConfig } from "@/app/(app)/plugins/actions";
 
 // Mirror of secrets.MASK — kept local so this client bundle never imports node:crypto.
 const MASK = "••••••••";
+
+const addonOf = (p: PluginPricing) => Number(p.addon_monthly ?? 0);
 
 const CATEGORY_LABEL: Record<string, { es: string; en: string }> = {
   payments: { es: "Pagos", en: "Payments" },
@@ -19,21 +22,27 @@ const CATEGORY_LABEL: Record<string, { es: string; en: string }> = {
 };
 
 function priceBadge(p: PluginPricing, lang: "es" | "en"): string {
-  switch (p.model) {
-    case "addon": return `$${Number(p.addon_monthly ?? 0).toLocaleString("es-MX")}/${lang === "es" ? "mes" : "mo"}`;
-    case "metered": return lang === "es" ? `$${p.metered_price} por ${p.metered_unit}` : `$${p.metered_price} per ${p.metered_unit}`;
-    case "revshare": return p.note || (lang === "es" ? "Comisión de partner" : "Partner commission");
-    default: return lang === "es" ? "Gratis" : "Free";
-  }
+  const fee = Number(p.addon_monthly ?? 0);
+  const base = fee > 0 ? `$${fee.toLocaleString("es-MX")}/${lang === "es" ? "mes" : "mo"}` : (lang === "es" ? "Gratis" : "Free");
+  // Model-specific extras stack on top of the flat activation fee.
+  const extra = p.model === "metered" ? (lang === "es" ? ` · $${p.metered_price} por ${p.metered_unit}` : ` · $${p.metered_price} per ${p.metered_unit}`) : "";
+  return base + extra;
 }
 
 export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: string; entries: CatalogEntry[]; isAdmin: boolean }) {
   const { lang } = useApp();
   const router = useRouter();
+  const { push } = useToast();
   const [, start] = useTransition();
   const [cat, setCat] = useState<string>("all");
   const [configId, setConfigId] = useState<string | null>(null);
-  const run = (fn: () => Promise<unknown>) => start(async () => { await fn(); router.refresh(); });
+  const [guideId, setGuideId] = useState<string | null>(null);
+  // Surface failures (RLS, missing migration) instead of silently doing nothing.
+  const run = (fn: () => Promise<{ ok?: boolean; error?: string } | unknown>) => start(async () => {
+    const r = (await fn()) as { ok?: boolean; error?: string } | undefined;
+    if (r && r.ok === false) push({ kind: "info", title: lang === "es" ? "No se pudo aplicar" : "Couldn't apply", message: r.error ?? "" });
+    router.refresh();
+  });
 
   const cats = Array.from(new Set(entries.map((e) => e.category)));
   const shown = cat === "all" ? entries : entries.filter((e) => e.category === cat);
@@ -44,7 +53,7 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
       <div className="phead">
         <h1>Plugins</h1>
         <Pill color="slate" large>{entries.filter((e) => e.installed?.status === "active").length} {lang === "es" ? "activos" : "active"}</Pill>
-        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Conecta servicios de pago, facturación y envíos" : "Connect payment, invoicing and shipping services"}</span>
+        <span className="t-sm muted hide-narrow" style={{ marginLeft: 8 }}>{lang === "es" ? "Conecta servicios de pago, facturación y envíos · cada plugin activo cuesta $99/mes, cancelable en cualquier momento" : "Connect payment, invoicing and shipping · each active plugin is $99/mo, cancel anytime"}</span>
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
@@ -76,6 +85,12 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
                     </div>
 
                     <p className="t-sm muted" style={{ minHeight: 34 }}>{e.description}</p>
+                    {e.guide.length > 0 && (
+                      <button onClick={() => setGuideId(e.id)}
+                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--brand-700)", fontSize: 12.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4, alignSelf: "flex-start" }}>
+                        <Icon name="canned" size={13} />{lang === "es" ? "¿Cómo se configura?" : "How to set it up?"}
+                      </button>
+                    )}
 
                     <div className="row gap-2" style={{ alignItems: "center" }}>
                       <Pill color="slate"><Icon name="orders" size={11} />{priceBadge(e.pricing, lang)}</Pill>
@@ -83,7 +98,8 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
                       {soon && !inst ? (
                         <Pill color="violet">{lang === "es" ? "Próximamente" : "Coming soon"}</Pill>
                       ) : !inst ? (
-                        <button className="btn btn-sm btn-primary" disabled={!isAdmin} onClick={() => run(() => installPlugin(businessId, e.id))}><Icon name="plus" size={14} />{lang === "es" ? "Activar" : "Activate"}</button>
+                        <button className="btn btn-sm btn-primary" disabled={!isAdmin} title={lang === "es" ? "Se suma a tu mensualidad; cancela cuando quieras" : "Added to your monthly bill; cancel anytime"}
+                          onClick={() => run(() => installPlugin(businessId, e.id))}><Icon name="plus" size={14} />{lang === "es" ? "Activar" : "Activate"}{addonOf(e.pricing) > 0 ? ` · $${addonOf(e.pricing)}/mes` : ""}</button>
                       ) : (
                         <>
                           {e.config_schema.length > 0 && <button className="btn btn-sm btn-outline" disabled={!isAdmin} onClick={() => setConfigId(e.id)}><Icon name="sliders" size={14} />{lang === "es" ? "Configurar" : "Configure"}</button>}
@@ -101,6 +117,42 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
       </div>
 
       {configEntry && <ConfigModal key={configEntry.id} businessId={businessId} entry={configEntry} lang={lang} onClose={() => setConfigId(null)} onSaved={() => { setConfigId(null); router.refresh(); }} />}
+      {(() => {
+        const g = entries.find((e) => e.id === guideId);
+        return g ? <GuideModal entry={g} lang={lang} onClose={() => setGuideId(null)} onConfigure={g.installed && isAdmin ? () => { setGuideId(null); setConfigId(g.id); } : undefined} /> : null;
+      })()}
+    </div>
+  );
+}
+
+/** Step-by-step setup instructions for a plugin (catalogue-curated: plugins.guide). */
+function GuideModal({ entry, lang, onClose, onConfigure }: { entry: CatalogEntry; lang: "es" | "en"; onClose: () => void; onConfigure?: () => void }) {
+  return (
+    <div className="modal-wrap" onClick={onClose}>
+      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name={entry.icon || "sparkles"} /></span>
+          <h3 className="grow">{lang === "es" ? "Cómo configurar" : "How to set up"} {entry.name}</h3>
+          <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
+        </div>
+        <div className="modal-body col gap-3">
+          {entry.guide.map((s, i) => (
+            <div key={i} className="row gap-3" style={{ alignItems: "flex-start" }}>
+              <span style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--brand-50)", color: "var(--brand-700)", fontWeight: 800, fontSize: 13, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", marginTop: 1 }}>{i + 1}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{s.title}</div>
+                <div className="t-sm muted" style={{ marginTop: 2 }}>{s.body}</div>
+                {s.url && <a className="btn btn-sm btn-outline" href={s.url} target="_blank" rel="noreferrer" style={{ marginTop: 6, display: "inline-flex" }}><Icon name="arrowr" size={13} />{lang === "es" ? "Abrir" : "Open"}</a>}
+              </div>
+            </div>
+          ))}
+          {entry.guide.length === 0 && <p className="t-sm muted">—</p>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cerrar" : "Close"}</button>
+          {onConfigure && <button className="btn btn-primary" onClick={onConfigure}><Icon name="sliders" size={14} />{lang === "es" ? "Ir a configurar" : "Configure now"}</button>}
+        </div>
+      </div>
     </div>
   );
 }

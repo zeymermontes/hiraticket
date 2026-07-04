@@ -1,11 +1,13 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { PayCheckout } from "@/components/PayCheckout";
 import type { Branch, BankAccount } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function PayPage({ params }: { params: Promise<{ token: string }> }) {
+export default async function PayPage({ params, searchParams }: { params: Promise<{ token: string }>; searchParams: Promise<{ mp?: string }> }) {
   const { token } = await params;
+  const { mp } = await searchParams;
   const admin = createAdminClient();
 
   const { data: order } = await admin
@@ -16,10 +18,11 @@ export default async function PayPage({ params }: { params: Promise<{ token: str
 
   if (!order) return <NotValid />;
 
-  const [{ data: biz }, { data: pays }, { data: proofs }] = await Promise.all([
+  const [{ data: biz }, { data: pays }, { data: proofs }, mpCfg] = await Promise.all([
     admin.from("businesses").select("name, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled").eq("id", order.business_id).maybeSingle(),
     admin.from("payments").select("amount").eq("order_id", order.id),
     admin.from("payment_proofs").select("id, status, created_at").eq("order_id", order.id).eq("status", "pending"),
+    getPluginRuntimeConfig(order.business_id as string, "mercadopago"),
   ]);
 
   const paid = (pays ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -37,9 +40,11 @@ export default async function PayPage({ params }: { params: Promise<{ token: str
       payStatus={order.pay_status as string}
       branchEnabled={(biz?.pay_branch_enabled as boolean) ?? false}
       transferEnabled={(biz?.pay_transfer_enabled as boolean) ?? false}
+      cardEnabled={!!mpCfg?.access_token?.trim()}
       branches={((biz?.branches as Branch[]) ?? [])}
       accounts={((biz?.bank_accounts as BankAccount[]) ?? [])}
       hasPending={(proofs ?? []).length > 0}
+      mpResult={mp === "success" || mp === "pending" || mp === "failure" ? mp : null}
     />
   );
 }

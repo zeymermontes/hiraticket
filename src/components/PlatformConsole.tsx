@@ -172,11 +172,11 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
                           <td style={{ fontWeight: 600 }}>{p.name}</td>
                           <td className="t-sm muted">{p.category}</td>
                           <td className="t-sm">
-                            {model === "addon" ? (
+                            <span className="row gap-1" style={{ alignItems: "center", flexWrap: "wrap" }}>
                               <span className="row gap-1" style={{ alignItems: "baseline" }}>$<input className="inp-inline mono" style={{ width: 70, height: 30 }} defaultValue={String(p.pricing.addon_monthly ?? 0)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== Number(p.pricing.addon_monthly ?? 0)) run(() => setPluginAddonPrice(p.id, v)); }} />/mes</span>
-                            ) : model === "metered" ? <Pill color="slate">${String(p.pricing.metered_price)} / {String(p.pricing.metered_unit)}</Pill>
-                            : model === "revshare" ? <Pill color="slate">{(p.pricing.note as string) || "Rev-share"}</Pill>
-                            : <Pill color="slate">{lang === "es" ? "Gratis" : "Free"}</Pill>}
+                              {model === "metered" && <Pill color="slate">+${String(p.pricing.metered_price)} / {String(p.pricing.metered_unit)}</Pill>}
+                              {model === "revshare" && <Pill color="slate">{(p.pricing.note as string) || "Rev-share"}</Pill>}
+                            </span>
                           </td>
                           <td className="mono">{p.installs}</td>
                           <td className="mono">{money(p.mrr)}</td>

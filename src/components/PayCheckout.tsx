@@ -3,7 +3,7 @@ import React, { useState, useRef } from "react";
 import { Icon } from "@/components/Icon";
 import type { Branch, BankAccount } from "@/lib/types";
 import { DAY_ORDER, DAY_LABEL, normalizeHours } from "@/lib/hours";
-import { submitPaymentProof } from "@/app/pay/actions";
+import { submitPaymentProof, startCardPayment } from "@/app/pay/actions";
 
 const money = (n: number) => "$" + n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " MXN";
 
@@ -11,7 +11,7 @@ type Method = "branch" | "transfer" | "card";
 
 export function PayCheckout({
   token, businessName, contactName, code, total, balance, payStatus,
-  branchEnabled, transferEnabled, branches, accounts, hasPending,
+  branchEnabled, transferEnabled, cardEnabled, branches, accounts, hasPending, mpResult,
 }: {
   token: string;
   businessName: string;
@@ -22,14 +22,17 @@ export function PayCheckout({
   payStatus: string;
   branchEnabled: boolean;
   transferEnabled: boolean;
+  cardEnabled: boolean;
   branches: Branch[];
   accounts: BankAccount[];
   hasPending: boolean;
+  mpResult?: "success" | "pending" | "failure" | null;
 }) {
   const paid = payStatus === "paid";
   const methods = ([
     branchEnabled ? "branch" : null,
     transferEnabled ? "transfer" : null,
+    cardEnabled ? "card" : null,
   ].filter(Boolean) as Method[]);
   const [method, setMethod] = useState<Method | null>(methods.length === 1 ? methods[0] : null);
 
@@ -54,6 +57,9 @@ export function PayCheckout({
           <Banner tone="ok" icon="check" title="Este pedido ya está pagado" text="¡Gracias! No necesitas hacer nada más." />
         ) : (
           <>
+            {mpResult === "success" && <Banner tone="ok" icon="check" title="¡Pago recibido!" text="Tu pago con tarjeta fue aprobado. Se está acreditando al pedido — recarga en unos segundos." />}
+            {mpResult === "pending" && <Banner tone="info" icon="clock" title="Pago en proceso" text="Tu pago está siendo procesado. Te confirmaremos en cuanto se acredite." />}
+            {mpResult === "failure" && <Banner tone="info" icon="x" title="El pago no se completó" text="No se realizó ningún cargo. Puedes intentarlo de nuevo o elegir otro método." />}
             {hasPending && <Banner tone="info" icon="clock" title="Comprobante en revisión" text="Ya recibimos tu comprobante. Lo estamos verificando; te confirmaremos pronto." />}
 
             {methods.length === 0 ? (
@@ -64,12 +70,15 @@ export function PayCheckout({
                 <div className="col gap-2">
                   {branchEnabled && <MethodRow active={method === "branch"} onClick={() => setMethod("branch")} icon="store" title="Pagar en sucursal" sub="Paga en persona en una de nuestras ubicaciones" />}
                   {transferEnabled && <MethodRow active={method === "transfer"} onClick={() => setMethod("transfer")} icon="orders" title="Transferencia" sub="Transfiere y sube tu comprobante" />}
-                  <MethodRow active={false} disabled icon="orders" title="Tarjeta" sub="Próximamente" />
+                  {cardEnabled
+                    ? <MethodRow active={method === "card"} onClick={() => setMethod("card")} icon="orders" title="Tarjeta" sub="Débito, crédito o meses sin intereses (MercadoPago)" />
+                    : <MethodRow active={false} disabled icon="orders" title="Tarjeta" sub="Próximamente" />}
                 </div>
 
                 <div style={{ marginTop: 14 }}>
                   {method === "branch" && <BranchPanel branches={branches} />}
                   {method === "transfer" && <TransferPanel token={token} accounts={accounts} balance={balance} alreadyPending={hasPending} />}
+                  {method === "card" && <CardPanel token={token} balance={balance} />}
                 </div>
               </>
             )}
@@ -206,6 +215,28 @@ function TransferPanel({ token, accounts, balance, alreadyPending }: { token: st
           <Icon name="send" size={15} />{busy ? "Enviando…" : "Enviar comprobante"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function CardPanel({ token, balance }: { token: string; balance: number }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    const r = await startCardPayment(token);
+    if (r.ok && r.url) { window.location.href = r.url; return; } // → MercadoPago checkout
+    setBusy(false);
+    setErr(r.error === "nothing-due" ? "Este pedido ya no tiene saldo pendiente." : r.error === "not-configured" ? "El pago con tarjeta no está disponible por ahora." : "No se pudo iniciar el pago. Intenta de nuevo.");
+  };
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }} className="col gap-2">
+      <div className="t-sm">Serás dirigido a <b>MercadoPago</b> para pagar {money(balance)} de forma segura. Al aprobarse, tu pago se acredita automáticamente.</div>
+      {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
+      <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={busy} onClick={go}>
+        <Icon name="arrowr" size={15} />{busy ? "Abriendo MercadoPago…" : "Pagar con tarjeta"}
+      </button>
+      <div className="t-xs muted" style={{ textAlign: "center" }}>Procesado por MercadoPago · aceptamos débito, crédito y MSI</div>
     </div>
   );
 }
