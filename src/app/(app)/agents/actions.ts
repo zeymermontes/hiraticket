@@ -89,8 +89,8 @@ export async function deactivateAgent(businessId: string, userId: string): Promi
  *  accepts via a popup on their next visit. Errors: 'no-account' (tell them to sign up first),
  *  'in-another-team', 'already-member'. */
 export async function inviteAgent(
-  businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null,
-): Promise<{ ok: boolean; error?: string }> {
+  businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null, allowExtra = false,
+): Promise<{ ok: boolean; error?: string; extra?: { included: number; current: number; price: number } }> {
   const me = await assertAdmin(businessId);
   if (!me) return { ok: false, error: "forbidden" };
   const clean = email.trim().toLowerCase();
@@ -103,6 +103,23 @@ export async function inviteAgent(
   // One team per account (for now): block if they already belong to a team.
   const { data: existing } = await admin.from("business_members").select("business_id").eq("user_id", uid).limit(1).maybeSingle();
   if (existing) return { ok: false, error: existing.business_id === businessId ? "already-member" : "in-another-team" };
+
+  // Seat check: members + pending email invites vs the plan's included agents. Going over is allowed
+  // (each extra agent costs 250 MXN/mo) but the caller must confirm first (allowExtra).
+  if (!allowExtra) {
+    const [{ count: mCount }, { count: iCount }, { data: sub }] = await Promise.all([
+      admin.from("business_members").select("user_id", { count: "exact", head: true }).eq("business_id", businessId),
+      admin.from("team_invites").select("id", { count: "exact", head: true }).eq("business_id", businessId).is("token", null),
+      admin.from("subscriptions").select("plan_id").eq("business_id", businessId).maybeSingle(),
+    ]);
+    const { data: plan } = await admin.from("plans").select("limits").eq("id", (sub?.plan_id as string) ?? "pro").maybeSingle();
+    const lim = (plan?.limits ?? {}) as { agents?: number; extra_agent?: number };
+    const included = lim.agents ?? -1;
+    const current = (mCount ?? 0) + (iCount ?? 0);
+    if (included >= 0 && current >= included) {
+      return { ok: false, error: "over-limit", extra: { included, current, price: lim.extra_agent ?? 250 } };
+    }
+  }
 
   // Replace any prior pending invite for this email+business, then create a fresh one.
   await admin.from("team_invites").delete().eq("business_id", businessId).eq("email", clean).is("token", null);

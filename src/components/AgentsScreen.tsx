@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useConfirm } from "@/components/Confirm";
 import type { PillColor } from "@/lib/types";
 import type { DetailedAgent } from "@/lib/agents";
 import type { Area } from "@/lib/business";
@@ -228,16 +229,33 @@ function InviteModal({ businessId, areas, onClose, onChanged }: { businessId: st
             : (lang === "es" ? "No se pudo invitar." : "Couldn't invite.");
 
   const area = () => (role === "viewer" ? null : areaId || null);
+  const ask = useConfirm();
+  const [busy, setBusy] = useState(false);
+
+  const submitInvite = async (allowExtra: boolean): Promise<void> => {
+    const e = email.trim();
+    const r = await inviteAgent(businessId, e, role, area(), allowExtra);
+    if (r.ok) { setOk(lang === "es" ? "Invitación enviada. La verá al entrar a Hiraticket." : "Invite sent. They'll see it when they open Hiraticket."); setEmail(""); onChanged(); router.refresh(); return; }
+    if (r.error === "over-limit" && r.extra) {
+      const yes = await ask({
+        icon: "agents",
+        title: lang === "es" ? "Agente adicional" : "Extra agent",
+        message: lang === "es"
+          ? `Tu plan incluye ${r.extra.included} agentes y ya tienes ${r.extra.current}. Este agente adicional cuesta $${r.extra.price} MXN/mes. ¿Invitarlo de todos modos?`
+          : `Your plan includes ${r.extra.included} agents and you already have ${r.extra.current}. This extra agent costs $${r.extra.price} MXN/mo. Invite anyway?`,
+        confirmLabel: lang === "es" ? "Invitar" : "Invite",
+        cancelLabel: lang === "es" ? "Cancelar" : "Cancel",
+      });
+      if (yes) await submitInvite(true);
+      return;
+    }
+    setErr(errMsg(r.error));
+  };
 
   function invite() {
-    const e = email.trim();
-    if (!e) return;
-    setErr(null); setOk(null);
-    start(async () => {
-      const r = await inviteAgent(businessId, e, role, area());
-      if (r.ok) { setOk(lang === "es" ? "Invitación enviada. La verá al entrar a Hiraticket." : "Invite sent. They'll see it when they open Hiraticket."); setEmail(""); onChanged(); router.refresh(); }
-      else setErr(errMsg(r.error));
-    });
+    if (!email.trim()) return;
+    setErr(null); setOk(null); setBusy(true);
+    submitInvite(false).finally(() => setBusy(false));
   }
   function genLink() {
     setErr(null); setLink(null);
@@ -279,7 +297,7 @@ function InviteModal({ businessId, areas, onClose, onChanged }: { businessId: st
             <label className="lbl">{lang === "es" ? "Invitar por correo (cuenta existente)" : "Invite by email (existing account)"}</label>
             <div className="row gap-2">
               <div className="field field-lg grow" style={{ height: 42 }}><Icon name="mail" /><input type="email" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") invite(); }} /></div>
-              <button className="btn btn-primary" disabled={pending || !email.trim()} onClick={invite}><Icon name="send" size={15} />{lang === "es" ? "Invitar" : "Invite"}</button>
+              <button className="btn btn-primary" disabled={pending || busy || !email.trim()} onClick={invite}><Icon name="send" size={15} />{lang === "es" ? "Invitar" : "Invite"}</button>
             </div>
           </div>
 

@@ -24,7 +24,7 @@ const PLANS: Plan[] = [
   },
   {
     id: "pro", name: { es: "Pro", en: "Pro" }, tagline: { es: "Para equipos que rutean el trabajo.", en: "For growing teams that route work." },
-    priceMonthly: 999, popular: true, limits: { agents: 10, numbers: 2 },
+    priceMonthly: 999, popular: true, limits: { agents: 5, numbers: 2 },
     features: [
       { es: "Todo lo de Inicio", en: "Everything in Starter" },
       { es: "Áreas y ruteo inteligente", en: "Areas & smart routing" },
@@ -35,10 +35,10 @@ const PLANS: Plan[] = [
   },
   {
     id: "negocio", name: { es: "Negocio", en: "Business" }, tagline: { es: "Para operaciones multi-sucursal a escala.", en: "For multi-branch operations at scale." },
-    priceMonthly: 1999, popular: false, limits: { agents: -1, numbers: 5 },
+    priceMonthly: 1999, popular: false, limits: { agents: 10, numbers: 5 },
     features: [
       { es: "Todo lo de Pro", en: "Everything in Pro" },
-      { es: "Agentes ilimitados", en: "Unlimited agents" },
+      { es: "10 agentes incluidos", en: "10 agents included" },
       { es: "API y webhooks", en: "API & webhooks" },
       { es: "Bitácora de auditoría", en: "Audit log" },
       { es: "Onboarding dedicado y SLA", en: "Dedicated onboarding & SLA" },
@@ -210,6 +210,7 @@ export function Landing() {
                 <div className="price-amt"><span className="amt">{money(eff)}</span><span className="per">MXN {t("/mes", "/mo")}</span></div>
                 <div className="price-billed">{annual ? `${t("facturado anual", "billed annually")} · ${money(p.priceMonthly * 10)} MXN/${t("año", "yr")}` : " "}</div>
                 <div className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{lim}</div>
+                <div className="muted" style={{ fontSize: 11.5 }}>{t("Agente adicional", "Extra agent")} $250 MXN{t("/mes", "/mo")}</div>
                 <Link className={"btn btn-lg btn-block " + (p.popular ? "btn-primary" : "btn-outline")} href="/login">{t("Empezar gratis", "Start free")}</Link>
                 <div className="price-feats">
                   {p.features.map((f) => <div className="price-feat" key={f.es}><span className="ck"><Icon name="check" size={13} /></span>{f[lang]}</div>)}
