@@ -1,9 +1,18 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
-import { skydropxQuote, skydropxCreate, type ShipAddress, type ShipParcel, type ShipRate } from "@/lib/shipping";
+import { skydropxQuote, skydropxCreate, enviosperrosQuote, enviosperrosCreate, type ShipAddress, type ShipParcel, type ShipRate } from "@/lib/shipping";
 import { encryptBody } from "@/lib/msgcrypto";
+
+/** Per-provider config sanity check (fields the adapters can't work without). */
+function cfgReady(provider: string, cfg: Record<string, string> | null): boolean {
+  if (!cfg) return false;
+  if (provider === "skydropx") return !!(cfg.client_id && cfg.client_secret && cfg.origin_zip);
+  if (provider === "enviosperros") return !!(cfg.api_key && cfg.origin_zip);
+  return false;
+}
 
 export interface SavedAddress extends ShipAddress { id: string; is_default: boolean }
 
@@ -56,12 +65,12 @@ export async function quoteOrderShipment(
   const { data: order } = await supabase.from("orders").select("business_id, contact_id").eq("id", orderId).maybeSingle();
   if (!order) return { ok: false, rates: [], error: "order" };
   const provider = await getActiveShippingProvider(order.business_id as string);
-  if (provider !== "skydropx") return { ok: false, rates: [], error: "no-plugin" };
-  const cfg = await getPluginRuntimeConfig(order.business_id as string, "skydropx");
-  if (!cfg?.client_id || !cfg?.client_secret || !cfg?.origin_zip) return { ok: false, rates: [], error: "not-configured" };
+  if (!provider) return { ok: false, rates: [], error: "no-plugin" };
+  const cfg = await getPluginRuntimeConfig(order.business_id as string, provider);
+  if (!cfgReady(provider, cfg)) return { ok: false, rates: [], error: "not-configured" };
 
   if (saveForContact && order.contact_id) await saveAddress(order.business_id as string, order.contact_id as string, dest);
-  return skydropxQuote(cfg, dest, parcel);
+  return provider === "enviosperros" ? enviosperrosQuote(cfg!, dest, parcel) : skydropxQuote(cfg!, dest, parcel);
 }
 
 /** Create the label for the chosen rate; records the shipment + an activity event + usage. */
@@ -73,16 +82,31 @@ export async function createOrderShipment(
   const { data: order } = await supabase.from("orders").select("business_id, code").eq("id", orderId).maybeSingle();
   if (!order) return { ok: false, error: "order" };
   const businessId = order.business_id as string;
-  const cfg = await getPluginRuntimeConfig(businessId, "skydropx");
-  if (!cfg) return { ok: false, error: "not-configured" };
+  const provider = await getActiveShippingProvider(businessId);
+  if (!provider) return { ok: false, error: "no-plugin" };
+  const cfg = await getPluginRuntimeConfig(businessId, provider);
+  if (!cfgReady(provider, cfg)) return { ok: false, error: "not-configured" };
 
-  const r = await skydropxCreate(cfg, quotationId, rateId, dest, parcel);
+  const r = provider === "enviosperros"
+    ? await enviosperrosCreate(cfg!, rateId, dest, parcel, `Pedido ${order.code}`)
+    : await skydropxCreate(cfg!, quotationId, rateId, dest, parcel);
   if (!r.ok || !r.label) return { ok: false, error: r.error ?? "create" };
 
+  // Providers that return the label as base64 (Envíos Perros) → host a stable PDF copy ourselves.
+  let labelUrl = r.label.labelUrl;
+  if (!labelUrl && r.label.pdfBase64) {
+    try {
+      const admin = createAdminClient();
+      const path = `labels/${businessId}/${orderId}/${r.label.tracking}.pdf`;
+      const up = await admin.storage.from("media").upload(path, Buffer.from(r.label.pdfBase64, "base64"), { contentType: "application/pdf", upsert: true });
+      if (!up.error) labelUrl = admin.storage.from("media").getPublicUrl(path).data.publicUrl;
+    } catch { /* label exists at the provider — non-fatal */ }
+  }
+
   const { data: shipRow } = await supabase.from("shipments").insert({
-    business_id: businessId, order_id: orderId, provider: "skydropx",
+    business_id: businessId, order_id: orderId, provider,
     carrier: r.label.carrier || null, service: r.label.service || null,
-    tracking_number: r.label.tracking, label_url: r.label.labelUrl, cost: r.label.cost || null,
+    tracking_number: r.label.tracking, label_url: labelUrl, cost: r.label.cost || null,
     address: dest as unknown as Record<string, unknown>, parcel: parcel as unknown as Record<string, unknown>,
     created_by: user?.id ?? null,
   }).select("id").single();
@@ -90,7 +114,7 @@ export async function createOrderShipment(
     business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
     kind: "send", text: `Guía generada${r.label.carrier ? ` (${r.label.carrier})` : ""} · ${r.label.tracking}`,
   });
-  await supabase.from("plugin_usage").insert({ business_id: businessId, plugin_id: "skydropx", unit: "guía", qty: 1, meta: { tracking: r.label.tracking, cost: r.label.cost } });
+  await supabase.from("plugin_usage").insert({ business_id: businessId, plugin_id: provider, unit: "guía", qty: 1, meta: { tracking: r.label.tracking, cost: r.label.cost } });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
   return { ok: true, shipmentId: (shipRow?.id as string) ?? undefined, tracking: r.label.tracking, labelUrl: r.label.labelUrl };
 }

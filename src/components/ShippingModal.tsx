@@ -178,7 +178,8 @@ export function ShippingModal({ orderId, contact, lang, onClose, onCreated }: {
                   <input type="radio" name="rate" checked={rateId === r.id} onChange={() => setRateId(r.id)} />
                   <span className="grow" style={{ minWidth: 0 }}>
                     <span style={{ display: "block", fontWeight: 700, fontSize: 13.5 }}>{r.carrier}{r.service ? ` · ${r.service}` : ""}</span>
-                    {r.days != null && <span className="t-xs muted">{lang === "es" ? `Entrega estimada: ${r.days} día${r.days === 1 ? "" : "s"}` : `Est. delivery: ${r.days} day${r.days === 1 ? "" : "s"}`}</span>}
+                    {r.eta ? <span className="t-xs muted">{lang === "es" ? `Entrega: ${r.eta}` : `Delivery: ${r.eta}`}</span>
+                      : r.days != null && <span className="t-xs muted">{lang === "es" ? `Entrega estimada: ${r.days} día${r.days === 1 ? "" : "s"}` : `Est. delivery: ${r.days} day${r.days === 1 ? "" : "s"}`}</span>}
                   </span>
                   <span className="mono" style={{ fontWeight: 800 }}>{money(r.total)}</span>
                 </label>
