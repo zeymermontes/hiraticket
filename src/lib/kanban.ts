@@ -13,6 +13,7 @@ export interface KanbanOrder {
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   items: { name: string }[];
+  pending_proof?: boolean; // a customer transfer receipt is awaiting review
 }
 
 export async function getKanbanOrders(businessId: string): Promise<KanbanOrder[]> {
@@ -24,7 +25,11 @@ export async function getKanbanOrders(businessId: string): Promise<KanbanOrder[]
   if (error) ({ data, error } = await supabase.from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) throw new Error(error.message);
-  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as KanbanOrder[];
+  // Orders with a transfer receipt awaiting review (0048).
+  let pendingSet = new Set<string>();
+  const pr = await supabase.from("payment_proofs").select("order_id").eq("business_id", businessId).eq("status", "pending");
+  if (!pr.error) pendingSet = new Set((pr.data ?? []).map((r) => r.order_id as string));
+  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string) })) as unknown as KanbanOrder[];
 }
 
 export interface KanbanItem {

@@ -26,15 +26,39 @@ export async function loadOrderDetail(orderId: string): Promise<OrderDetail | nu
   return getOrderDetail(orderId);
 }
 
-/** Send a payment link to the order's chat. */
+/** Public base URL for the customer-facing checkout page. */
+function appBaseUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "https://app.hiraticket.com").replace(/\/+$/, "");
+}
+
+/** Ensure an order has an unguessable pay_token (generating + persisting one if missing). */
+async function ensurePayToken(supabase: SB, orderId: string, existing: string | null): Promise<string> {
+  if (existing) return existing;
+  const token = "p" + globalThis.crypto.randomUUID().replace(/-/g, "");
+  await supabase.from("orders").update({ pay_token: token }).eq("id", orderId);
+  return token;
+}
+
+/** Get (creating if needed) the public checkout link for an order — for copying to the clipboard. */
+export async function getPayLink(orderId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: order } = await supabase.from("orders").select("pay_token").eq("id", orderId).maybeSingle();
+  if (!order) return null;
+  const token = await ensurePayToken(supabase, orderId, (order.pay_token as string | null) ?? null);
+  return `${appBaseUrl()}/pay/${token}`;
+}
+
+/** Send a payment link (public checkout page) to the order's chat. */
 export async function chargeOrder(orderId: string): Promise<void> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id").eq("id", orderId).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id, pay_token").eq("id", orderId).maybeSingle();
   if (!order?.conversation_id) return;
   const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
   const first = ((contact?.name as string) ?? "").split(" ")[0];
-  const body = `Hola ${first} 👋 aquí está tu link de pago para el pedido ${order.code} por $${Number(order.total).toLocaleString("es-MX")} MXN: pay.hiraticket.com/${String(order.code).toLowerCase()} 💳`;
+  const token = await ensurePayToken(supabase, orderId, (order.pay_token as string | null) ?? null);
+  const link = `${appBaseUrl()}/pay/${token}`;
+  const body = `Hola ${first} 👋 aquí está tu link de pago para el pedido ${order.code} por $${Number(order.total).toLocaleString("es-MX")} MXN: ${link} 💳`;
   await supabase.from("messages").insert({
     business_id: order.business_id, conversation_id: order.conversation_id,
     direction: "out", type: "text", body, author_id: user?.id ?? null, state: "queued",
@@ -92,6 +116,36 @@ export async function markPaid(orderId: string): Promise<void> {
   }
   await supabase.from("orders").update({ pay_status: "paid" }).eq("id", orderId);
   revalidatePath("/orders");
+}
+
+/** Approve or reject a customer-uploaded transfer receipt. Approving records a real payment
+ *  (the proof amount, or the outstanding balance if none was given) and recomputes pay_status. */
+export async function reviewPaymentProof(proofId: string, decision: "approved" | "rejected"): Promise<void> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: proof } = await supabase.from("payment_proofs").select("business_id, order_id, amount, status").eq("id", proofId).maybeSingle();
+  if (!proof || proof.status !== "pending") return;
+  const orderId = proof.order_id as string;
+  const businessId = proof.business_id as string;
+
+  if (decision === "approved") {
+    const { data: order } = await supabase.from("orders").select("total").eq("id", orderId).maybeSingle();
+    const total = Number(order?.total) || 0;
+    const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
+    const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
+    const amount = Number(proof.amount) > 0 ? Number(proof.amount) : Math.max(0, total - paid);
+    if (amount > 0) {
+      await supabase.from("payments").insert({ business_id: businessId, order_id: orderId, amount, method: "transfer", note: "Comprobante aprobado", created_by: user?.id ?? null });
+    }
+    await recomputePayStatus(supabase, orderId, total);
+  }
+
+  await supabase.from("payment_proofs").update({ status: decision, reviewed_by: user?.id ?? null, reviewed_at: new Date().toISOString() }).eq("id", proofId);
+  await supabase.from("events").insert({
+    business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+    kind: decision === "approved" ? "check" : "x", text: decision === "approved" ? "Comprobante de pago aprobado" : "Comprobante de pago rechazado",
+  });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
 }
 
 /** Set a single product's (line item's) production stage, then roll the order's stage up to the

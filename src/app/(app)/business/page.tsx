@@ -30,6 +30,10 @@ export default async function BusinessPage() {
       allowGroups={business.allow_groups ?? false}
       mode={business.mode ?? "business"}
       timezone={business.timezone ?? "America/Mexico_City"}
+      payBranchEnabled={business.pay_branch_enabled ?? false}
+      payTransferEnabled={business.pay_transfer_enabled ?? false}
+      branches={business.branches ?? []}
+      bankAccounts={business.bank_accounts ?? []}
     />
   );
 }

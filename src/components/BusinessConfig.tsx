@@ -9,8 +9,12 @@ import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { ReorderList } from "@/components/ReorderList";
 import {
-  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields,
+  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields, updatePaymentConfig,
 } from "@/app/(app)/business/actions";
+import type { Branch, BankAccount } from "@/lib/types";
+import { DAY_ORDER, DAY_LABEL, defaultHours, normalizeHours, type DayHours } from "@/lib/hours";
+
+const rid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "id-" + Math.random().toString(36).slice(2));
 
 const COLORS: PillColor[] = ["slate", "blue", "violet", "teal", "green", "amber", "red", "brand"];
 
@@ -46,6 +50,7 @@ const TIMEZONES = [
 
 export function BusinessConfig({
   businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
+  payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0,
 }: {
   businessId: string;
   businessName: string;
@@ -60,6 +65,10 @@ export function BusinessConfig({
   allowGroups: boolean;
   mode: "business" | "personal";
   timezone: string;
+  payBranchEnabled: boolean;
+  payTransferEnabled: boolean;
+  branches: Branch[];
+  bankAccounts: BankAccount[];
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -68,6 +77,20 @@ export function BusinessConfig({
   const [newArea, setNewArea] = useState("");
   const [newField, setNewField] = useState("");
   const run = (fn: () => Promise<unknown>) => start(async () => { await fn(); router.refresh(); });
+
+  // Payment config: keep local copies so text edits don't lose focus; each change persists the
+  // whole jsonb list. (Only meaningful in business mode — hidden in personal.)
+  const [branches, setBranches] = useState<Branch[]>(branches0);
+  const [accounts, setAccounts] = useState<BankAccount[]>(bankAccounts0);
+  const saveBranches = (next: Branch[]) => { setBranches(next); start(() => updatePaymentConfig(businessId, { branches: next }).then(() => {})); };
+  const saveAccounts = (next: BankAccount[]) => { setAccounts(next); start(() => updatePaymentConfig(businessId, { bank_accounts: next }).then(() => {})); };
+  const patchBranch = (id: string, p: Partial<Branch>) => saveBranches(branches.map((b) => (b.id === id ? { ...b, ...p } : b)));
+  const patchAccount = (id: string, p: Partial<BankAccount>) => saveAccounts(accounts.map((a) => (a.id === id ? { ...a, ...p } : a)));
+  const setBranchDay = (id: string, wd: number, patch: Partial<DayHours>) => {
+    const b = branches.find((x) => x.id === id);
+    const cur = normalizeHours(b?.hours);
+    patchBranch(id, { hours: cur.map((x, i) => (i === wd ? { ...x, ...patch } : x)) });
+  };
   // Show each timezone's current local time. Compute only after mount (avoids an SSR/client time
   // mismatch) and tick once a minute to keep it fresh.
   const [mounted, setMounted] = useState(false);
@@ -132,6 +155,114 @@ export function BusinessConfig({
             </div>
           </div>
         </section>
+
+        {/* Customer payments — business mode only (personal has no money). */}
+        {mode !== "personal" && (
+        <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+          <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos del cliente" : "Customer payments"}</h4></div>
+          <div className="ws-block-body col gap-3">
+            <p className="muted t-sm">{lang === "es" ? "Métodos que verá el cliente al abrir su link de pago." : "Methods the customer sees when they open their payment link."}</p>
+
+            {/* Pay at branch */}
+            <div className="col gap-2" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="row gap-2" style={{ alignItems: "flex-start" }}>
+                <div className="grow">
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Pago en sucursal" : "Pay at branch"}</div>
+                  <div className="t-xs muted">{lang === "es" ? "El cliente ve tus sucursales y su ubicación para pagar en persona." : "The customer sees your branches and their location to pay in person."}</div>
+                </div>
+                <button className={"chip" + (payBranchEnabled ? " on" : "")} onClick={() => run(() => updatePaymentConfig(businessId, { pay_branch_enabled: !payBranchEnabled }))}>
+                  {payBranchEnabled ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
+                </button>
+              </div>
+              {payBranchEnabled && (
+                <div className="col gap-2">
+                  {branches.map((b) => (
+                    <div key={b.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                      <div className="row gap-2">
+                        <input className="inp-inline grow" defaultValue={b.name} placeholder={lang === "es" ? "Nombre de la sucursal" : "Branch name"} onBlur={(e) => { if (e.target.value !== b.name) patchBranch(b.id, { name: e.target.value }); }} />
+                        <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => saveBranches(branches.filter((x) => x.id !== b.id))}><Icon name="x" size={15} /></button>
+                      </div>
+                      <input className="inp-inline" defaultValue={b.address} placeholder={lang === "es" ? "Dirección" : "Address"} onBlur={(e) => { if (e.target.value !== b.address) patchBranch(b.id, { address: e.target.value }); }} />
+                      <div className="row gap-2">
+                        <input className="inp-inline grow" defaultValue={b.maps_url ?? ""} placeholder={lang === "es" ? "Link de Maps (opcional)" : "Maps link (optional)"} onBlur={(e) => { if (e.target.value !== (b.maps_url ?? "")) patchBranch(b.id, { maps_url: e.target.value }); }} />
+                        <input className="inp-inline" style={{ width: 150 }} defaultValue={b.phone ?? ""} placeholder={lang === "es" ? "Teléfono" : "Phone"} onBlur={(e) => { if (e.target.value !== (b.phone ?? "")) patchBranch(b.id, { phone: e.target.value }); }} />
+                      </div>
+                      <div className="col gap-1" style={{ marginTop: 4 }}>
+                        <label className="lbl" style={{ margin: "2px 0" }}>{lang === "es" ? "Horario de atención" : "Business hours"}</label>
+                        {DAY_ORDER.map((wd) => {
+                          const d = normalizeHours(b.hours)[wd];
+                          return (
+                            <div key={wd} className="row gap-2" style={{ alignItems: "center" }}>
+                              <span style={{ width: 32, fontSize: 13, fontWeight: 600, flex: "none" }}>{DAY_LABEL[wd][lang === "es" ? "es" : "en"]}</span>
+                              <label className="row gap-1" style={{ alignItems: "center", cursor: "pointer", width: 74, flex: "none" }}>
+                                <input type="checkbox" checked={d.open} onChange={(e) => setBranchDay(b.id, wd, { open: e.target.checked })} />
+                                <span className="t-xs">{lang === "es" ? "Abierto" : "Open"}</span>
+                              </label>
+                              {d.open ? (
+                                <>
+                                  <input className="inp-inline" style={{ minWidth: 0, flex: 1 }} type="time" value={d.from} onChange={(e) => setBranchDay(b.id, wd, { from: e.target.value })} />
+                                  <span className="muted">–</span>
+                                  <input className="inp-inline" style={{ minWidth: 0, flex: 1 }} type="time" value={d.to} onChange={(e) => setBranchDay(b.id, wd, { to: e.target.value })} />
+                                </>
+                              ) : <span className="t-xs muted grow">{lang === "es" ? "Cerrado" : "Closed"}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => saveBranches([...branches, { id: rid(), name: "", address: "", hours: defaultHours() }])}><Icon name="plus" size={14} />{lang === "es" ? "Agregar sucursal" : "Add branch"}</button>
+                </div>
+              )}
+            </div>
+
+            {/* Bank transfer */}
+            <div className="col gap-2" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="row gap-2" style={{ alignItems: "flex-start" }}>
+                <div className="grow">
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Transferencia" : "Bank transfer"}</div>
+                  <div className="t-xs muted">{lang === "es" ? "El cliente ve tus cuentas y sube el comprobante (queda en revisión hasta que lo apruebes)." : "The customer sees your accounts and uploads a receipt (pending your review)."}</div>
+                </div>
+                <button className={"chip" + (payTransferEnabled ? " on" : "")} onClick={() => run(() => updatePaymentConfig(businessId, { pay_transfer_enabled: !payTransferEnabled }))}>
+                  {payTransferEnabled ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
+                </button>
+              </div>
+              {payTransferEnabled && (
+                <div className="col gap-2">
+                  {accounts.map((a) => (
+                    <div key={a.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                      <div className="row gap-2">
+                        <input className="inp-inline grow" defaultValue={a.bank} placeholder={lang === "es" ? "Banco" : "Bank"} onBlur={(e) => { if (e.target.value !== a.bank) patchAccount(a.id, { bank: e.target.value }); }} />
+                        <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => saveAccounts(accounts.filter((x) => x.id !== a.id))}><Icon name="x" size={15} /></button>
+                      </div>
+                      <input className="inp-inline" defaultValue={a.holder} placeholder={lang === "es" ? "Titular de la cuenta" : "Account holder"} onBlur={(e) => { if (e.target.value !== a.holder) patchAccount(a.id, { holder: e.target.value }); }} />
+                      <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+                        <input className="inp-inline grow" style={{ minWidth: 120 }} defaultValue={a.account ?? ""} placeholder={lang === "es" ? "Número de cuenta" : "Account number"} onBlur={(e) => { if (e.target.value !== (a.account ?? "")) patchAccount(a.id, { account: e.target.value }); }} />
+                        <input className="inp-inline grow" style={{ minWidth: 120 }} defaultValue={a.clabe ?? ""} placeholder="CLABE" onBlur={(e) => { if (e.target.value !== (a.clabe ?? "")) patchAccount(a.id, { clabe: e.target.value }); }} />
+                        <input className="inp-inline grow" style={{ minWidth: 120 }} defaultValue={a.card ?? ""} placeholder={lang === "es" ? "Tarjeta" : "Card"} onBlur={(e) => { if (e.target.value !== (a.card ?? "")) patchAccount(a.id, { card: e.target.value }); }} />
+                      </div>
+                      {!(a.account?.trim() || a.clabe?.trim() || a.card?.trim()) && (
+                        <span className="t-xs" style={{ color: "var(--red)" }}>{lang === "es" ? "Agrega al menos uno: cuenta, CLABE o tarjeta." : "Add at least one: account, CLABE or card."}</span>
+                      )}
+                      <input className="inp-inline" defaultValue={a.note ?? ""} placeholder={lang === "es" ? "Nota (opcional)" : "Note (optional)"} onBlur={(e) => { if (e.target.value !== (a.note ?? "")) patchAccount(a.id, { note: e.target.value }); }} />
+                    </div>
+                  ))}
+                  <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => saveAccounts([...accounts, { id: rid(), bank: "", holder: "" }])}><Icon name="plus" size={14} />{lang === "es" ? "Agregar cuenta" : "Add account"}</button>
+                </div>
+              )}
+            </div>
+
+            {/* Gateway — coming soon */}
+            <div className="row gap-2" style={{ alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Pago con tarjeta (pasarela)" : "Card payment (gateway)"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Cobro con proveedor externo." : "Charge via an external provider."}</div>
+              </div>
+              <Pill color="slate">{lang === "es" ? "Próximamente" : "Coming soon"}</Pill>
+            </div>
+          </div>
+        </section>
+        )}
 
         {/* Stages */}
         <section className="ws-block">

@@ -1,5 +1,28 @@
+import type { DayHours } from "./hours";
+
 export type PillColor =
   | "brand" | "blue" | "violet" | "teal" | "green" | "amber" | "red" | "slate";
+
+/** A physical branch the customer can pay at in person. */
+export interface Branch {
+  id: string;
+  name: string;
+  address: string;
+  maps_url?: string; // Google Maps / location link
+  phone?: string;
+  hours?: DayHours[]; // per-day opening hours (index 0=Sun..6=Sat)
+}
+
+/** A bank account / card the customer can transfer to. At least one of account/clabe/card is required. */
+export interface BankAccount {
+  id: string;
+  bank: string;
+  holder: string; // account holder name
+  account?: string; // número de cuenta
+  clabe?: string; // CLABE
+  card?: string; // card number
+  note?: string;
+}
 
 export interface Business {
   id: string;
@@ -13,6 +36,10 @@ export interface Business {
   mode: "business" | "personal"; // 'personal' → tasks/subtasks, no prices/payments
   allow_groups: boolean; // opt-in: show/reply to WhatsApp group chats (chat-only, no orders)
   timezone: string; // IANA tz (e.g. America/Mexico_City) — used by schedule-based flows
+  branches: Branch[]; // physical locations (pay in person)
+  bank_accounts: BankAccount[]; // transfer destinations
+  pay_branch_enabled: boolean; // offer "pay at branch" on the checkout page
+  pay_transfer_enabled: boolean; // offer "bank transfer" on the checkout page
 }
 
 export interface OrderRow {
@@ -29,6 +56,7 @@ export interface OrderRow {
   area: { name: string; color: string } | null;
   contact: { name: string } | null;
   items: { name: string }[];
+  pending_proof?: boolean; // a customer transfer receipt is awaiting review
 }
 
 /** A deadline that has passed and the work isn't done yet. */

@@ -16,7 +16,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
 import { removeContactTag } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
@@ -54,6 +54,8 @@ export function OrderDrawer({
   const [editItems, setEditItems] = useState(false);
   const [newItem, setNewItem] = useState({ name: "", qty: "1", price: "" });
   const [payAmount, setPayAmount] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyPayLink = async () => { const url = await getPayLink(detail.id); if (!url) return; try { await navigator.clipboard.writeText(url); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500); } catch {} };
   const [xfer, setXfer] = useState(false);
   const [advanceMenu, setAdvanceMenu] = useState(false);
   const [stagePrompt, setStagePrompt] = useState<Stage | null>(null); // pending target stage awaiting the subtask-sync choice
@@ -249,7 +251,7 @@ export function OrderDrawer({
           {/* payment */}
           {!personal && (
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4><Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4>{detail.proofs.some((p) => p.status === "pending") && <Pill color="violet" dot><Icon name="clock" size={11} />{lang === "es" ? "En revisión" : "In review"}</Pill>}<Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
             <div style={{ padding: "12px 14px" }} className="col gap-2">
               <div className="col gap-1">
                 <div className="kv"><span className="k">{lang === "es" ? "Total" : "Total"}</span><span className="v mono">${formatMoney(detail.total)}</span></div>
@@ -273,6 +275,38 @@ export function OrderDrawer({
                 </div>
               )}
 
+              {detail.proofs.length > 0 && (
+                <div className="col gap-2" style={{ paddingTop: 4, borderTop: "1px solid var(--border)" }}>
+                  <div className="t-xs muted" style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{lang === "es" ? "Comprobantes de transferencia" : "Transfer receipts"}</div>
+                  {detail.proofs.map((pf) => {
+                    const isImg = (pf.image_mime ?? "").startsWith("image/");
+                    return (
+                      <div key={pf.id} className="row gap-2" style={{ alignItems: "flex-start", padding: "8px", borderRadius: 10, border: "1px solid var(--border)", background: pf.status === "pending" ? "var(--brand-50)" : "var(--surface)" }}>
+                        <a href={pf.image_url} target="_blank" rel="noreferrer" style={{ flex: "none" }}>
+                          {isImg
+                            ? <img src={pf.image_url} alt="comprobante" style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />
+                            : <span style={{ width: 52, height: 52, borderRadius: 8, border: "1px solid var(--border)", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--surface-2)" }}><Icon name="file" size={20} /></span>}
+                        </a>
+                        <div className="grow" style={{ minWidth: 0 }}>
+                          <div className="row gap-1" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                            {pf.amount != null && <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(pf.amount)}</span>}
+                            <Pill color={pf.status === "approved" ? "green" : pf.status === "rejected" ? "red" : "violet"} dot>{pf.status === "approved" ? (lang === "es" ? "Aprobado" : "Approved") : pf.status === "rejected" ? (lang === "es" ? "Rechazado" : "Rejected") : (lang === "es" ? "Por revisar" : "To review")}</Pill>
+                          </div>
+                          {pf.payer_note && <div className="t-xs muted truncate">{pf.payer_note}</div>}
+                          <div className="t-xs muted">{(pf.account_ref ? pf.account_ref + " · " : "") + new Date(pf.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+                          {pf.status === "pending" && (
+                            <div className="row gap-2" style={{ marginTop: 6 }}>
+                              <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => run(() => reviewPaymentProof(pf.id, "approved"))}><Icon name="check" size={13} />{lang === "es" ? "Aprobar" : "Approve"}</button>
+                              <button className="btn btn-sm btn-outline" disabled={pending} onClick={() => run(() => reviewPaymentProof(pf.id, "rejected"))}><Icon name="x" size={13} />{lang === "es" ? "Rechazar" : "Reject"}</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {detail.pay_status !== "paid" && (
                 <div className="row gap-2" style={{ alignItems: "center" }}>
                   <div className="field field-sm field-filled grow"><span className="t-sm muted">$</span><input type="number" min={0} placeholder={lang === "es" ? "Monto del pago" : "Payment amount"} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} /></div>
@@ -282,8 +316,9 @@ export function OrderDrawer({
 
               <div className="row gap-2">
                 <button className="btn btn-sm btn-outline grow" disabled={pending || !detail.conversation_id} onClick={() => run(() => chargeOrder(detail.id))}><Icon name="send" size={14} />{lang === "es" ? "Enviar link de pago" : "Send pay link"}</button>
-                {detail.pay_status !== "paid" && <button className="btn btn-sm btn-primary grow" disabled={pending} onClick={() => run(() => markPaid(detail.id))}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>}
+                <button className="btn btn-sm btn-outline" onClick={copyPayLink} title={lang === "es" ? "Copiar link de pago" : "Copy pay link"}><Icon name={linkCopied ? "check" : "file"} size={14} />{linkCopied ? (lang === "es" ? "Copiado" : "Copied") : (lang === "es" ? "Copiar link" : "Copy link")}</button>
               </div>
+              {detail.pay_status !== "paid" && <button className="btn btn-sm btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={pending} onClick={() => run(() => markPaid(detail.id))}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>}
             </div>
           </div>
           )}

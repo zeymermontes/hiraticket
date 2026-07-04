@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
-const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico"];
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico", "/pay"];
 
 // Where authenticated users land — the native app home.
 const APP_HOME = "/chat";

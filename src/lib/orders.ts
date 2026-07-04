@@ -4,10 +4,12 @@ export interface OrderItem { id: string; name: string; qty: number; unit_price: 
 export interface OrderNote { id: string; body: string; author_id: string | null; created_at: string; item_id: string | null }
 export interface OrderEvent { id: string; kind: string; text: string | null; created_at: string; actor_id: string | null }
 export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string }
+export interface PaymentProof { id: string; method: string; account_ref: string | null; image_url: string; image_mime: string | null; amount: number | null; payer_note: string | null; status: string; reviewed_by: string | null; created_at: string }
 
 export interface OrderDetail {
   id: string;
   code: string;
+  pay_token: string | null;
   total: number;
   priority: string;
   pay_status: string;
@@ -25,6 +27,7 @@ export interface OrderDetail {
   notes: OrderNote[];
   events: OrderEvent[];
   payments: OrderPayment[];
+  proofs: PaymentProof[];
   paid: number;
   product_stages: boolean;
 }
@@ -35,16 +38,19 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // Cascade fallbacks: product_stages join (0019) and due_at (0029) may not be applied yet.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let order: any, orderErr: unknown;
-  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  // pay_token (0048) is optional — keep it in the first two attempts, drop it in the last two.
+  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ")).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order } = await supabase.from("orders").select(base("")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
-  const [itemsRes, notesRes, { data: events }, payRes] = await Promise.all([
+  const [itemsRes, notesRes, { data: events }, payRes, proofRes] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, note, stage:stages(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at, item_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
     supabase.from("events").select("id, kind, text, created_at, actor_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payments").select("id, amount, method, note, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("payment_proofs").select("id, method, account_ref, image_url, image_mime, amount, payer_note, status, reviewed_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
   ]);
   // Fall back to base item columns if stage_id/stage isn't available yet.
   let items = itemsRes.data;
@@ -61,9 +67,12 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // payments table may not exist yet (0025 not applied).
   const payments = (payRes.error ? [] : (payRes.data ?? [])) as unknown as OrderPayment[];
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  // payment_proofs table may not exist yet (0048 not applied).
+  const proofs = (proofRes.error ? [] : (proofRes.data ?? [])) as unknown as PaymentProof[];
 
   return {
-    ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "paid" | "contact" | "stage" | "area">),
+    ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "proofs" | "paid" | "contact" | "stage" | "area">),
+    pay_token: ((order as { pay_token?: string | null }).pay_token) ?? null,
     due_at: ((order as { due_at?: string | null }).due_at) ?? null,
     contact: order.contact as unknown as OrderDetail["contact"],
     stage: order.stage as unknown as OrderDetail["stage"],
@@ -72,6 +81,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     notes: (notes ?? []) as OrderNote[],
     events: (events ?? []) as OrderEvent[],
     payments,
+    proofs,
     paid,
     product_stages: ((order.business as unknown as { product_stages?: boolean } | null)?.product_stages) ?? false,
   };

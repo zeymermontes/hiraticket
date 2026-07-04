@@ -234,7 +234,7 @@ export function OrdersTable({
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
                 <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
-                {!personal && <td><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span></td>}
+                {!personal && <td><div className="row gap-1" style={{ alignItems: "center" }}><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span>{o.pending_proof && <Pill color="violet" dot title={lang === "es" ? "Comprobante por revisar" : "Receipt to review"}><Icon name="clock" size={10} /></Pill>}</div></td>}
                 <td className="t-sm">{o.due_at ? <span className="row gap-1" style={{ color: overdue ? "var(--red)" : "var(--text-muted)", fontWeight: overdue ? 700 : 400 }}>{overdue && <Icon name="clock" size={12} />}{relDate(o.due_at)}</span> : <span className="muted">—</span>}</td>
                 <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
                 {trashView ? (

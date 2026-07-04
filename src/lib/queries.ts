@@ -15,18 +15,30 @@ export async function getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled`)
     .eq("id", bizId).maybeSingle();
   if (error) {
-    // timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
-    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`).eq("id", bizId).maybeSingle();
+    // payment columns (0048) / timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
+    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone`).eq("id", bizId).maybeSingle();
+    if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(BASE).eq("id", bizId).maybeSingle();
     data = r.data as typeof data;
   }
   if (!data) return null;
   const d = data as Record<string, unknown>;
-  return { ...d, product_stages: (d.product_stages as boolean) ?? false, show_typing: (d.show_typing as boolean) ?? true, mode: ((d.mode as string) === "personal" ? "personal" : "business"), allow_groups: (d.allow_groups as boolean) ?? false, timezone: (d.timezone as string) || "America/Mexico_City" } as Business;
+  return {
+    ...d,
+    product_stages: (d.product_stages as boolean) ?? false,
+    show_typing: (d.show_typing as boolean) ?? true,
+    mode: ((d.mode as string) === "personal" ? "personal" : "business"),
+    allow_groups: (d.allow_groups as boolean) ?? false,
+    timezone: (d.timezone as string) || "America/Mexico_City",
+    branches: (d.branches as Business["branches"]) ?? [],
+    bank_accounts: (d.bank_accounts as Business["bank_accounts"]) ?? [],
+    pay_branch_enabled: (d.pay_branch_enabled as boolean) ?? false,
+    pay_transfer_enabled: (d.pay_transfer_enabled as boolean) ?? false,
+  } as Business;
 }
 
 export async function getOrders(businessId: string): Promise<OrderRow[]> {
@@ -39,7 +51,11 @@ export async function getOrders(businessId: string): Promise<OrderRow[]> {
   if (error) ({ data, error } = await supabase.from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
   if (error) throw new Error(error.message);
-  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
+  // Orders with a transfer receipt awaiting review (0048) → surface an "en revisión" flag.
+  let pendingSet = new Set<string>();
+  const pr = await supabase.from("payment_proofs").select("order_id").eq("business_id", businessId).eq("status", "pending");
+  if (!pr.error) pendingSet = new Set((pr.data ?? []).map((r) => r.order_id as string));
+  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string) })) as unknown as OrderRow[];
 }
 
 /** Soft-deleted orders for the trash view (empty if the 0039 column isn't applied yet). */

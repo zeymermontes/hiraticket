@@ -76,3 +76,18 @@ export async function setCustomFields(businessId: string, fields: string[]) {
   await supabase.from("businesses").update({ custom_fields: fields }).eq("id", businessId);
   revalidateAll();
 }
+
+import type { Branch, BankAccount } from "@/lib/types";
+
+/** Update the customer-payment config (which methods are offered + branch/account lists). */
+export async function updatePaymentConfig(
+  businessId: string,
+  patch: { pay_branch_enabled?: boolean; pay_transfer_enabled?: boolean; branches?: Branch[]; bank_accounts?: BankAccount[] },
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("businesses").update(patch).eq("id", businessId).select("id");
+  revalidateAll();
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: "no-permission" };
+  return { ok: true };
+}
