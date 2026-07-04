@@ -15,11 +15,12 @@ export async function getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate`)
     .eq("id", bizId).maybeSingle();
   if (error) {
-    // payment columns (0048) / timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
-    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone`).eq("id", bizId).maybeSingle();
+    // invoice (0050) / payment columns (0048) / timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
+    let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled`).eq("id", bizId).maybeSingle();
+    if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(BASE).eq("id", bizId).maybeSingle();
@@ -38,6 +39,8 @@ export async function getMyBusiness(): Promise<Business | null> {
     bank_accounts: (d.bank_accounts as Business["bank_accounts"]) ?? [],
     pay_branch_enabled: (d.pay_branch_enabled as boolean) ?? false,
     pay_transfer_enabled: (d.pay_transfer_enabled as boolean) ?? false,
+    invoice_add_tax: (d.invoice_add_tax as boolean) ?? true,
+    invoice_tax_rate: Number(d.invoice_tax_rate ?? 16),
   } as Business;
 }
 

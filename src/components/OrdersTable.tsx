@@ -28,7 +28,7 @@ function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
 }
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts,
+  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice,
 }: {
   rows: OrderRow[];
   objectName: string;
@@ -43,6 +43,7 @@ export function OrdersTable({
   connected: boolean;
   products: Product[];
   contacts: { id: string; name: string }[];
+  invoice?: { add: boolean; rate: number };
 }) {
   const { t, lang, personal } = useApp();
   const router = useRouter();
@@ -277,6 +278,7 @@ export function OrdersTable({
           defaultContact={defaultContact}
           products={products}
           contacts={contacts}
+          invoice={invoice}
           onClose={() => setShowNew(false)}
         />
       )}
@@ -317,7 +319,7 @@ export function OrdersTable({
 }
 
 export function NewOrderModal({
-  businessId, areas, stages, onClose, defaultContact, products, contacts, embedded, onCreated,
+  businessId, areas, stages, onClose, defaultContact, products, contacts, embedded, onCreated, invoice,
 }: {
   businessId: string;
   areas: Area[];
@@ -328,6 +330,7 @@ export function NewOrderModal({
   contacts: { id: string; name: string }[];
   embedded?: boolean;       // render over the chat center column (keep the thread readable)
   onCreated?: () => void;   // called after create instead of router.refresh (e.g. soft refresh)
+  invoice?: { add: boolean; rate: number }; // "Requiere factura" config (adds IVA to the total)
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -340,7 +343,10 @@ export function NewOrderModal({
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [dueAt, setDueAt] = useState("");
   const [orderNote, setOrderNote] = useState("");
+  const [needsInvoice, setNeedsInvoice] = useState(false);
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  const taxRate = needsInvoice && invoice?.add ? (invoice.rate || 0) : 0;
+  const tax = Math.round(subtotal * (taxRate / 100) * 100) / 100;
   const hasItem = lines.some((l) => l.item.trim());
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => {
@@ -375,6 +381,7 @@ export function NewOrderModal({
         areaId: areaId || null, stageId: stageId || null, priority,
         dueAt: dueAt ? new Date(dueAt).toISOString() : null,
         note: orderNote,
+        requiresInvoice: needsInvoice,
       });
       onClose();
       if (onCreated) onCreated(); else router.refresh();
@@ -416,6 +423,33 @@ export function NewOrderModal({
             })}
             <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => addLine()}><Icon name="plus" size={14} />{personal ? (lang === "es" ? "Agregar subtarea" : "Add subtask") : (lang === "es" ? "Agregar producto" : "Add product")}</button>
           </div>
+          {!personal && (
+            <label className="row gap-2" style={{ alignItems: "center", cursor: "pointer", paddingTop: 6 }}>
+              <input type="checkbox" checked={needsInvoice} onChange={(e) => setNeedsInvoice(e.target.checked)} />
+              <span className="t-sm" style={{ fontWeight: 600 }}>{lang === "es" ? "Requiere factura" : "Needs invoice"}</span>
+              {needsInvoice && invoice?.add && <Pill color="violet">+{invoice.rate}% IVA</Pill>}
+            </label>
+          )}
+          {!personal && (
+            <div className="col gap-1" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", paddingBottom: 10 }}>
+              {taxRate > 0 && (
+                <>
+                  <div className="row" style={{ alignItems: "center" }}>
+                    <span className="grow t-sm muted">Subtotal</span>
+                    <span className="mono t-sm">${formatMoney(subtotal)}</span>
+                  </div>
+                  <div className="row" style={{ alignItems: "center" }}>
+                    <span className="grow t-sm muted">IVA {taxRate}%</span>
+                    <span className="mono t-sm">${formatMoney(tax)}</span>
+                  </div>
+                </>
+              )}
+              <div className="row" style={{ alignItems: "center" }}>
+                <span className="grow" style={{ fontWeight: 700 }}>Total</span>
+                <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal + tax)}</span>
+              </div>
+            </div>
+          )}
           <div className="row gap-2">
             <div className="grow"><label className="lbl">{lang === "es" ? "Etapa" : "Stage"}</label>
               <select className="select" style={{ width: "100%" }} value={stageId} onChange={(e) => setStageId(e.target.value)}>{stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
@@ -435,12 +469,6 @@ export function NewOrderModal({
           <div className="grow"><label className="lbl">{personal ? (lang === "es" ? "Nota de la tarea (opcional)" : "Task note (optional)") : (lang === "es" ? "Nota del pedido (opcional)" : "Order note (optional)")}</label>
             <textarea className="inp-inline" style={{ width: "100%", minHeight: 54, resize: "vertical", paddingTop: 6 }} value={orderNote} onChange={(e) => setOrderNote(e.target.value)} placeholder={lang === "es" ? "Detalles, instrucciones…" : "Details, instructions…"} />
           </div>
-          {!personal && (
-            <div className="row" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", alignItems: "center" }}>
-              <span className="grow" style={{ fontWeight: 700 }}>Total</span>
-              <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal)}</span>
-            </div>
-          )}
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>

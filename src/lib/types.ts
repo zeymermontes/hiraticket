@@ -40,6 +40,8 @@ export interface Business {
   bank_accounts: BankAccount[]; // transfer destinations
   pay_branch_enabled: boolean; // offer "pay at branch" on the checkout page
   pay_transfer_enabled: boolean; // offer "bank transfer" on the checkout page
+  invoice_add_tax: boolean; // checking "Requiere factura" adds tax to the order total
+  invoice_tax_rate: number; // % applied when it does (default 16 — IVA MX)
 }
 
 export interface OrderRow {

@@ -50,7 +50,7 @@ const TIMEZONES = [
 
 export function BusinessConfig({
   businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
-  payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0,
+  payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0, invoiceAddTax, invoiceTaxRate,
 }: {
   businessId: string;
   businessName: string;
@@ -69,6 +69,8 @@ export function BusinessConfig({
   payTransferEnabled: boolean;
   branches: Branch[];
   bankAccounts: BankAccount[];
+  invoiceAddTax: boolean;
+  invoiceTaxRate: number;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -250,6 +252,24 @@ export function BusinessConfig({
                   <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} onClick={() => saveAccounts([...accounts, { id: rid(), bank: "", holder: "" }])}><Icon name="plus" size={14} />{lang === "es" ? "Agregar cuenta" : "Add account"}</button>
                 </div>
               )}
+            </div>
+
+            {/* Invoice / IVA */}
+            <div className="row gap-2" style={{ alignItems: "flex-start", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Requiere factura suma IVA" : "“Needs invoice” adds tax"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Al marcar “Requiere factura” en un pedido nuevo, el IVA se suma al total." : "Checking “Needs invoice” on a new order adds the tax to its total."}</div>
+              </div>
+              {invoiceAddTax && (
+                <div className="row gap-1" style={{ alignItems: "center" }}>
+                  <input className="inp-inline mono" style={{ width: 64, textAlign: "right" }} type="number" min={0} max={99} step="0.5" defaultValue={String(invoiceTaxRate)}
+                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== invoiceTaxRate) run(() => updateBusinessProfile(businessId, { invoice_tax_rate: v })); }} />
+                  <span className="t-sm muted">%</span>
+                </div>
+              )}
+              <button className={"chip" + (invoiceAddTax ? " on" : "")} onClick={() => run(() => updateBusinessProfile(businessId, { invoice_add_tax: !invoiceAddTax }))}>
+                {invoiceAddTax ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
+              </button>
             </div>
 
             {/* Gateway — coming soon */}

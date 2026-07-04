@@ -46,6 +46,7 @@ export default async function OrdersPage({
       connected={connected}
       products={products}
       contacts={(contacts ?? []) as { id: string; name: string }[]}
+      invoice={{ add: business.invoice_add_tax ?? true, rate: business.invoice_tax_rate ?? 16 }}
     />
   );
 }

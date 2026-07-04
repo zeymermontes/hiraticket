@@ -212,6 +212,7 @@ export function OrderDrawer({
           {/* line items */}
           <div className="ws-block">
             <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Subtareas" : "Subtasks") : (lang === "es" ? "Artículos del pedido" : "Line items")}</h4>
+              {!personal && detail.requires_invoice && <Pill color="violet"><Icon name="file" size={11} />{lang === "es" ? "Factura" : "Invoice"}</Pill>}
               <button className={"btn btn-sm " + (editItems ? "btn-primary" : "btn-outline")} onClick={() => setEditItems((v) => !v)}><Icon name={editItems ? "check" : "edit"} size={13} />{editItems ? (lang === "es" ? "Listo" : "Done") : (lang === "es" ? "Editar" : "Edit")}</button>
             </div>
             <div style={{ padding: "4px 14px 12px" }}>
@@ -256,12 +257,24 @@ export function OrderDrawer({
               {!personal && (() => {
                 // Live preview while editing: sum the current lines plus the not-yet-added draft row,
                 // so the total tracks every keystroke instead of waiting for the server refetch.
+                // Orders that require an invoice carry their frozen IVA rate — show the breakdown.
                 const draft = editItems ? (Number(newItem.qty) || 0) * (Number(newItem.price) || 0) : 0;
-                const liveTotal = editItems ? detail.items.reduce((s, it) => s + it.subtotal, 0) + draft : detail.total;
+                const base = detail.items.reduce((s, it) => s + it.subtotal, 0) + draft;
+                const rate = detail.requires_invoice ? Number(detail.tax_rate ?? 0) : 0;
+                const tax = editItems || rate === 0 ? Math.round(base * (rate / 100) * 100) / 100 : Math.max(0, detail.total - base);
+                const liveTotal = editItems ? Math.round((base + tax) * 100) / 100 : detail.total;
                 return (
-                  <div className="row" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
-                    <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
-                    <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(liveTotal)}</span>
+                  <div className="col gap-1" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
+                    {rate > 0 && (
+                      <>
+                        <div className="row"><span className="grow t-sm muted">Subtotal</span><span className="mono t-sm">${formatMoney(base)}</span></div>
+                        <div className="row"><span className="grow t-sm muted">IVA {rate}%</span><span className="mono t-sm">${formatMoney(tax)}</span></div>
+                      </>
+                    )}
+                    <div className="row">
+                      <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>
+                      <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(liveTotal)}</span>
+                    </div>
                   </div>
                 );
               })()}

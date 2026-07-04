@@ -518,7 +518,7 @@ function lockConfirmOpts(agentName: string, lang: "es" | "en"): ConfirmOpts {
 }
 
 export function ChatScreen({
-  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice,
 }: {
   list: ConvListItem[];
   detail: ConvDetail | null;
@@ -530,6 +530,7 @@ export function ChatScreen({
   meId: string;
   businessId: string;
   connected: boolean;
+  invoice?: { add: boolean; rate: number };
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -1017,7 +1018,7 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId}
             onAccepted={(id) => { setTab("mine"); setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d)); setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c))); }} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
@@ -1863,7 +1864,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -2103,7 +2104,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       )}
       {showNewTask && (
         <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={products} contacts={[]}
-          defaultContact={detail.contact?.name ?? ""}
+          defaultContact={detail.contact?.name ?? ""} invoice={invoice}
           onClose={() => setShowNewTask(false)} onCreated={() => { setShowNewTask(false); refresh(); }} />
       )}
     </div>

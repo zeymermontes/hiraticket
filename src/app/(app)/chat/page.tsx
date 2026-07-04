@@ -48,6 +48,7 @@ export default async function ChatPage({
       meId={user!.id}
       businessId={business.id}
       connected={isConnected(sessions)}
+      invoice={{ add: business.invoice_add_tax ?? true, rate: business.invoice_tax_rate ?? 16 }}
     />
   );
 }

@@ -260,10 +260,14 @@ export async function bulkMoveOrderStage(orderIds: string[], stageId: string): P
   return { flows: [...fired] };
 }
 
-/** order.total := sum of its line-item subtotals. */
+/** order.total := sum of its line-item subtotals (+ the order's IVA when it requires an invoice,
+ *  using the rate frozen on the order at creation — editing items must not drop the tax). */
 async function recomputeOrderTotal(supabase: SB, orderId: string): Promise<void> {
   const { data: items } = await supabase.from("order_items").select("subtotal").eq("order_id", orderId);
-  const total = (items ?? []).reduce((s: number, i: { subtotal: number }) => s + (Number(i.subtotal) || 0), 0);
+  const base = (items ?? []).reduce((s: number, i: { subtotal: number }) => s + (Number(i.subtotal) || 0), 0);
+  let total = base;
+  const { data: o } = await supabase.from("orders").select("requires_invoice, tax_rate").eq("id", orderId).maybeSingle();
+  if (o?.requires_invoice && Number(o.tax_rate) > 0) total = Math.round(base * (1 + Number(o.tax_rate) / 100) * 100) / 100; // 0050 not applied → o is null-ish, plain sum
   await supabase.from("orders").update({ total }).eq("id", orderId);
 }
 
@@ -334,6 +338,7 @@ interface NewOrder {
   priority?: string;
   dueAt?: string | null;
   note?: string;
+  requiresInvoice?: boolean; // "Requiere factura" — adds the business's IVA to the total (if enabled)
 }
 
 /** Create an order (and its contact if new) from the New Order modal. */
@@ -363,9 +368,18 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
 
   const lines = (input.items ?? []).filter((l) => (l.item ?? "").trim() || l.qty || l.price);
   if (lines.length === 0) lines.push({ item: "Artículo", qty: 1, price: 0 });
-  const total = lines.reduce((s, l) => s + (l.qty || 1) * (l.price || 0), 0);
+  const base = lines.reduce((s, l) => s + (l.qty || 1) * (l.price || 0), 0);
 
-  const { data: order } = await supabase.from("orders").insert({
+  // "Requiere factura" → add the business's IVA (rate frozen on the order so later config changes
+  // don't rewrite old totals). Columns are 0050 — resilient if not applied yet.
+  let taxRate = 0;
+  if (input.requiresInvoice) {
+    const { data: biz } = await supabase.from("businesses").select("invoice_add_tax, invoice_tax_rate").eq("id", businessId).maybeSingle();
+    if ((biz as { invoice_add_tax?: boolean } | null)?.invoice_add_tax ?? false) taxRate = Number((biz as { invoice_tax_rate?: number } | null)?.invoice_tax_rate ?? 16);
+  }
+  const total = taxRate > 0 ? Math.round(base * (1 + taxRate / 100) * 100) / 100 : base;
+
+  const orderRow = {
     business_id: businessId,
     code,
     contact_id: contact!.id,
@@ -375,7 +389,9 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     assignee_id: user?.id ?? null,
     priority: input.priority ?? "normal",
     total,
-  }).select("id").single();
+  };
+  let { data: order } = await supabase.from("orders").insert({ ...orderRow, requires_invoice: !!input.requiresInvoice, tax_rate: taxRate > 0 ? taxRate : null }).select("id").single();
+  if (!order) ({ data: order } = await supabase.from("orders").insert(orderRow).select("id").single()); // 0050 not applied yet
 
   if (order) {
     if (input.dueAt) await supabase.from("orders").update({ due_at: input.dueAt }).eq("id", order.id); // best-effort (0029)

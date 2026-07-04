@@ -11,6 +11,8 @@ export interface OrderDetail {
   code: string;
   pay_token: string | null;
   total: number;
+  requires_invoice: boolean;
+  tax_rate: number | null; // IVA % frozen on the order at creation (null = none)
   priority: string;
   pay_status: string;
   created_at: string;
@@ -38,8 +40,9 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // Cascade fallbacks: product_stages join (0019) and due_at (0029) may not be applied yet.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let order: any, orderErr: unknown;
-  // pay_token (0048) is optional — keep it in the first two attempts, drop it in the last two.
-  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  // requires_invoice/tax_rate (0050) and pay_token (0048) are optional — cascade the fallbacks.
+  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ")).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order } = await supabase.from("orders").select(base("")).eq("id", orderId).maybeSingle());
@@ -73,6 +76,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   return {
     ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "proofs" | "paid" | "contact" | "stage" | "area">),
     pay_token: ((order as { pay_token?: string | null }).pay_token) ?? null,
+    requires_invoice: ((order as { requires_invoice?: boolean }).requires_invoice) ?? false,
+    tax_rate: ((order as { tax_rate?: number | null }).tax_rate) ?? null,
     due_at: ((order as { due_at?: string | null }).due_at) ?? null,
     contact: order.contact as unknown as OrderDetail["contact"],
     stage: order.stage as unknown as OrderDetail["stage"],

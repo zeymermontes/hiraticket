@@ -34,6 +34,8 @@ export default async function BusinessPage() {
       payTransferEnabled={business.pay_transfer_enabled ?? false}
       branches={business.branches ?? []}
       bankAccounts={business.bank_accounts ?? []}
+      invoiceAddTax={business.invoice_add_tax ?? true}
+      invoiceTaxRate={business.invoice_tax_rate ?? 16}
     />
   );
 }
