@@ -17,7 +17,7 @@ import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
-import { removeContactTag } from "@/app/(app)/chat/actions";
+import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -60,6 +60,26 @@ export function OrderDrawer({
   const [advanceMenu, setAdvanceMenu] = useState(false);
   const [stagePrompt, setStagePrompt] = useState<Stage | null>(null); // pending target stage awaiting the subtask-sync choice
   const [chatOpen, setChatOpen] = useState(false);
+  // The order's own conversation. The `convDetail` prop is only usable when it matches this order's
+  // conversation (e.g. opened from the chat). Kanban / orders table pass null, so we fetch on demand;
+  // otherwise the button would light up but the panel could never render.
+  const [fetchedConv, setFetchedConv] = useState<ConvDetail | null>(null);
+  const [convLoading, setConvLoading] = useState(false);
+  const conv: ConvDetail | null =
+    fetchedConv && fetchedConv.id === detail.conversation_id ? fetchedConv
+    : convDetail && convDetail.id === detail.conversation_id ? convDetail
+    : null;
+  useEffect(() => { setChatOpen(false); setFetchedConv(null); setConvLoading(false); }, [detail.id]);
+  const toggleChat = async () => {
+    const next = !chatOpen;
+    setChatOpen(next);
+    if (next && !conv && detail.conversation_id) {
+      setConvLoading(true);
+      const d = await loadConvDetail(detail.conversation_id);
+      setFetchedConv(d);
+      setConvLoading(false);
+    }
+  };
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const [chatW, setChatW] = useState(380);
@@ -170,8 +190,8 @@ export function OrderDrawer({
               <button ref={tagBtn} className="btn btn-sm btn-outline" onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" size={13} />{lang === "es" ? "Etiqueta" : "Tag"}</button>
             </div>
             {detail.conversation_id && (
-              <button className={"btn btn-sm btn-block " + (chatOpen ? "btn-primary" : "btn-outline")} style={{ marginTop: 12 }} onClick={() => setChatOpen((v) => !v)}>
-                <Icon name="whatsapp" size={14} />{lang === "es" ? "Abrir conversación" : "Open conversation"}<span className="grow" /><Icon name={chatOpen ? "x" : "arrowr"} size={14} />
+              <button className={"btn btn-sm btn-block " + (chatOpen ? "btn-primary" : "btn-outline")} style={{ marginTop: 12 }} onClick={toggleChat}>
+                <Icon name="whatsapp" size={14} />{lang === "es" ? "Abrir conversación" : "Open conversation"}<span className="grow" />{convLoading ? <span className="t-xs">…</span> : <Icon name={chatOpen ? "x" : "arrowr"} size={14} />}
               </button>
             )}
           </div>
@@ -447,10 +467,17 @@ export function OrderDrawer({
           </div>
         </div>
       )}
-      {chatOpen && convDetail && (
+      {chatOpen && (
         <div style={{ position: "fixed", top: 0, bottom: 0, right: DRAWER_W, width: chatW, maxWidth: `calc(100vw - ${DRAWER_W + 40}px)`, zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
           <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />
-          <Thread detail={convDetail} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
+          {conv ? (
+            <Thread detail={conv} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
+          ) : (
+            <div className="col center grow gap-2" style={{ alignItems: "center", justifyContent: "center", color: "var(--text-faint)", padding: 24, textAlign: "center" }}>
+              {convLoading ? <span className="t-sm muted">{lang === "es" ? "Cargando conversación…" : "Loading conversation…"}</span>
+                : <span className="t-sm muted">{lang === "es" ? "No se pudo cargar la conversación." : "Couldn't load the conversation."}</span>}
+            </div>
+          )}
         </div>
       )}
       {tagRect && (
