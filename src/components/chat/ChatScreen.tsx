@@ -719,6 +719,24 @@ export function ChatScreen({
     }
   }, [detail?.id]);
 
+  // Deep link (?c= — global search, Clientes, notifications): make sure the opened chat is actually
+  // visible. If it doesn't belong to the current tab (e.g. assigned to someone else while on
+  // "Míos"), switch to the tab that contains it instead of showing "pick a conversation".
+  useEffect(() => {
+    if (!selectedId || typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("c") !== selectedId) return;
+    const assignee = list.find((c) => c.id === selectedId)?.assignee_id ?? detailProp?.assignee_id ?? null;
+    setTab((t) => {
+      if (t === "all") return t;
+      if (t === "mine" && assignee === meId) return t;
+      if (t === "unassigned" && assignee == null) return t;
+      return assignee === meId ? "mine" : "all";
+    });
+    // Keyed on the deep-linked chat only — list/detailProp are read once at open time so live
+    // reassignments don't yank the tab from under the agent later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
   // Center column: show/hide + drag-resize (persisted).
   const [ctxVisible, setCtxVisible] = useState(true);
   const [ctxW, setCtxW] = useState(360);

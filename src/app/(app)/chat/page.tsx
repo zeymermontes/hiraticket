@@ -19,24 +19,29 @@ export default async function ChatPage({
   if (!business) return null;
 
   const sp = await searchParams;
-  const [list, agents, areas, stages, sessions, products] = await Promise.all([
+  const supabase = await createClient();
+  // With an explicit ?c (search, Clientes, notifications) the detail is fetched in parallel with
+  // everything else — it doesn't depend on the list, and serializing it made deep links slow.
+  const [list, agents, areas, stages, sessions, products, integrations, { data: { user } }, urlDetail] = await Promise.all([
     getConversationList(business.id),
     getAgents(business.id),
     getAreas(business.id),
     getStages(business.id),
     getSessions(business.id),
     getProducts(business.id),
+    getActiveIntegrations(business.id),
+    supabase.auth.getUser(),
+    sp.c ? getConversationDetail(sp.c) : Promise.resolve(null),
   ]);
 
   // No explicit ?c → reopen the last chat the agent viewed (cookie), else the most recent.
-  const lastChat = (await cookies()).get("ht_lastChat")?.value;
-  const validLast = lastChat && list.some((c) => c.id === lastChat) ? lastChat : null;
-  const wantId = sp.c ?? validLast ?? list[0]?.id ?? null;
-  const detail = wantId ? await getConversationDetail(wantId) : null;
-
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const integrations = await getActiveIntegrations(business.id);
+  let detail = urlDetail;
+  if (!detail) {
+    const lastChat = (await cookies()).get("ht_lastChat")?.value;
+    const validLast = lastChat && list.some((c) => c.id === lastChat) ? lastChat : null;
+    const wantId = sp.c ? null : validLast ?? list[0]?.id ?? null;
+    detail = wantId ? await getConversationDetail(wantId) : null;
+  }
 
   return (
     <ChatScreen

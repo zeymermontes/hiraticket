@@ -73,7 +73,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
             {filtered.length === 0 ? (
               <tr><td colSpan={6}><div className="muted t-sm" style={{ padding: "24px 2px", textAlign: "center" }}>{q ? (lang === "es" ? "Sin resultados." : "No matches.") : (lang === "es" ? "Aún no hay contactos." : "No contacts yet.")}</div></td></tr>
             ) : filtered.map((c) => (
-              <tr key={c.id} onClick={() => { if (c.conv_id) router.push(`/chat?c=${c.conv_id}`); }} style={{ cursor: c.conv_id ? "pointer" : "default" }}>
+              <tr key={c.id} onClick={() => { if (c.conv_id) router.push(`/chat?c=${c.conv_id}`); }} onMouseEnter={() => { if (c.conv_id) router.prefetch(`/chat?c=${c.conv_id}`); }} style={{ cursor: c.conv_id ? "pointer" : "default" }}>
                 <td>
                   <div className="row gap-2" style={{ alignItems: "center" }}>
                     <Avatar name={c.name} initials={deriveInitials(c.name || c.phone || "?")} color={avatarColor(c.phone)} size={32} />

@@ -85,15 +85,30 @@ export function GlobalSearch({ businessId }: { businessId: string }) {
     ...res.customers.map((d) => ({ kind: "customer", data: d } as Flat)),
   ], [res, msgHits]);
 
+  function hrefOf(f: Flat): string {
+    if (f.kind === "chat") return `/chat?c=${f.data.id}`;
+    if (f.kind === "msg") return f.data.kind === "internal" ? "/internal" : `/chat?c=${f.data.threadId}`;
+    if (f.kind === "order") return `/orders?order=${f.data.id}`;
+    if (f.data.conversationId) return `/chat?c=${f.data.conversationId}`;
+    return `/orders?new=1&contact=${encodeURIComponent(f.data.name)}`;
+  }
+
   function go(f: Flat) {
     setOpen(false);
     setQ("");
-    if (f.kind === "chat") router.push(`/chat?c=${f.data.id}`);
-    else if (f.kind === "msg") router.push(f.data.kind === "internal" ? "/internal" : `/chat?c=${f.data.threadId}`);
-    else if (f.kind === "order") router.push(`/orders?order=${f.data.id}`);
-    else if (f.data.conversationId) router.push(`/chat?c=${f.data.conversationId}`);
-    else router.push(`/orders?new=1&contact=${encodeURIComponent(f.data.name)}`);
+    router.push(hrefOf(f));
   }
+
+  // Prefetch the highlighted result (hover or arrow keys) so opening it is instant — the chat page
+  // is fully dynamic and otherwise renders from scratch on click. Debounced so skimming the list
+  // with the arrows doesn't fire one server render per row.
+  useEffect(() => {
+    const f = flat[active];
+    if (!f || !open) return;
+    const t = setTimeout(() => router.prefetch(hrefOf(f)), 150);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, flat, open]);
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); return; }
