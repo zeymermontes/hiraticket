@@ -4,9 +4,25 @@ import { ReportsScreen } from "@/components/ReportsScreen";
 
 export const dynamic = "force-dynamic";
 
-export default async function ReportsPage() {
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+export default async function ReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string }>;
+}) {
   const business = await getMyBusiness();
   if (!business) return null;
-  const data = await getReports(business.id);
-  return <ReportsScreen data={data} />;
+
+  // Default range: last 7 days (today inclusive).
+  const sp = await searchParams;
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 6 * 86400000);
+  let from = sp.from && YMD.test(sp.from) ? sp.from : ymd(weekAgo);
+  let to = sp.to && YMD.test(sp.to) ? sp.to : ymd(today);
+  if (from > to) [from, to] = [to, from];
+
+  const data = await getReports(business.id, { from, to });
+  return <ReportsScreen data={data} from={from} to={to} />;
 }
