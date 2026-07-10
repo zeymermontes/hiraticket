@@ -52,12 +52,13 @@ export default async function AppLayout({
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
   const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName, color: (prof?.avatar_color as string) || "#0E8C82", avatarUrl: (prof?.avatar_url as string | null) ?? null };
 
-  const [chatBadges, notifications, sessions, stages, internalUnread] = await Promise.all([
+  const [chatBadges, notifications, sessions, stages, internalUnread, { data: mem }] = await Promise.all([
     getChatBadges(business.id, user.id),
     getNotifications(business.id, user.id, myName),
     getSessions(business.id),
     getStages(business.id),
     getInternalUnread(business.id, user.id),
+    supabase.from("business_members").select("role").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
   ]);
 
   // Open orders = not yet in the terminal stage. Bounded head-count (no full table scan).
@@ -77,6 +78,7 @@ export default async function AppLayout({
       connected={isConnected(sessions)}
       objectName={objectName}
       personal={business.mode === "personal"}
+      isAdmin={mem?.role === "admin"}
     >
       {children}
     </Shell>

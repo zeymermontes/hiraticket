@@ -9,6 +9,8 @@ import { downloadXlsx, type CellValue } from "@/lib/xlsx";
 
 function BarList({ title, rows }: { title: string; rows: { name: string; color: string; count: number }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
+  // Stage/area colors are palette names (→ CSS var); agent colors are raw hex from the profile.
+  const fill = (c: string) => (c.startsWith("#") ? c : `var(--${c})`);
   return (
     <section className="ws-block">
       <div className="ws-block-head"><Icon name="layers" size={16} /><h4>{title}</h4></div>
@@ -17,7 +19,7 @@ function BarList({ title, rows }: { title: string; rows: { name: string; color: 
           <div key={r.name} className="row gap-2" style={{ alignItems: "center" }}>
             <span className="t-sm truncate" style={{ width: 120 }}>{r.name}</span>
             <div style={{ flex: 1, height: 10, background: "var(--surface-3)", borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ width: `${(r.count / max) * 100}%`, height: "100%", background: `var(--${r.color})` }} />
+              <div style={{ width: `${(r.count / max) * 100}%`, height: "100%", background: fill(r.color) }} />
             </div>
             <span className="mono t-sm" style={{ width: 28, textAlign: "right" }}>{r.count}</span>
           </div>

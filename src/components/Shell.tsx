@@ -117,6 +117,7 @@ interface NavItem {
   labelKey: StringKey;
   badge?: number | null;
   red?: boolean;
+  adminOnly?: boolean; // hidden for non-admin members (the route also enforces it server-side)
 }
 
 const PRIMARY: NavItem[] = [
@@ -132,7 +133,7 @@ const PRIMARY: NavItem[] = [
 const ADMIN: NavItem[] = [
   { id: "catalog", href: "/catalog", icon: "store", labelKey: "nav_catalog" },
   // Campañas hidden from the sidebar (route still exists, just not shown).
-  { id: "reports", href: "/reports", icon: "layers", labelKey: "nav_reports" },
+  { id: "reports", href: "/reports", icon: "layers", labelKey: "nav_reports", adminOnly: true },
   { id: "flows", href: "/flows", icon: "bolt", labelKey: "nav_flows" },
   { id: "plugins", href: "/plugins", icon: "sparkles", labelKey: "nav_plugins" },
   { id: "canned", href: "/canned", icon: "canned", labelKey: "nav_canned" },
@@ -148,7 +149,7 @@ export interface ShellUser {
   avatarUrl?: string | null;
 }
 
-function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser }) {
+function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser; isAdmin: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const { lang, t, personal } = useApp();
@@ -182,7 +183,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user }: { badges: R
       <div className="rail-logo" title="Hiraticket">H</div>
       <div className="rail-nav">{PRIMARY.map(renderItem)}</div>
       <div className="rail-sep" />
-      <div className="rail-nav">{ADMIN.map(renderItem)}</div>
+      <div className="rail-nav">{ADMIN.filter((it) => isAdmin || !it.adminOnly).map(renderItem)}</div>
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
         <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
           <Avatar name={user.name} initials={deriveInitials(user.name)} color={user.color || "#0E8C82"} size={28} presence="online" src={user.avatarUrl ?? undefined} />
@@ -252,6 +253,7 @@ export function Shell({
   connected = false,
   objectName = "Pedidos",
   personal = false,
+  isAdmin = false,
   children,
 }: {
   user: ShellUser;
@@ -262,6 +264,7 @@ export function Shell({
   connected?: boolean;
   objectName?: string;
   personal?: boolean;
+  isAdmin?: boolean;
   children: React.ReactNode;
 }) {
   // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
@@ -290,7 +293,7 @@ export function Shell({
           <NavProgress />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
           <div className="app">
-            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} />
+            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} />
             <div className="main">
               <TopBar notifications={notifs} connected={connected} businessId={businessId} />
               {children}

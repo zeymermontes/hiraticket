@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
 import { getMyBusiness } from "@/lib/queries";
 import { getReports } from "@/lib/extras";
+import { createClient } from "@/lib/supabase/server";
 import { ReportsScreen } from "@/components/ReportsScreen";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +16,14 @@ export default async function ReportsPage({
 }) {
   const business = await getMyBusiness();
   if (!business) return null;
+
+  // Reports are admin-only — role straight from the membership row (same check as plugins).
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: mem } = user
+    ? await supabase.from("business_members").select("role").eq("business_id", business.id).eq("user_id", user.id).maybeSingle()
+    : { data: null };
+  if (mem?.role !== "admin") redirect("/chat");
 
   // Default range: last 7 days (today inclusive).
   const sp = await searchParams;
