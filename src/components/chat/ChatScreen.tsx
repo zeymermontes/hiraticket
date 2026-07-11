@@ -1454,18 +1454,18 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <Icon name="columns" />
           </button>
         )}
+        {detail.status !== "resolved" ? (
+          <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }} disabled={pending}
+            onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}>
+            {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
+          </button>
+        ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
+        <TransferControl detail={detail} agents={agents} areas={areas} />
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
-        <TransferControl detail={detail} agents={agents} areas={areas} />
-        {detail.status !== "resolved" ? (
-          <button className="iconbtn" title={lang === "es" ? "Resolver" : "Resolve"} style={{ color: "var(--green)" }} disabled={pending}
-            onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}>
-            {pending ? <Spinner size={15} /> : <Icon name="check" />}
-          </button>
-        ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
       </div>
 
       <div className="thread thread-wa-tint scroll" ref={endRef} onScroll={onThreadScroll}>
@@ -2112,7 +2112,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
                   </button>}
               {detail.status === "resolved"
                 ? <button className="act full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); })}><Icon name="check" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                : <button className="act good full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); })}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
