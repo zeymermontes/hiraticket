@@ -33,6 +33,6 @@ export default async function ReportsPage({
   let to = sp.to && YMD.test(sp.to) ? sp.to : ymd(today);
   if (from > to) [from, to] = [to, from];
 
-  const data = await getReports(business.id, { from, to });
+  const data = await getReports(business.id, { from, to }, business.manual_margin_pct ?? 50);
   return <ReportsScreen data={data} from={from} to={to} />;
 }

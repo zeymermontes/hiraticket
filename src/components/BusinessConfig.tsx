@@ -50,7 +50,7 @@ const TIMEZONES = [
 
 export function BusinessConfig({
   businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
-  payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0, invoiceAddTax, invoiceTaxRate,
+  payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0, invoiceAddTax, invoiceTaxRate, manualMarginPct,
 }: {
   businessId: string;
   businessName: string;
@@ -71,6 +71,7 @@ export function BusinessConfig({
   bankAccounts: BankAccount[];
   invoiceAddTax: boolean;
   invoiceTaxRate: number;
+  manualMarginPct: number;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -270,6 +271,19 @@ export function BusinessConfig({
               <button className={"chip" + (invoiceAddTax ? " on" : "")} onClick={() => run(() => updateBusinessProfile(businessId, { invoice_add_tax: !invoiceAddTax }))}>
                 {invoiceAddTax ? (lang === "es" ? "Activado" : "On") : (lang === "es" ? "Desactivado" : "Off")}
               </button>
+            </div>
+
+            {/* Default profit margin for manually-typed items (reports) */}
+            <div className="row gap-2" style={{ alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div className="grow">
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "% de ganancia en productos manuales" : "Profit % on manual products"}</div>
+                <div className="t-xs muted">{lang === "es" ? "Para productos escritos a mano (no del catálogo), los reportes asumen este % de la venta como ganancia. Los del catálogo usan su costo." : "For hand-typed products (not from the catalog), reports assume this % of the sale as profit. Catalog products use their cost."}</div>
+              </div>
+              <div className="row gap-1" style={{ alignItems: "center" }}>
+                <input className="inp-inline mono" style={{ width: 64, textAlign: "right" }} type="number" min={0} max={100} step="1" defaultValue={String(manualMarginPct)}
+                  onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v <= 100 && v !== manualMarginPct) run(() => updateBusinessProfile(businessId, { manual_margin_pct: v })); }} />
+                <span className="t-sm muted">%</span>
+              </div>
             </div>
 
             {/* Gateway — coming soon */}

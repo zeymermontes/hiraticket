@@ -59,14 +59,15 @@ export async function updateAutomation(id: string, input: AutomationInput) {
 }
 
 /* ---------- products ---------- */
-export async function createProduct(businessId: string, input: { name: string; kind: string; price: number }) {
+export async function createProduct(businessId: string, input: { name: string; kind: string; price: number; cost?: number | null }) {
   const supabase = await createClient();
-  await supabase.from("products").insert({
-    business_id: businessId, name: input.name.trim() || "Producto", kind: input.kind, price: input.price,
-  });
+  const base = { business_id: businessId, name: input.name.trim() || "Producto", kind: input.kind, price: input.price };
+  const { error } = await supabase.from("products").insert({ ...base, cost: input.cost ?? null });
+  // cost (0057) may not be applied yet — retry without it.
+  if (error) await supabase.from("products").insert(base);
   revalidatePath("/catalog");
 }
-export async function updateProduct(id: string, patch: { name?: string; price?: number; active?: boolean; price_tiers?: { min: number; price: number }[] }) {
+export async function updateProduct(id: string, patch: { name?: string; price?: number; cost?: number | null; active?: boolean; price_tiers?: { min: number; price: number }[] }) {
   const supabase = await createClient();
   await supabase.from("products").update(patch).eq("id", id);
   revalidatePath("/catalog");

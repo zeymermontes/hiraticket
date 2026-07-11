@@ -36,6 +36,7 @@ export default async function BusinessPage() {
       bankAccounts={business.bank_accounts ?? []}
       invoiceAddTax={business.invoice_add_tax ?? true}
       invoiceTaxRate={business.invoice_tax_rate ?? 16}
+      manualMarginPct={business.manual_margin_pct ?? 50}
     />
   );
 }

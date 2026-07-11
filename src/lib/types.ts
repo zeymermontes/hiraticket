@@ -42,6 +42,7 @@ export interface Business {
   pay_transfer_enabled: boolean; // offer "bank transfer" on the checkout page
   invoice_add_tax: boolean; // checking "Requiere factura" adds tax to the order total
   invoice_tax_rate: number; // % applied when it does (default 16 — IVA MX)
+  manual_margin_pct: number; // % of the sale that counts as profit for manually-typed items (default 50)
 }
 
 export interface OrderRow {

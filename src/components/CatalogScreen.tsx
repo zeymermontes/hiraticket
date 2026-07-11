@@ -14,6 +14,7 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
+  const [cost, setCost] = useState("");
   const [kind, setKind] = useState("product");
   const [q, setQ] = useState("");
   const [tiersFor, setTiersFor] = useState<string | null>(null);
@@ -31,7 +32,7 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
           </div>
           <div className="tablewrap">
             <table className="tbl">
-              <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}<th></th></tr></thead>
+              <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}{!personal && <th title={lang === "es" ? "Lo que te cuesta — se usa para calcular la ganancia en reportes" : "What it costs you — used to compute profit in reports"}>{lang === "es" ? "Costo" : "Cost"}</th>}<th></th></tr></thead>
               <tbody>
                 {view.map((p) => (
                   <React.Fragment key={p.id}>
@@ -39,6 +40,7 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
                     <td><input className="inp-inline grow" defaultValue={p.name} style={{ width: "100%" }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
                     {!personal && <td><Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill></td>}
                     {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>}
+                    {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} placeholder="—" defaultValue={p.cost == null ? "" : String(p.cost)} onBlur={(e) => { const raw = e.target.value.trim(); const v = raw === "" ? null : Number(raw); if (raw !== "" && Number.isNaN(v)) return; if (v !== p.cost) run(() => updateProduct(p.id, { cost: v })); }} /></td>}
                     <td className="row gap-1">
                       {!personal && <button className={"iconbtn sm" + (tiersFor === p.id ? " active" : "")} title={lang === "es" ? "Precios por cantidad" : "Quantity pricing"} onClick={() => setTiersFor(tiersFor === p.id ? null : p.id)}>
                         <Icon name="layers" size={15} />{p.price_tiers.length > 0 && <span className="badge badge-soft" style={{ marginLeft: 2 }}>{p.price_tiers.length}</span>}
@@ -48,13 +50,13 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
                     </td>
                   </tr>
                   {!personal && tiersFor === p.id && (
-                    <tr><td colSpan={4} style={{ background: "var(--surface-2)" }}>
+                    <tr><td colSpan={5} style={{ background: "var(--surface-2)" }}>
                       <TierEditor product={p} lang={lang} onSave={(tiers) => run(() => updateProduct(p.id, { price_tiers: tiers }))} />
                     </td></tr>
                   )}
                   </React.Fragment>
                 ))}
-                {view.length === 0 && <tr><td colSpan={personal ? 2 : 4} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
+                {view.length === 0 && <tr><td colSpan={personal ? 2 : 5} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -70,11 +72,12 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
                   <option value="product">{lang === "es" ? "Producto" : "Product"}</option>
                   <option value="service">{lang === "es" ? "Servicio" : "Service"}</option>
                 </select>
-                <input className="inp-inline mono" style={{ width: 100 }} placeholder="$" value={price} onChange={(e) => setPrice(e.target.value)} />
+                <input className="inp-inline mono" style={{ width: 100 }} placeholder={lang === "es" ? "$ precio" : "$ price"} value={price} onChange={(e) => setPrice(e.target.value)} />
+                <input className="inp-inline mono" style={{ width: 100 }} placeholder={lang === "es" ? "$ costo" : "$ cost"} title={lang === "es" ? "Lo que te cuesta (opcional) — se usa para la ganancia en reportes" : "What it costs you (optional) — used for profit in reports"} value={cost} onChange={(e) => setCost(e.target.value)} />
               </div>
             )}
             <button className="btn btn-primary btn-block" disabled={pending || !name.trim()}
-              onClick={() => { run(() => createProduct(businessId, { name, kind, price: Number(price) || 0 })); setName(""); setPrice(""); }}>
+              onClick={() => { run(() => createProduct(businessId, { name, kind, price: Number(price) || 0, cost: cost.trim() === "" ? null : Number(cost) || 0 })); setName(""); setPrice(""); setCost(""); }}>
               <Icon name="plus" size={15} />{lang === "es" ? "Agregar" : "Add"}
             </button>
           </div>

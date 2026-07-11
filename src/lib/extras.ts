@@ -33,20 +33,26 @@ export async function getAutomations(businessId: string): Promise<Automation[]> 
 
 export interface Product {
   id: string; name: string; kind: "product" | "service"; price: number; active: boolean; price_tiers: PriceTier[];
+  cost: number | null; // what it costs the business (null = unknown → default margin applies in reports)
 }
 export async function getProducts(businessId: string): Promise<Product[]> {
   const supabase = await createClient();
-  // Resilient to a not-yet-applied 0024 (price_tiers).
+  // Resilient to a not-yet-applied 0057 (cost) / 0024 (price_tiers).
   let { data, error } = await supabase
-    .from("products").select("id, name, kind, price, active, price_tiers")
+    .from("products").select("id, name, kind, price, active, price_tiers, cost")
     .eq("business_id", businessId).order("created_at");
   if (error) {
-    const r = await supabase.from("products").select("id, name, kind, price, active").eq("business_id", businessId).order("created_at");
-    data = (r.data ?? []) as typeof data;
+    const r1 = await supabase.from("products").select("id, name, kind, price, active, price_tiers").eq("business_id", businessId).order("created_at");
+    data = (r1.data ?? []) as typeof data;
+    if (r1.error) {
+      const r = await supabase.from("products").select("id, name, kind, price, active").eq("business_id", businessId).order("created_at");
+      data = (r.data ?? []) as typeof data;
+    }
   }
   return (data ?? []).map((p) => {
     const t = (p as { price_tiers?: unknown }).price_tiers;
-    return { ...p, price_tiers: Array.isArray(t) ? (t as PriceTier[]) : [] };
+    const c = (p as { cost?: unknown }).cost;
+    return { ...p, price_tiers: Array.isArray(t) ? (t as PriceTier[]) : [], cost: c == null ? null : Number(c) };
   }) as Product[];
 }
 
@@ -80,6 +86,7 @@ export interface ReportRange {
 }
 export interface ReportData {
   totalSales: number;
+  totalProfit: number; // estimated: catalog cost when the item name matches, else the manual margin %
   orderCount: number;
   resolvedConvs: number;
   avgTicket: number;
@@ -88,7 +95,11 @@ export interface ReportData {
   // client can format labels in its own language.
   trendStepDays: number;
   salesTrend: { date: string; value: number }[];
+  profitTrend: { date: string; value: number }[];
   createdTrend: { date: string; value: number }[];
+  // Per-product aggregate over the range (sold items grouped by name + zero-sale catalog
+  // products), for the most/least-sold and profit tops. Sorted by qty desc.
+  products: { name: string; qty: number; revenue: number; profit: number }[];
   byStage: { name: string; color: string; count: number }[];
   byArea: { name: string; color: string; count: number }[];
   byAgent: { name: string; color: string; count: number; id: string }[];
@@ -101,7 +112,7 @@ export interface ReportData {
     created_at: string | null; updated_at: string | null; due_at: string | null;
   }[];
 }
-export async function getReports(businessId: string, range: ReportRange): Promise<ReportData> {
+export async function getReports(businessId: string, range: ReportRange, manualMarginPct = 50): Promise<ReportData> {
   const supabase = await createClient();
   const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
   const toISO = new Date(`${range.to}T23:59:59.999`).toISOString();
@@ -118,7 +129,7 @@ export async function getReports(businessId: string, range: ReportRange): Promis
       .order("created_at", { ascending: false }));
     return data ?? [];
   };
-  const [orders, { count: resolved }, stages, areas, agents] = await Promise.all([
+  const [orders, { count: resolved }, stages, areas, agents, catalog] = await Promise.all([
     fetchOrders(),
     supabase.from("conversations").select("id", { count: "exact", head: true })
       .eq("business_id", businessId).eq("status", "resolved")
@@ -126,7 +137,22 @@ export async function getReports(businessId: string, range: ReportRange): Promis
     getStages(businessId),
     getAreas(businessId),
     getAgents(businessId),
+    getProducts(businessId),
   ]);
+
+  // Profit per sold item: items whose name matches a catalog product with a cost use
+  // subtotal - cost*qty; anything else (manual items, products without a cost) counts
+  // the business's default margin % of the sale.
+  const norm = (s: string) => s.trim().toLowerCase();
+  const costByName = new Map<string, number>();
+  for (const p of catalog) if (p.cost != null) costByName.set(norm(p.name), p.cost);
+  const itemProfit = (it: { name?: string; qty?: unknown; subtotal?: unknown }) => {
+    const subtotal = Number(it.subtotal ?? 0);
+    const cost = costByName.get(norm(it.name ?? ""));
+    return cost != null ? subtotal - cost * Number(it.qty ?? 0) : subtotal * (manualMarginPct / 100);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orderProfit = (o: any) => ((o.items ?? []) as any[]).reduce((s, it) => s + itemProfit(it), 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows = (orders ?? []) as any[]; // joined select() string defeats column inference
   const countBy = <T extends { id: string; name: string; color: string }>(
@@ -142,11 +168,13 @@ export async function getReports(businessId: string, range: ReportRange): Promis
   const step = Math.max(1, Math.ceil(days / 31));
   const nBuckets = Math.ceil(days / step);
   const trend: { date: string; value: number }[] = [];
+  const profit: { date: string; value: number }[] = [];
   const created: { date: string; value: number }[] = [];
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   for (let b = 0; b < nBuckets; b++) {
     const bStart = new Date(start.getTime() + b * step * DAY);
     trend.push({ date: ymd(bStart), value: 0 });
+    profit.push({ date: ymd(bStart), value: 0 });
     created.push({ date: ymd(bStart), value: 0 });
   }
   for (const o of rows) {
@@ -154,8 +182,32 @@ export async function getReports(businessId: string, range: ReportRange): Promis
     const b = Math.floor((new Date(o.created_at as string).getTime() - start.getTime()) / (step * DAY));
     if (b < 0 || b >= nBuckets) continue;
     trend[b].value += Number(o.total ?? 0);
+    profit[b].value += orderProfit(o);
     created[b].value += 1;
   }
+
+  // Per-product aggregate: sold items grouped by (normalized) name, plus catalog products
+  // that didn't sell at all in the range — those matter for the "least sold" list.
+  const prodAgg = new Map<string, { name: string; qty: number; revenue: number; profit: number }>();
+  for (const o of rows) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const it of ((o.items ?? []) as any[])) {
+      const key = norm((it.name as string) ?? "");
+      if (!key) continue;
+      const cur = prodAgg.get(key) ?? { name: (it.name as string).trim(), qty: 0, revenue: 0, profit: 0 };
+      cur.qty += Number(it.qty ?? 0);
+      cur.revenue += Number(it.subtotal ?? 0);
+      cur.profit += itemProfit(it);
+      prodAgg.set(key, cur);
+    }
+  }
+  for (const p of catalog) {
+    if (!p.active || prodAgg.has(norm(p.name))) continue;
+    prodAgg.set(norm(p.name), { name: p.name, qty: 0, revenue: 0, profit: 0 });
+  }
+  const products = [...prodAgg.values()]
+    .map((p) => ({ ...p, profit: Math.round(p.profit * 100) / 100 }))
+    .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
 
   const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
   const lastStage = stages.length ? stages[stages.length - 1] : null;
@@ -164,13 +216,16 @@ export async function getReports(businessId: string, range: ReportRange): Promis
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
   return {
     totalSales: total,
+    totalProfit: Math.round(rows.reduce((s, o) => s + orderProfit(o), 0) * 100) / 100,
     orderCount: rows.length,
     resolvedConvs: resolved ?? 0,
     avgTicket: rows.length ? Math.round(total / rows.length) : 0,
     completedCount: lastStage ? rows.filter((o) => o.stage_id === lastStage.id).length : 0,
     trendStepDays: step,
     salesTrend: trend,
+    profitTrend: profit,
     createdTrend: created,
+    products,
     byStage: countBy(stages, "stage_id"),
     byArea: countBy(areas, "area_id"),
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),

@@ -7,8 +7,8 @@ import type { ReportData } from "@/lib/extras";
 import { PRIORITY_LABEL } from "@/lib/types";
 import { downloadXlsx, type CellValue } from "@/lib/xlsx";
 
-function BarList({ title, rows }: { title: string; rows: { name: string; color: string; count: number }[] }) {
-  const max = Math.max(1, ...rows.map((r) => r.count));
+function BarList({ title, rows, fmt }: { title: string; rows: { name: string; color: string; count: number }[]; fmt?: (n: number) => string }) {
+  const max = Math.max(1, ...rows.map((r) => Math.max(0, r.count)));
   // Stage/area colors are palette names (→ CSS var); agent colors are raw hex from the profile.
   const fill = (c: string) => (c.startsWith("#") ? c : `var(--${c})`);
   return (
@@ -17,11 +17,11 @@ function BarList({ title, rows }: { title: string; rows: { name: string; color: 
       <div className="ws-block-body col gap-2">
         {rows.map((r) => (
           <div key={r.name} className="row gap-2" style={{ alignItems: "center" }}>
-            <span className="t-sm truncate" style={{ width: 120 }}>{r.name}</span>
+            <span className="t-sm truncate" style={{ width: 120 }} title={r.name}>{r.name}</span>
             <div style={{ flex: 1, height: 10, background: "var(--surface-3)", borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ width: `${(r.count / max) * 100}%`, height: "100%", background: fill(r.color) }} />
+              <div style={{ width: `${(Math.max(0, r.count) / max) * 100}%`, height: "100%", background: fill(r.color) }} />
             </div>
-            <span className="mono t-sm" style={{ width: 28, textAlign: "right" }}>{r.count}</span>
+            <span className="mono t-sm" style={{ minWidth: 28, textAlign: "right", whiteSpace: "nowrap" }}>{fmt ? fmt(r.count) : r.count}</span>
           </div>
         ))}
         {rows.length === 0 && <div className="muted t-sm">—</div>}
@@ -39,6 +39,14 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
   const money = (n: number) => "$" + new Intl.NumberFormat("es-MX").format(n);
   const active = Math.max(0, data.orderCount - data.completedCount);
   const trend = personal ? data.createdTrend : data.salesTrend;
+
+  // Product tops (from the range aggregate; already sorted by qty desc).
+  const topQty = data.products.slice(0, 5);
+  const bottomQty = [...data.products].sort((a, b) => a.qty - b.qty || a.revenue - b.revenue).slice(0, 5);
+  const topProfit = [...data.products].sort((a, b) => b.profit - a.profit).slice(0, 5);
+  const bottomProfit = [...data.products].sort((a, b) => a.profit - b.profit).slice(0, 5);
+  const asBars = (rows: { name: string; qty: number; profit: number }[], key: "qty" | "profit", color: string) =>
+    rows.map((r) => ({ name: r.name, color, count: key === "qty" ? r.qty : r.profit }));
 
   const setRange = (f: string, t: string) => router.push(`/reports?from=${f}&to=${t}`);
   const presetRange = (days: number): [string, string] => {
@@ -69,6 +77,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       [null, null],
       ...(personal ? [] : [
         [es ? "Ventas" : "Sales", data.totalSales],
+        [es ? "Ganancia estimada" : "Estimated profit", data.totalProfit],
         [es ? "Ticket promedio" : "Avg ticket", data.avgTicket],
       ] as CellValue[][]),
       [objs, data.orderCount],
@@ -79,10 +88,22 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
     const trendRows: CellValue[][] = [
       personal
         ? [dateHead, es ? "Tareas creadas" : "Tasks created"]
-        : [dateHead, es ? "Ventas" : "Sales", es ? "Pedidos creados" : "Orders created"],
+        : [dateHead, es ? "Ventas" : "Sales", es ? "Ganancia" : "Profit", es ? "Pedidos creados" : "Orders created"],
       ...data.createdTrend.map((c, i) => personal
         ? [c.date, c.value]
-        : [c.date, data.salesTrend[i]?.value ?? 0, c.value]),
+        : [c.date, data.salesTrend[i]?.value ?? 0, Math.round((data.profitTrend[i]?.value ?? 0) * 100) / 100, c.value]),
+    ];
+    // Per-product aggregate over the range (incl. zero-sale catalog products).
+    const topSheet: CellValue[][] = [
+      [
+        personal ? (es ? "Subtarea" : "Subtask") : (es ? "Producto" : "Product"),
+        es ? "Cantidad" : "Qty",
+        ...(personal ? [] : [es ? "Ventas" : "Sales", es ? "Ganancia" : "Profit"]),
+      ],
+      ...data.products.map((p) => [
+        p.name, p.qty,
+        ...(personal ? [] : [p.revenue, p.profit]),
+      ] as CellValue[]),
     ];
     const byRows = (rows: { name: string; count: number }[], head: string): CellValue[][] =>
       [[head, objs], ...rows.map((r) => [r.name, r.count] as CellValue[])];
@@ -140,6 +161,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       { name: es ? "Por etapa" : "By stage", rows: byRows(data.byStage, es ? "Etapa" : "Stage") },
       { name: es ? "Por área" : "By area", rows: byRows(data.byArea, es ? "Área" : "Area") },
       { name: es ? "Por agente" : "By agent", rows: byRows(data.byAgent, es ? "Agente" : "Agent") },
+      { name: personal ? (es ? "Top subtareas" : "Top subtasks") : (es ? "Top productos" : "Top products"), rows: topSheet },
       { name: objs, rows: detail },
       { name: itemLabel, rows: itemsSheet },
     ]);
@@ -173,7 +195,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 24px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${personal ? 4 : 5},1fr)`, gap: 14, marginBottom: 20 }}>
           {personal ? (
             <>
               <div className="ws-block" style={{ padding: 16 }}>
@@ -200,6 +222,10 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{money(data.totalSales)}</div>
               </div>
               <div className="ws-block" style={{ padding: 16 }}>
+                <div className="row gap-2 muted t-sm"><Icon name="sparkles" size={15} />{lang === "es" ? "Ganancia est." : "Est. profit"}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: "var(--green)" }} className="mono">{money(Math.round(data.totalProfit))}</div>
+              </div>
+              <div className="ws-block" style={{ padding: 16 }}>
                 <div className="row gap-2 muted t-sm"><Icon name="kanban" size={15} />{lang === "es" ? "Pedidos" : "Orders"}</div>
                 <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.orderCount}</div>
               </div>
@@ -224,18 +250,43 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {lang === "es" ? `· cada barra = ${data.trendStepDays} días` : `· each bar = ${data.trendStepDays} days`}
               </span>
             )}
+            {!personal && (
+              <span className="row gap-2 t-xs muted" style={{ marginLeft: "auto", alignItems: "center", fontWeight: 400 }}>
+                <span className="row gap-1" style={{ alignItems: "center" }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--brand)", opacity: 0.35 }} />{lang === "es" ? "Venta" : "Sale"}</span>
+                <span className="row gap-1" style={{ alignItems: "center" }}><span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--green)" }} />{lang === "es" ? "Ganancia" : "Profit"}</span>
+              </span>
+            )}
           </div>
           <div className="ws-block-body" style={{ display: "flex", alignItems: "flex-end", gap: trend.length > 14 ? 4 : 10, height: 130, paddingTop: 18 }}>
-            {(() => { const max = Math.max(1, ...trend.map((t) => t.value)); return trend.map((t, i) => (
-              <div key={t.date} className="col" style={{ flex: 1, alignItems: "center", gap: 6, height: "100%", justifyContent: "flex-end", minWidth: 0 }}
-                title={`${fmtDay(t.date)}: ${t.value ? (personal ? t.value : money(t.value)) : 0}`}>
+            {(() => { const max = Math.max(1, ...trend.map((t) => t.value)); return trend.map((t, i) => {
+              const prof = personal ? 0 : data.profitTrend[i]?.value ?? 0;
+              const pfrac = t.value > 0 ? Math.min(1, Math.max(0, prof / t.value)) : 0;
+              const tip = personal
+                ? `${fmtDay(t.date)}: ${t.value}`
+                : `${fmtDay(t.date)}: ${lang === "es" ? "Venta" : "Sale"} ${money(t.value)} · ${lang === "es" ? "Ganancia" : "Profit"} ${money(Math.round(prof))}`;
+              return (
+              <div key={t.date} className="col" style={{ flex: 1, alignItems: "center", gap: 6, height: "100%", justifyContent: "flex-end", minWidth: 0 }} title={tip}>
                 {trend.length <= 14 && <div className="mono t-xs muted">{t.value ? (personal ? t.value : money(t.value)) : ""}</div>}
-                <div style={{ width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, background: "var(--brand)", borderRadius: "6px 6px 0 0" }} />
+                {personal ? (
+                  <div style={{ width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, background: "var(--brand)", borderRadius: "6px 6px 0 0" }} />
+                ) : (
+                  <div style={{ width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, borderRadius: "6px 6px 0 0", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                    <div style={{ flex: 1 - pfrac, background: "var(--brand)", opacity: 0.35 }} />
+                    <div style={{ flex: pfrac, background: "var(--green)" }} />
+                  </div>
+                )}
                 <div className="t-xs muted truncate" style={{ textTransform: "capitalize", maxWidth: "100%" }}>{i % labelEvery === 0 ? barLabel(t.date) : " "}</div>
               </div>
-            )); })()}
+            ); }); })()}
           </div>
         </section>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
+          <BarList title={personal ? (lang === "es" ? "Subtareas más frecuentes" : "Most frequent subtasks") : (lang === "es" ? "Productos más vendidos" : "Best sellers")} rows={asBars(topQty, "qty", "brand")} />
+          <BarList title={personal ? (lang === "es" ? "Subtareas menos frecuentes" : "Least frequent subtasks") : (lang === "es" ? "Productos menos vendidos" : "Worst sellers")} rows={asBars(bottomQty, "qty", "slate")} />
+          {!personal && <BarList title={lang === "es" ? "Mayor ganancia" : "Top profit"} rows={asBars(topProfit, "profit", "green")} fmt={(n) => money(Math.round(n))} />}
+          {!personal && <BarList title={lang === "es" ? "Menor ganancia" : "Lowest profit"} rows={asBars(bottomProfit, "profit", "amber")} fmt={(n) => money(Math.round(n))} />}
+        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, alignItems: "start" }}>
           <BarList title={lang === "es" ? "Por etapa" : "By stage"} rows={data.byStage} />
