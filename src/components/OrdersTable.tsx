@@ -348,9 +348,16 @@ export function NewOrderModal({
   const [dueAt, setDueAt] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [needsInvoice, setNeedsInvoice] = useState(false);
+  const [discKind, setDiscKind] = useState<"amount" | "pct">("amount");
+  const [discValue, setDiscValue] = useState("");
+  const [discNote, setDiscNote] = useState("");
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  const discRaw = Number(discValue) || 0;
+  const discount = discRaw > 0
+    ? Math.min(subtotal, Math.round((discKind === "pct" ? subtotal * (Math.min(100, discRaw) / 100) : discRaw) * 100) / 100)
+    : 0;
   const taxRate = needsInvoice && invoice?.add ? (invoice.rate || 0) : 0;
-  const tax = Math.round(subtotal * (taxRate / 100) * 100) / 100;
+  const tax = Math.round((subtotal - discount) * (taxRate / 100) * 100) / 100;
   const hasItem = lines.some((l) => l.item.trim());
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => {
@@ -386,6 +393,7 @@ export function NewOrderModal({
         dueAt: dueAt ? new Date(dueAt).toISOString() : null,
         note: orderNote,
         requiresInvoice: needsInvoice,
+        discount: discRaw > 0 ? { kind: discKind, value: discRaw, note: discNote } : null,
       });
       onClose();
       if (onCreated) onCreated(); else router.refresh();
@@ -436,21 +444,40 @@ export function NewOrderModal({
           )}
           {!personal && (
             <div className="col gap-1" style={{ paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", paddingBottom: 10 }}>
-              {taxRate > 0 && (
+              <div className="row gap-2" style={{ alignItems: "center" }}>
+                <span className="grow t-sm" style={{ fontWeight: 600 }}>{lang === "es" ? "Descuento" : "Discount"}</span>
+                <div className="seg seg-sm">
+                  <button type="button" className={discKind === "amount" ? "on" : ""} onClick={() => setDiscKind("amount")}>$</button>
+                  <button type="button" className={discKind === "pct" ? "on" : ""} onClick={() => setDiscKind("pct")}>%</button>
+                </div>
+                <input className="inp-inline mono" style={{ width: 84, textAlign: "right" }} placeholder={discKind === "pct" ? "0%" : "$0"} value={discValue} onChange={(e) => setDiscValue(e.target.value)} />
+              </div>
+              {discount > 0 && (
+                <input className="inp-inline" style={{ width: "100%" }} placeholder={lang === "es" ? "Motivo del descuento (opcional)" : "Discount reason (optional)"} value={discNote} onChange={(e) => setDiscNote(e.target.value)} />
+              )}
+              {(taxRate > 0 || discount > 0) && (
                 <>
                   <div className="row" style={{ alignItems: "center" }}>
                     <span className="grow t-sm muted">Subtotal</span>
                     <span className="mono t-sm">${formatMoney(subtotal)}</span>
                   </div>
-                  <div className="row" style={{ alignItems: "center" }}>
-                    <span className="grow t-sm muted">IVA {taxRate}%</span>
-                    <span className="mono t-sm">${formatMoney(tax)}</span>
-                  </div>
+                  {discount > 0 && (
+                    <div className="row" style={{ alignItems: "center" }}>
+                      <span className="grow t-sm" style={{ color: "var(--green)" }}>{lang === "es" ? "Descuento" : "Discount"}{discKind === "pct" ? ` ${Math.min(100, discRaw)}%` : ""}</span>
+                      <span className="mono t-sm" style={{ color: "var(--green)" }}>−${formatMoney(discount)}</span>
+                    </div>
+                  )}
+                  {taxRate > 0 && (
+                    <div className="row" style={{ alignItems: "center" }}>
+                      <span className="grow t-sm muted">IVA {taxRate}%</span>
+                      <span className="mono t-sm">${formatMoney(tax)}</span>
+                    </div>
+                  )}
                 </>
               )}
               <div className="row" style={{ alignItems: "center" }}>
                 <span className="grow" style={{ fontWeight: 700 }}>Total</span>
-                <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal + tax)}</span>
+                <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>${formatMoney(subtotal - discount + tax)}</span>
               </div>
             </div>
           )}

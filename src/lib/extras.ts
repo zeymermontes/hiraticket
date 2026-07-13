@@ -103,12 +103,16 @@ export interface ReportData {
   byStage: { name: string; color: string; count: number }[];
   byArea: { name: string; color: string; count: number }[];
   byAgent: { name: string; color: string; count: number; id: string }[];
+  // Discounts granted in the range (count + $), attributed to the order's assignee.
+  discountCount: number;
+  discountTotal: number;
+  byAgentDiscounts: { id: string; name: string; color: string; count: number; amount: number }[];
   // Per-order detail for the report export (names already resolved).
   orders: {
     code: string; contact: string; phone: string; stage: string; area: string; agent: string;
     priority: string; pay_status: string;
     items: { name: string; qty: number; unit_price: number; subtotal: number }[];
-    total: number; paid: number;
+    total: number; paid: number; discount: number; discount_note: string | null;
     created_at: string | null; updated_at: string | null; due_at: string | null;
   }[];
 }
@@ -117,16 +121,16 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
   const toISO = new Date(`${range.to}T23:59:59.999`).toISOString();
   const fetchOrders = async () => {
-    const cols = (due: string) =>
-      `code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${due}` +
+    const cols = (opt: string) =>
+      `code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${opt}` +
       `contact:contacts(name,phone), items:order_items(name,qty,unit_price,subtotal), payments(amount)`;
-    // due_at (0029) may not exist yet — fall back to the base columns (same cascade as kanban).
-    let { data, error } = await supabase.from("orders").select(cols("due_at, "))
+    const get = (opt: string) => supabase.from("orders").select(cols(opt))
       .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false });
-    if (error) ({ data } = await supabase.from("orders").select(cols(""))
-      .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
-      .order("created_at", { ascending: false }));
+    // discount (0058) / due_at (0029) may not exist yet — cascade the fallbacks.
+    let { data, error } = await get("due_at, discount, discount_pct, discount_note, ");
+    if (error) ({ data, error } = await get("due_at, "));
+    if (error) ({ data } = await get(""));
     return data ?? [];
   };
   const [orders, { count: resolved }, stages, areas, agents, catalog] = await Promise.all([
@@ -151,8 +155,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     const cost = costByName.get(norm(it.name ?? ""));
     return cost != null ? subtotal - cost * Number(it.qty ?? 0) : subtotal * (manualMarginPct / 100);
   };
+  // Order-level profit is net of its discount (the discount comes out of the margin).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const orderProfit = (o: any) => ((o.items ?? []) as any[]).reduce((s, it) => s + itemProfit(it), 0);
+  const orderProfit = (o: any) => ((o.items ?? []) as any[]).reduce((s, it) => s + itemProfit(it), 0) - Number(o.discount ?? 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows = (orders ?? []) as any[]; // joined select() string defeats column inference
   const countBy = <T extends { id: string; name: string; color: string }>(
@@ -209,6 +214,13 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     .map((p) => ({ ...p, profit: Math.round(p.profit * 100) / 100 }))
     .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
 
+  const discounted = rows.filter((o) => Number(o.discount ?? 0) > 0);
+  const discountTotal = Math.round(discounted.reduce((s, o) => s + Number(o.discount ?? 0), 0) * 100) / 100;
+  const byAgentDiscounts = agents.map((a) => {
+    const mine = discounted.filter((o) => o.assignee_id === a.id);
+    return { id: a.id, name: a.name, color: a.color, count: mine.length, amount: Math.round(mine.reduce((s, o) => s + Number(o.discount ?? 0), 0) * 100) / 100 };
+  }).filter((a) => a.count > 0).sort((a, b) => b.amount - a.amount);
+
   const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
   const lastStage = stages.length ? stages[stages.length - 1] : null;
   const stageName = new Map(stages.map((s) => [s.id, s.name]));
@@ -229,6 +241,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     byStage: countBy(stages, "stage_id"),
     byArea: countBy(areas, "area_id"),
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
+    discountCount: discounted.length,
+    discountTotal,
+    byAgentDiscounts,
     orders: rows.map((o) => ({
       code: (o.code as string) ?? "",
       contact: (o.contact?.name as string) ?? "",
@@ -248,6 +263,8 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       total: Number(o.total ?? 0),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       paid: ((o.payments ?? []) as any[]).reduce((s, p) => s + Number(p.amount ?? 0), 0),
+      discount: Number(o.discount ?? 0),
+      discount_note: (o.discount_note as string) ?? null,
       created_at: (o.created_at as string) ?? null,
       updated_at: (o.updated_at as string) ?? null,
       due_at: (o.due_at as string) ?? null,

@@ -339,6 +339,8 @@ interface NewOrder {
   dueAt?: string | null;
   note?: string;
   requiresInvoice?: boolean; // "Requiere factura" — adds the business's IVA to the total (if enabled)
+  // Optional discount: value is $ or % depending on kind; tax applies AFTER the discount.
+  discount?: { kind: "amount" | "pct"; value: number; note?: string } | null;
 }
 
 /** Create an order (and its contact if new) from the New Order modal. */
@@ -377,7 +379,14 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     const { data: biz } = await supabase.from("businesses").select("invoice_add_tax, invoice_tax_rate").eq("id", businessId).maybeSingle();
     if ((biz as { invoice_add_tax?: boolean } | null)?.invoice_add_tax ?? false) taxRate = Number((biz as { invoice_tax_rate?: number } | null)?.invoice_tax_rate ?? 16);
   }
-  const total = taxRate > 0 ? Math.round(base * (1 + taxRate / 100) * 100) / 100 : base;
+  // Discount ($ or %) comes off the subtotal; IVA is computed on the discounted base.
+  const dIn = input.discount && input.discount.value > 0 ? input.discount : null;
+  const discountPct = dIn?.kind === "pct" ? Math.min(100, dIn.value) : null;
+  const discount = dIn
+    ? Math.min(base, Math.round((discountPct != null ? base * (discountPct / 100) : dIn.value) * 100) / 100)
+    : 0;
+  const taxedBase = base - discount;
+  const total = taxRate > 0 ? Math.round(taxedBase * (1 + taxRate / 100) * 100) / 100 : taxedBase;
 
   const orderRow = {
     business_id: businessId,
@@ -390,8 +399,17 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
     priority: input.priority ?? "normal",
     total,
   };
-  let { data: order } = await supabase.from("orders").insert({ ...orderRow, requires_invoice: !!input.requiresInvoice, tax_rate: taxRate > 0 ? taxRate : null }).select("id").single();
-  if (!order) ({ data: order } = await supabase.from("orders").insert(orderRow).select("id").single()); // 0050 not applied yet
+  const extras = {
+    requires_invoice: !!input.requiresInvoice,
+    tax_rate: taxRate > 0 ? taxRate : null,
+    discount,
+    discount_pct: discountPct,
+    discount_note: (dIn?.note ?? "").trim() || null,
+  };
+  let { data: order } = await supabase.from("orders").insert({ ...orderRow, ...extras }).select("id").single();
+  // discount (0058) / invoice (0050) may not be applied yet — cascade the fallbacks.
+  if (!order) ({ data: order } = await supabase.from("orders").insert({ ...orderRow, requires_invoice: !!input.requiresInvoice, tax_rate: taxRate > 0 ? taxRate : null }).select("id").single());
+  if (!order) ({ data: order } = await supabase.from("orders").insert(orderRow).select("id").single());
 
   if (order) {
     if (input.dueAt) await supabase.from("orders").update({ due_at: input.dueAt }).eq("id", order.id); // best-effort (0029)
@@ -413,6 +431,14 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
       business_id: businessId, parent_type: "order", parent_id: order.id,
       actor_id: user?.id ?? null, kind: "plus", text: created,
     });
+    // Audit trail for the discount (business mode only — the modal hides discounts in personal).
+    if (discount > 0) {
+      await supabase.from("events").insert({
+        business_id: businessId, parent_type: "order", parent_id: order.id,
+        actor_id: user?.id ?? null, kind: "dot",
+        text: `Descuento aplicado: −$${discount}${discountPct != null ? ` (${discountPct}%)` : ""}${extras.discount_note ? ` — ${extras.discount_note}` : ""}`,
+      });
+    }
   }
 
   revalidatePath("/orders");

@@ -79,6 +79,8 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         [es ? "Ventas" : "Sales", data.totalSales],
         [es ? "Ganancia estimada" : "Estimated profit", data.totalProfit],
         [es ? "Ticket promedio" : "Avg ticket", data.avgTicket],
+        [es ? "Descuentos otorgados" : "Discounts granted", data.discountCount],
+        [es ? "Total descuentos" : "Total discounts", data.discountTotal],
       ] as CellValue[][]),
       [objs, data.orderCount],
       [personal ? (es ? "Activas" : "Active") : (es ? "Activos" : "Active"), active],
@@ -125,7 +127,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         es ? "Prioridad" : "Priority",
         ...(personal ? [] : [es ? "Pago" : "Payment"]),
         itemLabel,
-        ...(personal ? [] : ["Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance"]),
+        ...(personal ? [] : [es ? "Descuento" : "Discount", es ? "Motivo desc." : "Disc. reason", "Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance"]),
         es ? "Creado" : "Created",
         es ? "Fecha límite" : "Deadline",
         es ? "Actualizado" : "Updated",
@@ -135,7 +137,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         prioLabel(o.priority),
         ...(personal ? [] : [payLabel(o.pay_status)]),
         o.items.map((it) => `${it.qty}× ${it.name}`).join(" · "),
-        ...(personal ? [] : [o.total, o.paid, o.total - o.paid]),
+        ...(personal ? [] : [o.discount || "", o.discount_note ?? "", o.total, o.paid, o.total - o.paid]),
         fmtTs(o.created_at),
         o.due_at ? fmtTs(o.due_at) : "",
         fmtTs(o.updated_at),
@@ -162,6 +164,14 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       { name: es ? "Por área" : "By area", rows: byRows(data.byArea, es ? "Área" : "Area") },
       { name: es ? "Por agente" : "By agent", rows: byRows(data.byAgent, es ? "Agente" : "Agent") },
       { name: personal ? (es ? "Top subtareas" : "Top subtasks") : (es ? "Top productos" : "Top products"), rows: topSheet },
+      ...(personal ? [] : [{
+        name: es ? "Descuentos" : "Discounts",
+        rows: [
+          [es ? "Agente" : "Agent", es ? "Descuentos" : "Discounts", es ? "Monto" : "Amount"],
+          ...data.byAgentDiscounts.map((a) => [a.name, a.count, a.amount] as CellValue[]),
+          [es ? "Total" : "Total", data.discountCount, data.discountTotal],
+        ] as CellValue[][],
+      }]),
       { name: objs, rows: detail },
       { name: itemLabel, rows: itemsSheet },
     ]);
@@ -292,6 +302,28 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           <BarList title={lang === "es" ? "Por etapa" : "By stage"} rows={data.byStage} />
           <BarList title={lang === "es" ? "Por área" : "By area"} rows={data.byArea} />
           <BarList title={lang === "es" ? "Por agente" : "By agent"} rows={data.byAgent} />
+          {!personal && (
+            <section className="ws-block">
+              <div className="ws-block-head">
+                <Icon name="tag" size={16} /><h4>{lang === "es" ? "Descuentos por agente" : "Discounts by agent"}</h4>
+                <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                  {data.discountCount} · {money(Math.round(data.discountTotal))}
+                </span>
+              </div>
+              <div className="ws-block-body col gap-2">
+                {(() => { const max = Math.max(1, ...data.byAgentDiscounts.map((a) => a.amount)); return data.byAgentDiscounts.map((a) => (
+                  <div key={a.id} className="row gap-2" style={{ alignItems: "center" }}>
+                    <span className="t-sm truncate" style={{ width: 120 }} title={a.name}>{a.name}</span>
+                    <div style={{ flex: 1, height: 10, background: "var(--surface-3)", borderRadius: 6, overflow: "hidden" }}>
+                      <div style={{ width: `${(a.amount / max) * 100}%`, height: "100%", background: a.color.startsWith("#") ? a.color : `var(--${a.color})` }} />
+                    </div>
+                    <span className="mono t-sm" style={{ whiteSpace: "nowrap" }}>{a.count} · {money(Math.round(a.amount))}</span>
+                  </div>
+                )); })()}
+                {data.byAgentDiscounts.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin descuentos en el periodo." : "No discounts in this period."}</div>}
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>

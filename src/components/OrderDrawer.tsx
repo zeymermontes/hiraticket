@@ -271,15 +271,22 @@ export function OrderDrawer({
                 const draft = editItems ? (Number(newItem.qty) || 0) * (Number(newItem.price) || 0) : 0;
                 const base = detail.items.reduce((s, it) => s + it.subtotal, 0) + draft;
                 const rate = detail.requires_invoice ? Number(detail.tax_rate ?? 0) : 0;
-                const tax = editItems || rate === 0 ? Math.round(base * (rate / 100) * 100) / 100 : Math.max(0, detail.total - base);
-                const liveTotal = editItems ? Math.round((base + tax) * 100) / 100 : detail.total;
+                const disc = Math.min(base, Number(detail.discount ?? 0));
+                const tax = editItems || rate === 0 ? Math.round((base - disc) * (rate / 100) * 100) / 100 : Math.max(0, detail.total - (base - disc));
+                const liveTotal = editItems ? Math.round((base - disc + tax) * 100) / 100 : detail.total;
                 return (
                   <div className="col gap-1" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
+                    {(rate > 0 || disc > 0) && (
+                      <div className="row"><span className="grow t-sm muted">Subtotal</span><span className="mono t-sm">${formatMoney(base)}</span></div>
+                    )}
+                    {disc > 0 && (
+                      <div className="row" title={detail.discount_note ?? undefined}>
+                        <span className="grow t-sm" style={{ color: "var(--green)" }}>{lang === "es" ? "Descuento" : "Discount"}{detail.discount_pct != null ? ` ${Number(detail.discount_pct)}%` : ""}{detail.discount_note ? ` — ${detail.discount_note}` : ""}</span>
+                        <span className="mono t-sm" style={{ color: "var(--green)" }}>−${formatMoney(disc)}</span>
+                      </div>
+                    )}
                     {rate > 0 && (
-                      <>
-                        <div className="row"><span className="grow t-sm muted">Subtotal</span><span className="mono t-sm">${formatMoney(base)}</span></div>
-                        <div className="row"><span className="grow t-sm muted">IVA {rate}%</span><span className="mono t-sm">${formatMoney(tax)}</span></div>
-                      </>
+                      <div className="row"><span className="grow t-sm muted">IVA {rate}%</span><span className="mono t-sm">${formatMoney(tax)}</span></div>
                     )}
                     <div className="row">
                       <span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Total" : "Total"}</span>

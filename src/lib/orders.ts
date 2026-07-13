@@ -15,6 +15,9 @@ export interface OrderDetail {
   total: number;
   requires_invoice: boolean;
   tax_rate: number | null; // IVA % frozen on the order at creation (null = none)
+  discount: number; // resolved $ amount off the subtotal (0 = none)
+  discount_pct: number | null; // set when the agent entered a % (display only)
+  discount_note: string | null;
   priority: string;
   pay_status: string;
   created_at: string;
@@ -44,8 +47,9 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // Cascade fallbacks: product_stages join (0019) and due_at (0029) may not be applied yet.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let order: any, orderErr: unknown;
-  // requires_invoice/tax_rate (0050) and pay_token (0048) are optional — cascade the fallbacks.
-  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  // discount (0058), requires_invoice/tax_rate (0050) and pay_token (0048) are optional — cascade the fallbacks.
+  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, discount, discount_pct, discount_note, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ")).eq("id", orderId).maybeSingle());
