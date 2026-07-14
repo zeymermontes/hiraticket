@@ -47,7 +47,7 @@ const PLANS: Plan[] = [
 ];
 
 const FAQ = [
-  { q: { es: "¿WhatsApp es oficial?", en: "Is the WhatsApp connection official?" }, a: { es: "Usamos una conexión tipo WhatsApp Web: vinculas tu propio número escaneando un QR. Es no oficial, por eso mostramos siempre el estado de conexión y te avisamos si se cae.", en: "We use a WhatsApp Web-style connection: you link your own number by scanning a QR. It is unofficial, so we always show the connection status and alert you if it drops." } },
+  { q: { es: "¿WhatsApp es oficial?", en: "Is the WhatsApp connection official?" }, a: { es: "Sí. Hiraticket se integra con la API oficial de WhatsApp Business de Meta (WhatsApp Business Platform). Conectas el número de tu negocio a través de Meta, con la estabilidad y las políticas de la plataforma oficial.", en: "Yes. Hiraticket integrates with Meta's official WhatsApp Business API (WhatsApp Business Platform). You connect your business number through Meta, with the stability and policies of the official platform." } },
   { q: { es: "¿Puedo conectar varios números?", en: "Can I connect multiple numbers?" }, a: { es: "Sí. Desde el plan Pro puedes conectar 2 números y en Negocio hasta 5, cada uno con su propia bandeja.", en: "Yes. From the Pro plan you can connect 2 numbers and up to 5 on Business, each with its own inbox." } },
   { q: { es: "¿Hay prueba gratis?", en: "Is there a free trial?" }, a: { es: "Todos los planes incluyen 14 días gratis, sin tarjeta. Al terminar eliges el plan que mejor te quede.", en: "Every plan includes a 14-day free trial, no card required. When it ends you pick the plan that fits best." } },
   { q: { es: "¿Puedo cambiar o cancelar mi plan?", en: "Can I change or cancel my plan?" }, a: { es: "Cuando quieras, desde Ajustes. Los cambios se aplican en tu siguiente factura sin penalización.", en: "Anytime, from Settings. Changes apply on your next invoice with no penalty." } },
@@ -262,7 +262,7 @@ export function Landing() {
         <div className="footer-bottom">
           <span>© 2026 Hiraticket</span><span className="sep">·</span><span>{t("Hecho en México 🇲🇽", "Made in Mexico 🇲🇽")}</span>
           <span style={{ flex: 1 }} />
-          <span>{t("Integración no oficial vía WhatsApp Web.", "Unofficial integration via WhatsApp Web.")}</span>
+          <span>{t("Integración oficial con la API de WhatsApp Business (Meta).", "Official integration with the WhatsApp Business API (Meta).")}</span>
         </div>
       </div></footer>
     </div>
