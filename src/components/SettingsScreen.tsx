@@ -8,6 +8,7 @@ import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { WaSession } from "@/lib/whatsapp";
+import { EmbeddedSignup } from "@/components/EmbeddedSignup";
 import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
 
 const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
@@ -96,7 +97,7 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false }: { businessId: string; sessions: WaSession[]; isPlatformAdmin?: boolean }) {
+export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
   const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -148,6 +149,21 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false }
             )}
           </div>
           <div className="ws-block-body col gap-3">
+            {showOfficial && (
+              <div className="col gap-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
+                <div className="row gap-2">
+                  <Icon name="whatsapp" size={16} />
+                  <strong>{lang === "es" ? "WhatsApp oficial (Meta)" : "Official WhatsApp (Meta)"}</strong>
+                  <Pill color="green">{lang === "es" ? "Recomendado" : "Recommended"}</Pill>
+                </div>
+                <div className="t-sm muted">
+                  {lang === "es"
+                    ? "Conecta tu número por la API oficial de Meta. Mantienes WhatsApp en tu teléfono (coexistencia) y habilitas plantillas, campañas y agentes, sin riesgo de baneo."
+                    : "Connect via Meta's official API. Keep WhatsApp on your phone (coexistence) and enable templates, campaigns and agents, with no ban risk."}
+                </div>
+                <EmbeddedSignup appId={fbAppId} configId={esConfigId} />
+              </div>
+            )}
             {sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
             {sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             <div className="t-xs muted">
