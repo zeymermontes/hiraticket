@@ -257,7 +257,7 @@ export function Landing() {
           </div>
           <div><h5>{t("Producto", "Product")}</h5><a href="#features">{t("Producto", "Product")}</a><a href="#pricing">{t("Precios", "Pricing")}</a></div>
           <div><h5>{t("Empresa", "Company")}</h5><a href="#faq">FAQ</a><Link href="/login">{t("Iniciar sesión", "Sign in")}</Link></div>
-          <div><h5>{t("Legal", "Legal")}</h5><a href="#">{t("Privacidad", "Privacy")}</a><a href="#">{t("Términos", "Terms")}</a></div>
+          <div><h5>{t("Legal", "Legal")}</h5><Link href="/privacy">{t("Privacidad", "Privacy")}</Link><Link href="/terms">{t("Términos", "Terms")}</Link></div>
         </div>
         <div className="footer-bottom">
           <span>© 2026 Hiraticket</span><span className="sep">·</span><span>{t("Hecho en México 🇲🇽", "Made in Mexico 🇲🇽")}</span>
