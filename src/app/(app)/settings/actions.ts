@@ -1,9 +1,18 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { showOfficialWhatsApp } from "@/lib/whatsapp-official";
+
+// Official-flow (allowlisted) accounts must never link numbers through the unofficial whatsmeow
+// bridge — ban risk, and App Review reviewers must not be able to trigger it. The UI hides these
+// controls; this guard enforces it even if the actions are invoked directly.
+async function officialOnly(): Promise<boolean> {
+  return showOfficialWhatsApp();
+}
 
 /** Ask the worker to (re)connect this session — it will publish a QR. */
 export async function connectSession(sessionId: string): Promise<void> {
+  if (await officialOnly()) return;
   const supabase = await createClient();
   await supabase
     .from("whatsapp_sessions")
@@ -26,6 +35,7 @@ export async function disconnectSession(sessionId: string): Promise<void> {
 const MAX_WHATSAPP_SESSIONS = 1;
 
 export async function addSession(businessId: string, label: string): Promise<void> {
+  if (await officialOnly()) return;
   const supabase = await createClient();
   const { count } = await supabase
     .from("whatsapp_sessions").select("id", { count: "exact", head: true }).eq("business_id", businessId);
@@ -47,6 +57,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function setConnectMethod(
   sessionId: string, method: "qr" | "pairing", phone?: string,
 ): Promise<void> {
+  if (await officialOnly()) return;
   const supabase = await createClient();
   await supabase
     .from("whatsapp_sessions")

@@ -141,14 +141,16 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
           <div className="ws-block-head">
             <Icon name="whatsapp" size={16} />
             <h4 className="grow">{lang === "es" ? "Conexión de WhatsApp" : "WhatsApp connection"}</h4>
-            {sessions.length === 0 ? (
+            {/* Official-flow (allowlisted) accounts must never link via the unofficial bridge —
+                hide the whatsmeow UI entirely (ban risk + App Review reviewers must not see it). */}
+            {!showOfficial && (sessions.length === 0 ? (
               <button className="btn btn-sm btn-outline" onClick={() => run(() => addSession(businessId, lang === "es" ? "Número" : "Number"))}>
                 <Icon name="plus" size={14} />{lang === "es" ? "Agregar número" : "Add number"}
               </button>
             ) : (
               // TEMP: one number per business for now (mirrors the addSession server cap).
               <Pill color="slate">{lang === "es" ? "1 número por cuenta" : "1 number per account"}</Pill>
-            )}
+            ))}
           </div>
           <div className="ws-block-body col gap-3">
             {showOfficial && (
@@ -167,13 +169,15 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
               </div>
             )}
             {showOfficial && <WaCloudTester />}
-            {sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
-            {sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
-            <div className="t-xs muted">
-              {lang === "es"
-                ? "Conecta el número de tu negocio para recibir y responder mensajes de tus clientes."
-                : "Connect your business number to receive and reply to your customers' messages."}
-            </div>
+            {!showOfficial && sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
+            {!showOfficial && sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
+            {!showOfficial && (
+              <div className="t-xs muted">
+                {lang === "es"
+                  ? "Conecta el número de tu negocio para recibir y responder mensajes de tus clientes."
+                  : "Connect your business number to receive and reply to your customers' messages."}
+              </div>
+            )}
           </div>
         </section>
 
