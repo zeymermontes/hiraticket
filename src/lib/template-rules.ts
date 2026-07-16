@@ -72,8 +72,20 @@ export function validateTemplate(d: TemplateDraft, lang: "es" | "en" = "es"): Is
     err("No puede haber dos variables seguidas; agrega texto entre ellas.", "Two variables can't be adjacent; add text between them.");
   if (body && body.replace(VAR_RE, "").trim() === "")
     err("El cuerpo no puede ser solo variables.", "Body can't be only variables.");
-  if (/^\s*\{\{\s*\d+\s*\}\}/.test(d.body) || /\{\{\s*\d+\s*\}\}\s*$/.test(d.body))
-    warn("Meta suele rechazar cuerpos que empiezan o terminan con una variable.", "Meta often rejects bodies that start or end with a variable.");
+  // Meta rejects bodies that begin or end with a variable (error 2388299) — and it ignores
+  // surrounding punctuation, so "…total es de {{2}}." still counts as ending with a variable.
+  const stripped = body.replace(/[\s.,;:!?¡¿()"'\-–—]+$/g, "");
+  const strippedStart = body.replace(/^[\s.,;:!?¡¿()"'\-–—]+/g, "");
+  if (/^\{\{\s*\d+\s*\}\}/.test(strippedStart))
+    err(
+      "El cuerpo no puede empezar con una variable; agrega texto antes.",
+      "Body can't start with a variable; add text before it.",
+    );
+  if (/\{\{\s*\d+\s*\}\}$/.test(stripped))
+    err(
+      "El cuerpo no puede terminar con una variable (la puntuación no cuenta); agrega texto después, ej. “{{2}} MXN”.",
+      "Body can't end with a variable (punctuation doesn't count); add text after it, e.g. “{{2}} MXN”.",
+    );
 
   // Header (optional): TEXT, max 60, at most 1 variable, which must be {{1}} with an example.
   if (d.header.trim()) {

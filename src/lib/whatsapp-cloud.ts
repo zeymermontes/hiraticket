@@ -14,8 +14,10 @@ async function graph<T>(path: string, token: string, init?: RequestInit): Promis
     });
     const json = await res.json();
     if (!res.ok) {
-      const msg = json?.error?.message || `HTTP ${res.status}`;
-      return { ok: false, error: msg };
+      // Meta puts the actionable text in error_user_msg; error.message is often just "Invalid parameter".
+      const e = json?.error;
+      const msg = e?.error_user_msg || e?.message || `HTTP ${res.status}`;
+      return { ok: false, error: e?.error_user_title ? `${e.error_user_title}: ${msg}` : msg };
     }
     return { ok: true, data: json as T };
   } catch (e) {
