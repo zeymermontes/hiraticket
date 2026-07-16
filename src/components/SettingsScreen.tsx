@@ -9,6 +9,7 @@ import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { WaSession } from "@/lib/whatsapp";
 import { EmbeddedSignup } from "@/components/EmbeddedSignup";
+import { WaCloudTester } from "@/components/WaCloudTester";
 import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
 
 const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
@@ -164,6 +165,7 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
                 <EmbeddedSignup appId={fbAppId} configId={esConfigId} />
               </div>
             )}
+            {showOfficial && <WaCloudTester />}
             {sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
             {sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             <div className="t-xs muted">
