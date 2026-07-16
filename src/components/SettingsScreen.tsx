@@ -10,6 +10,7 @@ import type { PillColor } from "@/lib/types";
 import type { WaSession } from "@/lib/whatsapp";
 import { EmbeddedSignup } from "@/components/EmbeddedSignup";
 import { WaCloudTester } from "@/components/WaCloudTester";
+import { TemplateManager } from "@/components/TemplateManager";
 import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
 
 const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
@@ -170,11 +171,23 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
             {sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             <div className="t-xs muted">
               {lang === "es"
-                ? "Usa Baileys (mismo método que Whaticket SaaS): escanea el QR o vincula con código. El worker debe estar corriendo."
-                : "Uses Baileys (same as Whaticket SaaS): scan the QR or link with a code. The worker must be running."}
+                ? "Conecta el número de tu negocio para recibir y responder mensajes de tus clientes."
+                : "Connect your business number to receive and reply to your customers' messages."}
             </div>
           </div>
         </section>
+
+        {showOfficial && (
+          <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+            <div className="ws-block-head">
+              <Icon name="whatsapp" size={16} />
+              <h4 className="grow">{lang === "es" ? "Plantillas de WhatsApp" : "WhatsApp templates"}</h4>
+            </div>
+            <div className="ws-block-body">
+              <TemplateManager />
+            </div>
+          </section>
+        )}
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="sliders" size={16} /><h4>{lang === "es" ? "Apariencia" : "Appearance"}</h4></div>

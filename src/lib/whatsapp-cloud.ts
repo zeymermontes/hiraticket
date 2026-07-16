@@ -62,11 +62,52 @@ export function createTemplate(
   });
 }
 
+export interface TemplateRow {
+  id: string;
+  name: string;
+  status: string;
+  category: string;
+  language: string;
+  components?: { type: string; format?: string; text?: string }[];
+  rejected_reason?: string;
+}
+
 export function listTemplates(wabaId: string, token: string) {
-  return graph<{ data: { name: string; status: string; category: string; language: string }[] }>(
-    `${wabaId}/message_templates?fields=name,status,category,language&limit=50`,
+  return graph<{ data: TemplateRow[] }>(
+    `${wabaId}/message_templates?fields=id,name,status,category,language,components,rejected_reason&limit=100`,
     token,
   );
+}
+
+// Create a template from a prebuilt components array (header/body/footer/…), for the full builder.
+export function createTemplateFull(
+  wabaId: string,
+  token: string,
+  opts: { name: string; category: string; language: string; components: Record<string, unknown>[] },
+) {
+  return graph<{ id: string; status: string; category: string }>(`${wabaId}/message_templates`, token, {
+    method: "POST",
+    body: JSON.stringify(opts),
+  });
+}
+
+// Edit an existing template (only REJECTED/PAUSED in our UI). category is optional; components replaces content.
+export function editTemplate(
+  templateId: string,
+  token: string,
+  opts: { category?: string; components: Record<string, unknown>[] },
+) {
+  return graph<{ success: boolean }>(`${templateId}`, token, {
+    method: "POST",
+    body: JSON.stringify(opts),
+  });
+}
+
+// Delete a template by name (removes all languages of that name on the WABA).
+export function deleteTemplate(wabaId: string, token: string, name: string) {
+  return graph<{ success: boolean }>(`${wabaId}/message_templates?name=${encodeURIComponent(name)}`, token, {
+    method: "DELETE",
+  });
 }
 
 // Reads the shared test credentials (used by the App Review demo panel). Empty until set in env.
