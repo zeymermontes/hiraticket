@@ -569,12 +569,38 @@ export function ChatScreen({
     _prefetching.add(id);
     liveDetail(id).then((d) => { if (d) _detailCache.set(id, d); }).catch(() => {}).finally(() => _prefetching.delete(id));
   }, []);
+  /** Loads just the detail for `id` into view (cache first, then fresh). */
+  const showConv = useCallback((id: string, seed?: ConvDetail) => {
+    if (seed) setDetail(seed);
+    liveDetail(id).then((d) => {
+      if (!d) return;
+      _detailCache.set(id, d);
+      setDetail((cur) => (cur && cur.id === id ? d : cur));
+    }).catch(() => {});
+  }, []);
+
   const openConv = useCallback((c: ConvListItem) => {
     setDetail(_detailCache.get(c.id) ?? skeletonDetail(c));
     // Persist immediately on the explicit click (the URL lags behind the optimistic open, so the
     // URL-guarded effect below can miss it and the "last chat" cookie would get stuck).
     try { document.cookie = `ht_lastChat=${c.id}; path=/; max-age=2592000; SameSite=Lax`; } catch {}
-  }, []);
+    // history.pushState instead of router.push: opening a chat only changes the DETAIL, but a
+    // router navigation re-runs the whole /chat server component — list, agents, areas, stages,
+    // sessions, products, integrations — on every click, and the route is force-dynamic so nothing
+    // is cached. Next syncs its router state from pushState, so ?c= deep links keep working.
+    try { window.history.pushState(null, "", `/chat?c=${c.id}`); } catch {}
+    showConv(c.id);
+  }, [showConv]);
+
+  // Back/forward has to move between chats now that opening one isn't a route navigation.
+  useEffect(() => {
+    const onPop = () => {
+      const id = new URLSearchParams(window.location.search).get("c");
+      if (id) showConv(id, _detailCache.get(id));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [showConv]);
 
   // Background backfill of the local search cache (WhatsApp Web model): walk recent conversations
   // and page their history (up to ~90 days) into IndexedDB, throttled, resumable across sessions
@@ -802,6 +828,9 @@ export function ChatScreen({
   const convClick = (e: React.MouseEvent, c: ConvListItem) => {
     if (justLongPressed.current) { justLongPressed.current = false; e.preventDefault(); return; }
     if (selectMode) { e.preventDefault(); toggleSel(c.id); return; }
+    // Modifier clicks keep the browser's own behaviour (new tab/window) — the href is real.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault(); // no route navigation: openConv swaps the detail and rewrites the URL
     openConv(c);
   };
   const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); refetchListRef.current(); exitSelect(); })(); };
@@ -1022,7 +1051,9 @@ export function ChatScreen({
             filtered.map((c) => {
               const a = c.assignee_id ? agentMap.get(c.assignee_id) : null;
               return (
-                <Link key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={(e) => convClick(e, c)}
+                // Plain <a>, not <Link>: Link would prefetch the RSC payload of the whole /chat
+                // route for every visible row. The href stays real so cmd-click still opens a tab.
+                <a key={c.id} href={`/chat?c=${c.id}`} onMouseEnter={() => prefetchDetail(c.id)} onClick={(e) => convClick(e, c)}
                   onPointerDown={() => startPress(c.id)} onPointerUp={cancelPress} onPointerLeave={cancelPress} onPointerMove={cancelPress} onContextMenu={(e) => { if (selectMode) e.preventDefault(); }}
                   className={"conv" + (c.id === (detail?.id ?? selectedId) && !selectMode ? " sel" : "") + (c.unread ? " unread" : "")}
                   style={selectMode && selected.has(c.id) ? { background: "var(--brand-50)" } : undefined}>
@@ -1048,7 +1079,7 @@ export function ChatScreen({
                       {c.unread > 0 && <span className="badge badge-red">{c.unread}</span>}
                     </div>
                   </div>
-                </Link>
+                </a>
               );
             })
           )}
