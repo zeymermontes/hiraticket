@@ -22,7 +22,19 @@
 .gs-foot kbd { font-family: inherit; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 2px; background: var(--surface-2); }
 
 /* Toasts (bottom-right) */
-.toaster { position: fixed; right: 18px; bottom: 18px; z-index: 4000; display: flex; flex-direction: column; gap: 10px; align-items: flex-end; pointer-events: none; }
+/* Columna apilada: los toasts se acumulan uno sobre otro en vez de taparse. Tope de media
+   pantalla y scroll propio, para que una ráfaga no invada la app entera.
+   overflow-y: auto necesita pointer-events en el contenedor para poder scrollear, así que se
+   devuelven solo cuando hay algo dentro (.toaster:not(:empty)); vacío debe dejar pasar los clics. */
+.toaster {
+  position: fixed; right: 18px; bottom: 18px; z-index: 4000;
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+  max-height: 50vh; overflow-y: auto; overflow-x: hidden; padding: 2px;
+  pointer-events: none; scrollbar-width: thin;
+}
+.toaster:not(:empty) { pointer-events: auto; }
+.toaster::-webkit-scrollbar { width: 6px; }
+.toaster::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 .toast {
   pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; width: 320px; max-width: calc(100vw - 36px);
   padding: 11px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);

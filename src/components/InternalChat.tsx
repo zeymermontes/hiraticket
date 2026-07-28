@@ -54,7 +54,7 @@ function renderBody(body: string, mentionNames: string[]) {
   });
 }
 
-export function InternalChat({ initial, businessId }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string }) {
+export function InternalChat({ initial, businessId, initialChannel }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string; initialChannel?: string | null }) {
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const [threads, setThreads] = useState(initial.threads);
@@ -149,7 +149,9 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   useEffect(() => {
     let saved: string | null = null;
     try { saved = localStorage.getItem("ht.internalCh." + businessId); } catch {}
-    const start0 = saved && (saved === "team" || threads.some((t) => t.key === saved)) ? saved : selRef.current;
+    // ?ch= gana sobre el último canal visto: viene de un toast, que apunta a un hilo concreto.
+    const wanted = initialChannel && (initialChannel === "team" || threads.some((t) => t.key === initialChannel)) ? initialChannel : null;
+    const start0 = wanted ?? (saved && (saved === "team" || threads.some((t) => t.key === saved)) ? saved : selRef.current);
     openChannel(start0);
     /* eslint-disable-next-line */
   }, []);

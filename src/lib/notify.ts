@@ -8,7 +8,9 @@
 // Vive aquí y no dentro de un chat porque los dos chats pasan por RealtimeNotifier: así clientes
 // y equipo se comportan igual por construcción, en vez de tener que mantenerlos sincronizados.
 
-const SOUND_KEY = "ht_sound";
+// Misma llave que el interruptor de Ajustes que ya existía (y que usaba playChime en
+// Shell): con una llave propia, apagar el sonido en Ajustes no habría apagado este.
+const MUTE_KEY = "ht_muteNotif";
 const DESKTOP_KEY = "ht_desktop";
 const ASKED_KEY = "ht_notif_asked";
 
@@ -16,22 +18,38 @@ const on = (key: string) => {
   try { return localStorage.getItem(key) !== "0"; } catch { return true; }
 };
 
-export const soundEnabled = () => on(SOUND_KEY);
+export const soundEnabled = () => { try { return localStorage.getItem(MUTE_KEY) !== "1"; } catch { return true; } };
 export const desktopEnabled = () => on(DESKTOP_KEY);
-export function setSoundEnabled(v: boolean) { try { localStorage.setItem(SOUND_KEY, v ? "1" : "0"); } catch {} }
+export function setSoundEnabled(v: boolean) { try { localStorage.setItem(MUTE_KEY, v ? "0" : "1"); } catch {} }
 export function setDesktopEnabled(v: boolean) { try { localStorage.setItem(DESKTOP_KEY, v ? "1" : "0"); } catch {} }
 
-/** Pide permiso una sola vez, y solo tras un gesto del usuario — los navegadores ignoran (o
- *  penalizan) la petición si se hace al cargar la página. */
+export const notifyPermission = (): NotificationPermission | "unsupported" =>
+  typeof window === "undefined" || !("Notification" in window) ? "unsupported" : Notification.permission;
+
+/** Pide permiso desde un gesto explícito del usuario (el botón de Ajustes). Devuelve el resultado.
+ *  Los navegadores exigen el gesto: pedirlo al cargar la página se ignora o se penaliza. */
+export async function requestNotifyPermission(): Promise<NotificationPermission | "unsupported"> {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  try { return await Notification.requestPermission(); } catch { return Notification.permission; }
+}
+
+/** Intento silencioso al primer clic/tecla, para quien nunca ha decidido.
+ *
+ *  Solo se marca como "ya preguntado" cuando el navegador DEVUELVE una decisión (granted/denied).
+ *  Antes se marcaba antes de pedirlo, y ahí estaba el problema: Chrome muestra un aviso discreto
+ *  en la barra —no un modal— a quien ya bloqueó notificaciones en otros sitios, así que la persona
+ *  no veía nada, la promesa quedaba en "default", y no se le volvía a preguntar nunca. Quien caiga
+ *  en ese caso ahora lo prende desde Ajustes. */
 export function requestNotifyPermissionOnce() {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (Notification.permission !== "default") return;
   try { if (localStorage.getItem(ASKED_KEY) === "1") return; } catch {}
   const ask = () => {
-    try { localStorage.setItem(ASKED_KEY, "1"); } catch {}
-    Notification.requestPermission().catch(() => {});
     window.removeEventListener("pointerdown", ask);
     window.removeEventListener("keydown", ask);
+    Notification.requestPermission()
+      .then((res) => { if (res !== "default") { try { localStorage.setItem(ASKED_KEY, "1"); } catch {} } })
+      .catch(() => {});
   };
   window.addEventListener("pointerdown", ask, { once: true });
   window.addEventListener("keydown", ask, { once: true });

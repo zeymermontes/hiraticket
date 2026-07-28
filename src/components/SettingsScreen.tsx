@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { clearCache } from "@/lib/localCache";
 import { Icon } from "@/components/Icon";
+import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled } from "@/lib/notify";
 import { useConfirm } from "@/components/Confirm";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -236,6 +237,7 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
                 <button className={muted ? "on" : ""} onClick={() => setMute(true)}><Icon name="x" size={13} />{lang === "es" ? "Silenciado" : "Muted"}</button>
               </div>
             </div>
+            <DesktopNotifRow lang={lang} />
           </div>
         </section>
 
@@ -256,6 +258,51 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
         </section>
        </div>
       </div>
+    </div>
+  );
+}
+
+/** Notificaciones del sistema: estado del permiso + interruptor.
+ *
+ *  Existe porque el intento silencioso al primer clic no basta: Chrome le muestra un aviso
+ *  discreto en la barra —no un modal— a quien ya bloqueó notificaciones en otros sitios, así que
+ *  varios miembros del equipo nunca vieron nada que aceptar. Aquí el permiso se pide desde un
+ *  botón, que es un gesto explícito y siempre abre el diálogo del navegador. */
+function DesktopNotifRow({ lang }: { lang: "es" | "en" }) {
+  const es = lang === "es";
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported">("default");
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => { setPerm(notifyPermission()); setEnabled(desktopEnabled()); }, []);
+
+  const enable = async () => {
+    const r = await requestNotifyPermission();
+    setPerm(r);
+    if (r === "granted") { setDesktopEnabled(true); setEnabled(true); }
+  };
+  const set = (v: boolean) => { setDesktopEnabled(v); setEnabled(v); };
+
+  return (
+    <div className="row gap-2">
+      <span className="grow">
+        {es ? "Notificaciones del sistema" : "System notifications"}
+        <span className="t-xs muted" style={{ display: "block" }}>
+          {perm === "unsupported"
+            ? (es ? "Tu navegador no las soporta" : "Your browser doesn't support them")
+            : perm === "denied"
+              ? (es ? "Bloqueadas en el navegador — actívalas en el candado de la barra de direcciones" : "Blocked in the browser — enable them from the padlock in the address bar")
+              : (es ? "Avisa aunque tengas la pestaña en segundo plano" : "Alerts you even when the tab is in the background")}
+        </span>
+      </span>
+      {perm === "granted" ? (
+        <div className="seg">
+          <button className={enabled ? "on" : ""} onClick={() => set(true)}>{es ? "Activado" : "On"}</button>
+          <button className={!enabled ? "on" : ""} onClick={() => set(false)}><Icon name="x" size={13} />{es ? "Apagado" : "Off"}</button>
+        </div>
+      ) : (
+        <button className="btn btn-sm btn-outline" disabled={perm === "denied" || perm === "unsupported"} onClick={enable}>
+          <Icon name="bell" size={14} />{es ? "Permitir" : "Allow"}
+        </button>
+      )}
     </div>
   );
 }

@@ -1,11 +1,20 @@
 "use client";
-import React, { createContext, useCallback, useContext, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 
 export type ToastKind = "info" | "success" | "warn" | "mention";
-export interface ToastInput { title?: string; message: string; kind?: ToastKind; href?: string }
+export interface ToastInput {
+  title?: string; message: string; kind?: ToastKind; href?: string;
+  /** No se cierra solo: espera clic o la X. Las menciones lo usan por defecto — perderse que te
+   *  nombraron por mirar a otro lado seis segundos es justo lo que hay que evitar. */
+  sticky?: boolean;
+}
 interface Toast extends ToastInput { id: number }
+
+const AUTO_DISMISS_MS = 6000;
+/** Tope de la pila. Alto porque la columna scrollea; solo evita crecer sin límite. */
+const MAX_TOASTS = 20;
 
 const ToastCtx = createContext<{ push: (t: ToastInput) => void }>({ push: () => {} });
 export const useToast = () => useContext(ToastCtx);
@@ -27,14 +36,23 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const push = useCallback((t: ToastInput) => {
     seq.current += 1;
     const id = seq.current;
-    setToasts((ts) => [...ts.slice(-4), { ...t, id }]);
-    setTimeout(() => remove(id), 6000);
+    const sticky = t.sticky ?? t.kind === "mention";
+    setToasts((ts) => [...ts.slice(-(MAX_TOASTS - 1)), { ...t, id, sticky }]);
+    if (!sticky) setTimeout(() => remove(id), AUTO_DISMISS_MS);
   }, [remove]);
+
+  // El más nuevo va abajo, pegado a la esquina. Al desbordar los 50vh el scroll se queda arriba
+  // mostrando los viejos, así que lo bajamos al llegar uno nuevo.
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [toasts.length]);
 
   return (
     <ToastCtx.Provider value={{ push }}>
       {children}
-      <div className="toaster">
+      <div className="toaster" ref={boxRef}>
         {toasts.map((t) => <ToastCard key={t.id} t={t} onClose={() => remove(t.id)} />)}
       </div>
     </ToastCtx.Provider>

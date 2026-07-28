@@ -60,14 +60,29 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         const m = payload.new as { id?: string; author_id?: string; body?: string; mentions?: string[]; channel?: string };
         if (m.author_id === userId) return; // not your own send
         const mentionedMe = Array.isArray(m.mentions) && m.mentions.includes(userId);
+        const channel = m.channel ?? "team";
+
+        // Quién escribe. Sin esto el toast decía solo "Mensaje interno" y no se sabía de quién era
+        // ni en qué hilo, que es justo lo que hace falta para decidir si vale interrumpirse.
+        let who = "";
+        if (m.author_id) {
+          try {
+            const { data } = await supabase.from("profiles").select("full_name").eq("id", m.author_id).maybeSingle();
+            who = ((data as { full_name?: string } | null)?.full_name ?? "").trim();
+          } catch {}
+        }
+        if (!who) who = "Alguien";
+        // En un DM el autor ES la otra persona, así que basta con etiquetar el hilo.
+        const where = channel === "team" ? "Equipo" : "Directo";
+        const title = mentionedMe ? `📣 ${who} te mencionó · ${where}` : `${who} · ${where}`;
+        // Deep link al hilo exacto (?ch=), no al chat interno genérico.
+        const href = `/internal?ch=${encodeURIComponent(channel)}`;
+
         const body = await previewOf("internal", m.id, m.body ?? "");
-        const title = mentionedMe ? "📣 Te mencionaron (equipo)" : "💬 Mensaje interno";
-        push(mentionedMe
-          ? { kind: "mention", title, message: body.slice(0, 90), href: "/internal" }
-          : { kind: "info", title, message: body.slice(0, 90), href: "/internal" });
+        push({ kind: mentionedMe ? "mention" : "info", title, message: body.slice(0, 90), href });
         // Mismo trato que un mensaje de cliente: el equipo no puede notificar menos.
         // Tag por canal para que una ráfaga en el mismo hilo no apile notificaciones.
-        alertIncoming({ title, body: body.slice(0, 120), href: "/internal", tag: `int-${m.channel ?? "team"}` });
+        alertIncoming({ title, body: body.slice(0, 120), href, tag: `int-${channel}` });
         notify();
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "notes", filter: `business_id=eq.${businessId}` }, (payload) => {
