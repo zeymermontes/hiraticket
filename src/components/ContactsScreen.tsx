@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { tagColor } from "@/lib/types";
@@ -10,6 +11,7 @@ import { setConvMuted, deleteContact } from "@/app/(app)/chat/actions";
 
 export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
   const { lang, personal } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const router = useRouter();
   const [q, setQ] = useState("");
   const [rows, setRows] = useState(contacts);
@@ -24,8 +26,8 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
     setRows((rs) => rs.map((x) => (x.id === c.id ? { ...x, muted: !x.muted } : x)));
     start(async () => { await setConvMuted(c.conv_id!, !c.muted); });
   };
-  const removeContact = (c: ContactRow) => {
-    if (!confirm(lang === "es" ? `¿Eliminar a ${c.name} y todos sus chats? Los pedidos se conservan. No se puede deshacer.` : `Delete ${c.name} and all their chats? Orders are kept. This can't be undone.`)) return;
+  const removeContact = async (c: ContactRow) => {
+    if (!(await ask({ icon: "trash", danger: true, title: lang === "es" ? `Eliminar a ${c.name}` : `Delete ${c.name}`, message: lang === "es" ? "Se borran todos sus chats. Los pedidos se conservan. No se puede deshacer." : "All their chats are deleted. Orders are kept. This can't be undone.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" }))) return;
     setRows((rs) => rs.filter((x) => x.id !== c.id));
     start(async () => { await deleteContact(c.id); });
   };

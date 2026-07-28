@@ -934,9 +934,16 @@ export function ChatScreen({
   }, [detail, list, tab, meId]);
 
   async function emptyTrash() {
-    if (!confirm(lang === "es"
-      ? `¿Eliminar permanentemente ${chipCounts.trash} chat(s) sin actividad en 90+ días y TODOS sus mensajes? No se puede deshacer.`
-      : `Permanently delete ${chipCounts.trash} chat(s) inactive for 90+ days and ALL their messages? This can't be undone.`)) return;
+    const ok = await ask({
+      icon: "trash", danger: true,
+      title: lang === "es" ? "Vaciar papelera" : "Empty trash",
+      message: lang === "es"
+        ? `Se eliminan ${chipCounts.trash} chat(s) sin actividad en 90+ días y TODOS sus mensajes. No se puede deshacer.`
+        : `${chipCounts.trash} chat(s) inactive for 90+ days and ALL their messages will be deleted. This can't be undone.`,
+      confirmLabel: lang === "es" ? "Eliminar todos" : "Delete all",
+      cancelLabel: lang === "es" ? "Volver" : "Back",
+    });
+    if (!ok) return;
     setPurging(true);
     try { await emptyChatTrash(businessId); refetchListRef.current(); }
     catch { alert(lang === "es" ? "No se pudo vaciar la papelera." : "Couldn't empty the trash."); }
@@ -1025,7 +1032,7 @@ export function ChatScreen({
             <span className="grow" />
             <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "status", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Estado" : "Status"}><Icon name="dot" size={13} /></button>
             <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "agent", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Asignar" : "Assign"}><Icon name="agents" size={13} /></button>
-            <button className="btn btn-sm btn-danger" disabled={!selected.size} onClick={() => { if (confirm(lang === "es" ? `¿Eliminar ${selected.size} chat(s) y sus mensajes? No se puede deshacer.` : `Delete ${selected.size} chat(s) and their messages? This can't be undone.`)) runBulk(() => bulkDeleteConvs([...selected])); }} title={lang === "es" ? "Eliminar" : "Delete"}><Icon name="trash" size={13} /></button>
+            <button className="btn btn-sm btn-danger" disabled={!selected.size} onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? `Eliminar ${selected.size} chat(s)` : `Delete ${selected.size} chat(s)`, message: lang === "es" ? "Se borran también sus mensajes. No se puede deshacer." : "Their messages are deleted too. This can't be undone.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) runBulk(() => bulkDeleteConvs([...selected])); }} title={lang === "es" ? "Eliminar" : "Delete"}><Icon name="trash" size={13} /></button>
           </div>
         )}
         {bulkMenu && (
@@ -1171,6 +1178,7 @@ function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en";
 /* ---------- Thread (right column) ---------- */
 export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean; onAccepted?: (convId: string) => void }) {
   const { lang } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const refresh = useChatRefresh();
   const patch = useChatPatch();
   const [pending, start] = useTransition();
@@ -1545,7 +1553,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 <div className={"msg " + (out ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")}>
                   <div className="bubble" style={{ padding: 3 }}>
                     <AlbumMenu out={out} onForward={() => setForwarding(row.items)}
-                      onDelete={out ? () => { if (confirm(lang === "es" ? "¿Eliminar todas las fotos para todos?" : "Delete all photos for everyone?")) start(async () => { for (const it of row.items) await deleteMessage(it.id); refresh(); }); } : undefined} />
+                      onDelete={out ? async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar fotos" : "Delete photos", message: lang === "es" ? "Se eliminan para todos en la conversación." : "They are deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { for (const it of row.items) await deleteMessage(it.id); refresh(); }); } : undefined} />
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                       {row.items.slice(0, 4).map((m, idx) => (
                         <a key={m.id} id={`m-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { if (m.media_url) { e.preventDefault(); openLightbox(m.id); } }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
@@ -1615,7 +1623,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)} onForward={() => setForwarding([m])}
                     onReact={(rect) => setReactTarget({ id: m.id, rect })}
-                    onDelete={() => { if (confirm(lang === "es" ? "¿Eliminar mensaje para todos?" : "Delete for everyone?")) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
+                    onDelete={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar mensaje" : "Delete message", message: lang === "es" ? "Se elimina para todos en la conversación." : "It is deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
                 )}
               </div>
             </div>
@@ -1809,7 +1817,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       {lightbox !== null && imageMsgs.length > 0 && (
         <Lightbox items={imageMsgs} index={lightbox} onClose={() => setLightbox(null)}
           onForward={(m) => { setLightbox(null); setForwarding([m]); }}
-          onDelete={(m) => { setLightbox(null); if (confirm(lang === "es" ? "¿Eliminar foto para todos?" : "Delete photo for everyone?")) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
+          onDelete={async (m) => { setLightbox(null); if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar foto" : "Delete photo", message: lang === "es" ? "Se elimina para todos en la conversación." : "It is deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
       )}
       {forwarding && (
         <ForwardPicker businessId={businessId} messages={forwarding} onClose={() => setForwarding(null)}
@@ -1997,8 +2005,15 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       start(async () => { await renameContact(detail.contact!.id, v); refresh(); });
     }
   }
-  function removeChat() {
-    if (!confirm(lang === "es" ? "¿Eliminar esta conversación y sus mensajes?" : "Delete this conversation and its messages?")) return;
+  async function removeChat() {
+    const ok = await ask({
+      icon: "trash", danger: true,
+      title: lang === "es" ? "Eliminar conversación" : "Delete conversation",
+      message: lang === "es" ? "Se borran también todos sus mensajes." : "All its messages are deleted too.",
+      confirmLabel: lang === "es" ? "Eliminar" : "Delete",
+      cancelLabel: lang === "es" ? "Volver" : "Back",
+    });
+    if (!ok) return;
     start(async () => { await deleteConv(detail.id); router.push("/chat"); refresh(); });
   }
 
@@ -2021,7 +2036,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
           {detail.orders.length === 0 ? <div className="muted t-sm" style={{ padding: "6px 2px" }}>{personal ? (lang === "es" ? "Sin tareas." : "No tasks.") : (lang === "es" ? "Sin pedidos." : "No orders.")}</div> :
             detail.orders.map((o) => (
               <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
-                <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
+                <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.cancelled_at ? <Pill color="red" dot>{lang === "es" ? "Cancelado" : "Cancelled"}</Pill> : o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
                 {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
                 <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" />{!personal && <span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span>}</div>
               </button>

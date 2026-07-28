@@ -64,7 +64,7 @@ export async function globalSearch(businessId: string, qRaw: string): Promise<Se
   const { data: orderData } = await supabase
     .from("orders")
     .select("id, code, stage:stages(name,color), contact:contacts(name), items:order_items(name)")
-    .eq("business_id", businessId).or(orderOr.join(","))
+    .eq("business_id", businessId).is("deleted_at", null).or(orderOr.join(","))
     .order("updated_at", { ascending: false }).limit(5);
   const orders: SearchResults["orders"] = (orderData ?? []).map((o: Record<string, unknown>) => {
     const st = o.stage as { name?: string; color?: string } | null;

@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState, useTransition } from "react";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
@@ -47,6 +48,7 @@ function rowToDraft(row: TemplateRow): TemplateDraft {
 
 export function TemplateManager() {
   const { lang } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const t = (es: string, en: string) => (lang === "es" ? es : en);
   const [pending, start] = useTransition();
 
@@ -103,7 +105,7 @@ export function TemplateManager() {
 
   const remove = (name: string) =>
     start(async () => {
-      if (!confirm(t(`¿Eliminar la plantilla "${name}"? Se borran todos sus idiomas.`, `Delete template "${name}"? All its languages are removed.`))) return;
+      if (!(await ask({ icon: "trash", danger: true, title: t("Eliminar plantilla", "Delete template"), message: t(`"${name}" — se borran todos sus idiomas.`, `"${name}" — all its languages are removed.`), confirmLabel: t("Eliminar", "Delete"), cancelLabel: t("Volver", "Back") }))) return;
       const r = await deleteTemplateAction(name);
       setNote(r.ok ? { ok: true, text: t("Plantilla eliminada ✓", "Template deleted ✓") } : { ok: false, text: r.error });
       refresh();

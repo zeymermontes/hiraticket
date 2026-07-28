@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { clearCache } from "@/lib/localCache";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
@@ -23,6 +24,7 @@ const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = 
 
 function SessionCard({ session, primary }: { session: WaSession; primary?: boolean }) {
   const { lang } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const router = useRouter();
   const [, start] = useTransition();
   const [method, setMethod] = useState<"qr" | "pairing">(session.connect_method);
@@ -91,7 +93,7 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
           </button>
         )}
         <button className="iconbtn sm" title={lang === "es" ? "Eliminar número" : "Delete number"}
-          onClick={() => { if (confirm(lang === "es" ? "¿Eliminar este número?" : "Delete this number?")) run(() => deleteSession(session.id)); }}>
+          onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar número" : "Delete number", message: lang === "es" ? "Se desconecta esta sesión de WhatsApp." : "This WhatsApp session gets disconnected.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) run(() => deleteSession(session.id)); }}>
           <Icon name="trash" size={15} />
         </button>
       </div>

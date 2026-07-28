@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type OrderRow, type PillColor, type PriceTier, priorityColor, formatMoney, tierPrice, isOverdue, PRIORITY_LABEL as PRIO_LABEL } from "@/lib/types";
@@ -63,6 +64,7 @@ export function OrdersTable({
   const [stageMenu, setStageMenu] = useState<DOMRect | null>(null); // bulk "change stage" popover
   const [, startBulk] = useTransition();
   const flowToast = useFlowToast();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const [trashView, setTrashView] = useState(false);
   const PER = 25;
 
@@ -257,7 +259,7 @@ export function OrdersTable({
                     <span className="truncate" style={{ maxWidth: 150 }}>{o.contact?.name ?? "—"}</span>
                   </div>
                 </td>
-                <td>{trashView ? <Pill color="red" dot>{lang === "es" ? "Eliminado" : "Deleted"}</Pill> : o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
+                <td>{trashView ? <Pill color="red" dot>{lang === "es" ? "Eliminado" : "Deleted"}</Pill> : o.cancelled_at ? <Pill color="red" dot>{lang === "es" ? "Cancelado" : "Cancelled"}</Pill> : o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{o.area ? <Pill color={o.area.color as PillColor}>{o.area.name}</Pill> : <span className="muted t-sm">—</span>}</td>
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
@@ -269,7 +271,7 @@ export function OrdersTable({
                   <td onClick={(e) => e.stopPropagation()}>
                     <div className="row gap-1">
                       <button className="iconbtn sm" title={lang === "es" ? "Restaurar" : "Restore"} onClick={async () => { await setOrderDeleted(o.id, false); reload(); }}><Icon name="refresh" size={15} /></button>
-                      <button className="iconbtn sm" style={{ color: "var(--red)" }} title={lang === "es" ? "Eliminar definitivamente" : "Delete permanently"} onClick={async () => { if (!confirm(lang === "es" ? "¿Eliminar definitivamente? No se puede recuperar." : "Delete permanently? This can't be undone.")) return; await purgeOrder(o.id); reload(); }}><Icon name="trash" size={15} /></button>
+                      <button className="iconbtn sm" style={{ color: "var(--red)" }} title={lang === "es" ? "Eliminar definitivamente" : "Delete permanently"} onClick={async () => { if (!(await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar definitivamente" : "Delete permanently", message: lang === "es" ? "No se puede recuperar." : "This can't be undone.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" }))) return; await purgeOrder(o.id); reload(); }}><Icon name="trash" size={15} /></button>
                     </div>
                   </td>
                 ) : <td className="muted t-sm">{relDate(o.updated_at)}</td>}

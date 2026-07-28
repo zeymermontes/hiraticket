@@ -153,6 +153,7 @@ function SeatGateModal({ seat, businessId, onResolved, onDismiss }: { seat: { cu
 }
 
 function AgentMenu({ businessId, agentId, agentName, onEdit }: { businessId: string; agentId: string; agentName: string; onEdit: () => void }) {
+  const ask = useConfirm();
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -168,7 +169,7 @@ function AgentMenu({ businessId, agentId, agentName, onEdit }: { businessId: str
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setOpen(false)} />
           <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, right: window.innerWidth - rect.right, width: 210, zIndex: 201 }}>
             <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar permisos" : "Edit permissions"}</button>
-            <button className="menu-item danger" onClick={() => { setOpen(false); if (confirm(lang === "es" ? `¿Eliminar a ${agentName} del equipo? Perderá el acceso.` : `Remove ${agentName} from the team? They'll lose access.`)) start(async () => { const r = await deactivateAgent(businessId, agentId); if (!r.ok) alert(r.error === "last-admin" ? (lang === "es" ? "No puedes quitar al último admin." : "Can't remove the last admin.") : r.error === "self" ? (lang === "es" ? "No puedes quitarte a ti mismo." : "Can't remove yourself.") : r.error ?? "error"); else router.refresh(); }); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar del equipo" : "Remove from team"}</button>
+            <button className="menu-item danger" onClick={async () => { setOpen(false); if (await ask({ icon: "trash", danger: true, title: lang === "es" ? `Quitar a ${agentName}` : `Remove ${agentName}`, message: lang === "es" ? "Perderá el acceso al espacio de trabajo." : "They'll lose access to the workspace.", confirmLabel: lang === "es" ? "Quitar" : "Remove", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { const r = await deactivateAgent(businessId, agentId); if (!r.ok) alert(r.error === "last-admin" ? (lang === "es" ? "No puedes quitar al último admin." : "Can't remove the last admin.") : r.error === "self" ? (lang === "es" ? "No puedes quitarte a ti mismo." : "Can't remove yourself.") : r.error ?? "error"); else router.refresh(); }); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar del equipo" : "Remove from team"}</button>
           </div>
         </>
       )}

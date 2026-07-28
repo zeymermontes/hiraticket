@@ -2,6 +2,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
@@ -55,6 +56,7 @@ function renderBody(body: string, mentionNames: string[]) {
 
 export function InternalChat({ initial, businessId }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string }) {
   const { lang } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const [threads, setThreads] = useState(initial.threads);
   const [sel, setSel] = useState<string>(initial.threads[0]?.key ?? "team");
   const [msgs, setMsgs] = useState<InternalMsg[]>([]);
@@ -242,7 +244,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
     } finally { setSending(false); }
   }
   const startEdit = (m: InternalMsg) => { setEditing(m); setReply(null); setText(m.body); taRef.current?.focus(); };
-  const del = (m: InternalMsg) => { if (!confirm(lang === "es" ? "¿Eliminar este mensaje?" : "Delete this message?")) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
+  const del = async (m: InternalMsg) => { if (!(await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar mensaje" : "Delete message", message: lang === "es" ? "Se elimina para todo el equipo." : "It is deleted for the whole team.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" }))) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
   const openStickers = () => { setEmojiRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };

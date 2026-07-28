@@ -2,6 +2,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Appointment } from "@/lib/extras";
@@ -23,6 +24,7 @@ function dayBucket(iso: string, lang: "es" | "en"): string {
 
 export function AgendaScreen({ businessId, appointments }: { businessId: string; appointments: Appointment[] }) {
   const { lang } = useApp();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const router = useRouter();
   const [pending, start] = useTransition();
   const [title, setTitle] = useState("");
@@ -89,7 +91,7 @@ export function AgendaScreen({ businessId, appointments }: { businessId: string;
                       </>
                     )}
                     <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }}
-                      onClick={() => { if (confirm(lang === "es" ? `¿Eliminar la cita "${a.title}"? No se puede deshacer.` : `Delete the appointment "${a.title}"? This can't be undone.`)) run(() => deleteAppointment(a.id)); }}><Icon name="trash" size={15} /></button>
+                      onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar cita" : "Delete appointment", message: lang === "es" ? `"${a.title}" — no se puede deshacer.` : `"${a.title}" — this can't be undone.`, confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) run(() => deleteAppointment(a.id)); }}><Icon name="trash" size={15} /></button>
                   </div>
                 ))}
               </div>

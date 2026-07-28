@@ -247,7 +247,10 @@ export function KanbanBoard({
                       onDragStart={() => setDrag(o.id)} onDragEnd={() => { setDrag(null); setOver(null); }}>
                       <div className="row gap-2">
                         <span className="mono t-xs" style={{ fontWeight: 700, color: "var(--text-muted)" }}>{o.code}</span>
-                        {o.priority && o.priority !== "normal" && <Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={10} />{PRIO[o.priority]?.[lang] ?? o.priority}</Pill>}
+                        {/* Cancelado desplaza a la prioridad: es lo que hay que leer primero. */}
+                        {o.cancelled_at
+                          ? <Pill color="red" dot>{lang === "es" ? "Cancelado" : "Cancelled"}</Pill>
+                          : o.priority && o.priority !== "normal" && <Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={10} />{PRIO[o.priority]?.[lang] ?? o.priority}</Pill>}
                         <span className="grow" />
                         {o.stage && group === "area" && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}
                         {o.area && group === "status" && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}

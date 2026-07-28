@@ -63,7 +63,7 @@ export default async function AppLayout({
 
   // Open orders = not yet in the terminal stage. Bounded head-count (no full table scan).
   const lastStageId = stages.length ? stages[stages.length - 1].id : null;
-  let q = supabase.from("orders").select("id", { count: "exact", head: true }).eq("business_id", business.id);
+  let q = supabase.from("orders").select("id", { count: "exact", head: true }).eq("business_id", business.id).is("deleted_at", null);
   if (lastStageId) q = q.neq("stage_id", lastStageId);
   const { count: openOrders } = await q;
   const objectName = (business.object_singular ?? "Pedido") + "s";
