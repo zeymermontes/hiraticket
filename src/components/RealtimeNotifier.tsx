@@ -73,13 +73,17 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         }
         if (!who) who = "Alguien";
         // En un DM el autor ES la otra persona, así que basta con etiquetar el hilo.
-        const where = channel === "team" ? "Equipo" : "Directo";
+        const isDm = channel !== "team";
+        const where = isDm ? "Directo" : "Equipo";
         const title = mentionedMe ? `📣 ${who} te mencionó · ${where}` : `${who} · ${where}`;
         // Deep link al hilo exacto (?ch=), no al chat interno genérico.
         const href = `/internal?ch=${encodeURIComponent(channel)}`;
 
         const body = await previewOf("internal", m.id, m.body ?? "");
-        push({ kind: mentionedMe ? "mention" : "info", title, message: body.slice(0, 90), href });
+        // Fijos los DMs y las menciones: van dirigidos a ti en persona y nadie más los va a
+        // atender. Lo del canal de equipo sí se autocierra — ahí el volumen es otro y fijarlo
+        // todo llenaría la columna de cosas que no te tocan.
+        push({ kind: mentionedMe ? "mention" : "info", title, message: body.slice(0, 90), href, sticky: mentionedMe || isDm });
         // Mismo trato que un mensaje de cliente: el equipo no puede notificar menos.
         // Tag por canal para que una ráfaga en el mismo hilo no apile notificaciones.
         alertIncoming({ title, body: body.slice(0, 120), href, tag: `int-${channel}` });
