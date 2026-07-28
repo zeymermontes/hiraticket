@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { getToastPreview } from "@/app/(app)/chat/actions";
+import { alertIncoming, requestNotifyPermissionOnce } from "@/lib/notify";
 
 // Realtime payloads carry the STORED body — encrypted at rest (encm:v1:) for new messages. Use the
 // payload text only when it's legacy plaintext; otherwise fetch the decrypted preview server-side.
@@ -20,6 +21,10 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
   const tRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+
+  // El permiso se pide al primer clic/tecla, no al montar: los navegadores ignoran o penalizan
+  // la petición sin gesto previo.
+  useEffect(() => { requestNotifyPermissionOnce(); }, []);
 
   useEffect(() => {
     const supabase = createClient();
@@ -44,18 +49,25 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         const typeLabel: Record<string, string> = { image: "📷 Foto", sticker: "🩷 Sticker", audio: "🎤 Audio", video: "🎥 Video", document: "📄 Documento", location: "📍 Ubicación", contact: "👤 Contacto" };
         const body = await previewOf("wa", m.id, m.body);
         const preview = body || (m.type && m.type !== "text" ? typeLabel[m.type] ?? "📎 Adjunto" : "Mensaje");
-        push({ kind: "info", title: name, message: preview.slice(0, 90), href: `/chat?c=${m.conversation_id}` });
+        const href = `/chat?c=${m.conversation_id}`;
+        push({ kind: "info", title: name, message: preview.slice(0, 90), href });
+        // Suena y avisa fuera de la pestaña. Mismo tratamiento que el chat de equipo abajo.
+        alertIncoming({ title: name, body: preview.slice(0, 120), href, tag: `wa-${m.conversation_id}` });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, () => notify())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, async (payload) => {
         // RLS only delivers internal messages in channels this user can read (team + their DMs).
-        const m = payload.new as { id?: string; author_id?: string; body?: string; mentions?: string[] };
+        const m = payload.new as { id?: string; author_id?: string; body?: string; mentions?: string[]; channel?: string };
         if (m.author_id === userId) return; // not your own send
         const mentionedMe = Array.isArray(m.mentions) && m.mentions.includes(userId);
         const body = await previewOf("internal", m.id, m.body ?? "");
+        const title = mentionedMe ? "📣 Te mencionaron (equipo)" : "💬 Mensaje interno";
         push(mentionedMe
-          ? { kind: "mention", title: "📣 Te mencionaron (equipo)", message: body.slice(0, 90), href: "/internal" }
-          : { kind: "info", title: "💬 Mensaje interno", message: body.slice(0, 90), href: "/internal" });
+          ? { kind: "mention", title, message: body.slice(0, 90), href: "/internal" }
+          : { kind: "info", title, message: body.slice(0, 90), href: "/internal" });
+        // Mismo trato que un mensaje de cliente: el equipo no puede notificar menos.
+        // Tag por canal para que una ráfaga en el mismo hilo no apile notificaciones.
+        alertIncoming({ title, body: body.slice(0, 120), href: "/internal", tag: `int-${m.channel ?? "team"}` });
         notify();
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "notes", filter: `business_id=eq.${businessId}` }, (payload) => {
