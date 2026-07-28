@@ -338,6 +338,9 @@ export async function purgeOrder(orderId: string): Promise<void> {
 
 interface NewOrderItem { item: string; qty: number; price: number; note?: string }
 interface NewOrder {
+  /** Contacto ya identificado (abierto desde un chat, o elegido de la lista). Tiene prioridad
+   *  sobre contactName: resolver por nombre no distingue entre homónimos. */
+  contactId?: string | null;
   contactName: string;
   items: NewOrderItem[];
   areaId: string | null;
@@ -355,20 +358,43 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const name = input.contactName.trim() || "Cliente";
-  let { data: contact } = await supabase
-    .from("contacts").select("id")
-    .eq("business_id", businessId).ilike("name", name).maybeSingle();
-  if (!contact) {
-    const ins = await supabase.from("contacts")
-      .insert({ business_id: businessId, name }).select("id").single();
-    contact = ins.data;
+  // Un contacto conocido (el del chat, o uno elegido de la lista) gana sobre el nombre: es la
+  // única forma de garantizar que el pedido cae en el MISMO contacto que tiene la conversación.
+  let contactId: string | null = (input.contactId ?? "").trim() || null;
+  if (contactId) {
+    const { data: owned } = await supabase.from("contacts").select("id")
+      .eq("id", contactId).eq("business_id", businessId).maybeSingle();
+    if (!owned) contactId = null; // id de otro negocio o borrado — se cae al nombre
+  }
+
+  if (!contactId) {
+    const name = input.contactName.trim() || "Cliente";
+    // Sin maybeSingle(): con dos contactos del mismo nombre PostgREST devuelve error (PGRST116) y
+    // data null. El código anterior ignoraba ese error, lo leía como "no existe" y creaba OTRO
+    // duplicado — así que a partir del segundo homónimo, cada pedido generaba un contacto huérfano
+    // sin conversación, y por eso los pedidos dejaban de aparecer en el chat del cliente.
+    const { data: matches, error: findErr } = await supabase
+      .from("contacts").select("id, conversations(id)")
+      .eq("business_id", businessId).ilike("name", name)
+      .order("created_at", { ascending: true });
+    if (findErr) throw new Error(`No se pudo buscar el contacto "${name}": ${findErr.message}`);
+
+    const rows = (matches ?? []) as unknown as { id: string; conversations?: { id: string }[] }[];
+    // Entre homónimos gana el que tiene conversación: ese es el contacto real de WhatsApp, el que
+    // la persona tiene en mente. Si ninguno tiene, el más antiguo.
+    contactId = rows.find((c) => (c.conversations ?? []).length > 0)?.id ?? rows[0]?.id ?? null;
+
+    if (!contactId) {
+      const ins = await supabase.from("contacts").insert({ business_id: businessId, name }).select("id").single();
+      if (ins.error || !ins.data) throw new Error(`No se pudo crear el contacto "${name}": ${ins.error?.message ?? "sin datos"}`);
+      contactId = ins.data.id as string;
+    }
   }
 
   // Link the contact's open conversation, if any, so the order ties to the chat.
   const { data: conv } = await supabase
     .from("conversations").select("id")
-    .eq("business_id", businessId).eq("contact_id", contact!.id)
+    .eq("business_id", businessId).eq("contact_id", contactId)
     .order("last_message_at", { ascending: false }).limit(1).maybeSingle();
 
   const { count } = await supabase
@@ -398,7 +424,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   const orderRow = {
     business_id: businessId,
     code,
-    contact_id: contact!.id,
+    contact_id: contactId,
     conversation_id: conv?.id ?? null,
     stage_id: input.stageId,
     area_id: input.areaId,

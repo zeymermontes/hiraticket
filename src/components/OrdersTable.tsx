@@ -349,13 +349,14 @@ export function OrdersTable({
 }
 
 export function NewOrderModal({
-  businessId, areas, stages, onClose, defaultContact, products, contacts, embedded, onCreated, invoice,
+  businessId, areas, stages, onClose, defaultContact, defaultContactId, products, contacts, embedded, onCreated, invoice,
 }: {
   businessId: string;
   areas: Area[];
   stages: Stage[];
   onClose: () => void;
   defaultContact?: string;
+  defaultContactId?: string | null; // abierto desde un chat: el contacto ya se conoce por id
   products: Product[];
   contacts: { id: string; name: string }[];
   embedded?: boolean;       // render over the chat center column (keep the thread readable)
@@ -413,6 +414,9 @@ export function NewOrderModal({
     if (!contactName.trim() || !hasItem) return;
     start(async () => {
       await createOrder(businessId, {
+        // Si el nombre escrito coincide exacto con uno de la lista, mandamos su id: entre dos
+        // clientes con el mismo nombre, el servidor no puede adivinar cuál es.
+        contactId: defaultContactId ?? contacts.find((c) => c.name.trim().toLowerCase() === contactName.trim().toLowerCase())?.id ?? null,
         contactName,
         items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0, note: l.note })),
         areaId: areaId || null, stageId: stageId || null, priority,
