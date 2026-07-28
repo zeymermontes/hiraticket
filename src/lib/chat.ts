@@ -185,47 +185,182 @@ export async function getStickerTray(businessId: string): Promise<{ favorites: S
   return { favorites, recent };
 }
 
-export async function getConversationList(businessId: string): Promise<ConvListItem[]> {
+export type ConvTab = "all" | "mine" | "unassigned";
+export type ConvStatusFilter = "" | "active" | "open" | "pending" | "resolved" | "trash";
+
+/** Everything the chat list filters by. What used to run over the whole in-memory list now runs
+ *  in SQL — except the message-text match, which can't (bodies are encrypted at rest), so the
+ *  client resolves those to conversation ids from its local cache and passes them as `extraIds`. */
+export interface ConvQuery {
+  tab?: ConvTab;
+  meId?: string;
+  areaId?: string;
+  status?: ConvStatusFilter;
+  unreadOnly?: boolean;
+  archived?: boolean;      // show the snoozed/hidden view instead of the active one
+  q?: string;              // contact-name search
+  extraIds?: string[];     // conversation ids matched locally by message text — ORed with the name match
+  limit?: number;          // window measured from the top of the list (see ChatScreen: always offset 0)
+  /** "view" (default) applies the list's own filters — archived/stale/status/unread. "all" skips
+   *  them and returns conversations regardless of view, for callers that do their own filtering. */
+  scope?: "view" | "all";
+}
+
+export interface ConvListPage {
+  rows: ConvListItem[];
+  total: number;
+}
+
+/** Chats with no activity in this long fall into the "trash" view. Mirrors STALE_DAYS in ChatScreen. */
+const STALE_DAYS = 90;
+const CONTACT_MATCH_CAP = 500;
+
+const CONV_BASE = "id, status, unread, last_message_at, assignee_id, area_id, hidden, snoozed_until";
+const CONV_JOINS = "area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags)";
+const CONV_OPT = "typing_until, is_group, muted, locked_to"; // 0027 / 0032 / 0035 / 0044
+const CONV_LAST = "last_body, last_dir, last_state, last_type, last_deleted"; // 0060
+const CONV_EMB = "messages(body,created_at,direction,state,type,deleted)";
+
+type LastMsg = { body: string; created_at: string; direction: string; state: string | null; type: string; deleted: boolean };
+
+function mapConvRow(businessId: string, c: Record<string, unknown>, legacy: boolean): ConvListItem {
+  let body: string | null, dir: string | null, state: string | null, type: string, del: boolean;
+  if (legacy) {
+    const msgs = (c.messages as LastMsg[]) ?? [];
+    const last = msgs.reduce<LastMsg | null>((acc, m) => (!acc || m.created_at > acc.created_at ? m : acc), null);
+    body = last?.body ?? null;
+    dir = last?.direction ?? null;
+    state = last?.state ?? null;
+    type = last?.type ?? "text";
+    del = last?.deleted ?? false;
+  } else {
+    body = (c.last_body as string | null) ?? null;
+    dir = (c.last_dir as string | null) ?? null;
+    state = (c.last_state as string | null) ?? null;
+    type = (c.last_type as string | null) ?? "text";
+    del = (c.last_deleted as boolean) ?? false;
+  }
+  return {
+    id: c.id,
+    status: c.status,
+    unread: c.unread,
+    last_message_at: c.last_message_at,
+    assignee_id: c.assignee_id,
+    locked_to: (c.locked_to as string) ?? null,
+    hidden: c.hidden,
+    snoozed_until: c.snoozed_until,
+    area: c.area,
+    contact: c.contact,
+    preview: decryptBody(businessId, body ?? ""),
+    lastOut: dir === "out",
+    lastState: state,
+    lastType: type,
+    lastDeleted: del,
+    typing_until: (c.typing_until as string | null) ?? null,
+    is_group: (c.is_group as boolean) ?? false,
+    muted: (c.muted as boolean) ?? false,
+  } as ConvListItem;
+}
+
+/** One window of the chat list, filtered and counted in Postgres. */
+export async function getConversationListPage(businessId: string, f: ConvQuery = {}): Promise<ConvListPage> {
   const supabase = await createClient();
-  const cols = (opt: string) =>
-    `id, status, unread, last_message_at, assignee_id, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,avatar_url,tags), messages(body,created_at,direction,state,type,deleted)`;
-  // typing_until (0027) / is_group (0032) / locked_to (0044) may not exist yet — fall back to the base columns.
-  let { data, error } = await supabase
-    .from("conversations").select(cols("typing_until, is_group, muted, locked_to, ")).eq("business_id", businessId).order("last_message_at", { ascending: false });
+  const nowISO = new Date().toISOString();
+  const staleCutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const trash = f.status === "trash";
+
+  // Contact-name matches. The message-text half of the search arrives as extraIds from the client's
+  // local cache — last_body is ciphertext in Postgres, so no ILIKE can reach it.
+  const needle = (f.q ?? "").trim().replace(/[(),]/g, " ").trim();
+  let contactIds: string[] = [];
+  if (needle) {
+    const { data } = await supabase.from("contacts").select("id").eq("business_id", businessId)
+      .ilike("name", `%${needle}%`).limit(CONTACT_MATCH_CAP);
+    contactIds = (data ?? []).map((c) => c.id as string);
+  }
+  const extraIds = f.extraIds ?? [];
+  // A search with no name hits and no local hits matches nothing — don't fall through to "no filter".
+  if (needle && !contactIds.length && !extraIds.length) return { rows: [], total: 0 };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyFilters = <T extends Record<string, any>>(b: T): T => {
+    let x = b.eq("business_id", businessId);
+    if (f.tab === "mine" && f.meId) x = x.eq("assignee_id", f.meId);
+    if (f.tab === "unassigned") x = x.is("assignee_id", null);
+    if (f.areaId) x = x.eq("area_id", f.areaId);
+    if (f.scope === "all") {
+      // no view filters — the caller wants every conversation regardless of archived/stale/status
+    } else if (trash) {
+      x = x.lt("last_message_at", staleCutoff); // stale only; NULL never compares true, matching isStale(null)=false
+    } else {
+      // Not stale. Multiple .or() calls land as separate PostgREST `or=` params, which are ANDed.
+      x = x.or(`last_message_at.is.null,last_message_at.gte.${staleCutoff}`);
+      if (f.archived) x = x.or(`hidden.is.true,snoozed_until.gt.${nowISO}`);
+      else x = x.eq("hidden", false).or(`snoozed_until.is.null,snoozed_until.lte.${nowISO}`);
+      if (f.status === "active") x = x.in("status", ["open", "pending"]);
+      else if (f.status) x = x.eq("status", f.status);
+      if (f.unreadOnly) x = x.gt("unread", 0);
+    }
+    if (needle) {
+      const ors: string[] = [];
+      if (contactIds.length) ors.push(`contact_id.in.(${contactIds.join(",")})`);
+      if (extraIds.length) ors.push(`id.in.(${extraIds.join(",")})`);
+      x = x.or(ors.join(","));
+    }
+    return x;
+  };
+
+  const run = (cols: string) =>
+    applyFilters(supabase.from("conversations").select(cols, { count: "exact" }))
+      .order("last_message_at", { ascending: false })
+      .limit(Math.min(Math.max(f.limit ?? 40, 1), 500));
+
+  // Preferred: the preview lives on the conversation row (kept in sync by the 0060 trigger).
+  let { data, error, count } = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_LAST}, ${CONV_JOINS}`);
+  if (error) ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_LAST}, ${CONV_JOINS}`));
+
+  // 0060 not applied yet → derive the preview from an embed. Correct, but it pulls the matched
+  // conversations' whole history; apply 0060 to get off this path.
+  let legacy = false;
   if (error) {
-    ({ data, error } = await supabase
-      .from("conversations").select(cols("")).eq("business_id", businessId).order("last_message_at", { ascending: false }));
+    legacy = true;
+    ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_JOINS}, ${CONV_EMB}`));
+    if (error) ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_JOINS}, ${CONV_EMB}`));
   }
   if (error) throw new Error(error.message);
 
-  return ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
-    type LastMsg = { body: string; created_at: string; direction: string; state: string | null; type: string; deleted: boolean };
-    const msgs = (c.messages as LastMsg[]) ?? [];
-    const last = msgs.reduce<LastMsg | null>(
-      (acc, m) => (!acc || m.created_at > acc.created_at ? m : acc),
-      null,
-    );
-    return {
-      id: c.id,
-      status: c.status,
-      unread: c.unread,
-      last_message_at: c.last_message_at,
-      assignee_id: c.assignee_id,
-      locked_to: (c.locked_to as string) ?? null,
-      hidden: c.hidden,
-      snoozed_until: c.snoozed_until,
-      area: c.area,
-      contact: c.contact,
-      preview: decryptBody(businessId, last?.body ?? ""),
-      lastOut: last?.direction === "out",
-      lastState: last?.state ?? null,
-      lastType: last?.type ?? "text",
-      lastDeleted: last?.deleted ?? false,
-      typing_until: (c.typing_until as string | null) ?? null,
-      is_group: (c.is_group as boolean) ?? false,
-      muted: (c.muted as boolean) ?? false,
-    } as ConvListItem;
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => mapConvRow(businessId, c, legacy));
+  return { rows, total: count ?? rows.length };
+}
+
+export interface ChatListCounts {
+  all: number; active: number; open: number; pending: number; resolved: number;
+  unread: number; trash: number; archived: number; mine: number; unassigned: number;
+}
+
+const EMPTY_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
+
+/** Tab badges + chip counts, in one round trip (0062). */
+export async function getChatListCounts(
+  businessId: string, meId: string, opts?: { areaId?: string; archived?: boolean; tab?: ConvTab },
+): Promise<ChatListCounts> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("chat_list_counts", {
+    p_business: businessId,
+    p_me: meId,
+    p_area: opts?.areaId ?? null,
+    p_archived: opts?.archived ?? false,
+    p_tab: opts?.tab ?? "all",
   });
+  if (error || !data) return EMPTY_COUNTS; // 0062 not applied → the chips just read 0 rather than breaking the list
+  return { ...EMPTY_COUNTS, ...(data as Partial<ChatListCounts>) };
+}
+
+/** The whole list, unfiltered — kept for callers that want every conversation (e.g. the backfill
+ *  sweep, which walks recent chats). Prefer getConversationListPage for anything user-facing. */
+export async function getConversationList(businessId: string, limit = 500): Promise<ConvListItem[]> {
+  const { rows } = await getConversationListPage(businessId, { limit, scope: "all" });
+  return rows;
 }
 
 const MSG_FULL = "id, business_id, direction, type, body, state, author_id, created_at, media_url, media_mime, media_name, reply_to, deleted, forwarded, edited, meta, reactions";

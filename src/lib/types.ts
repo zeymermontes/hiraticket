@@ -55,6 +55,8 @@ export interface OrderRow {
   created_at: string;
   due_at: string | null;
   assignee_id: string | null;
+  stage_id: string | null; // the table filters by id now that filtering runs in SQL
+  area_id: string | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   contact: { name: string } | null;

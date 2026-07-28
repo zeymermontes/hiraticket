@@ -8,7 +8,7 @@ import { Spinner } from "@/components/Spinner";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
-import type { Agent, ConvListItem, ConvDetail, ChatMessage } from "@/lib/chat";
+import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { OrderDrawer } from "@/components/OrderDrawer";
@@ -30,8 +30,10 @@ import { menuStyle } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
-import { liveList, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
-import { putMessages, getMeta, setMeta } from "@/lib/localCache";
+import { liveList, liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
+
+const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
+import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -475,16 +477,8 @@ function AlbumMenu({ out, onForward, onDelete }: { out: boolean; onForward: () =
   );
 }
 
-function isArchived(c: { hidden: boolean; snoozed_until: string | null }): boolean {
-  return c.hidden || (c.snoozed_until ? new Date(c.snoozed_until).getTime() > Date.now() : false);
-}
-
-// Chats with no activity in 90+ days drop into the "trash" view (and can be bulk-deleted there).
-const STALE_DAYS = 90;
-const STALE_MS = STALE_DAYS * 24 * 60 * 60 * 1000;
-function isStale(c: { last_message_at: string | null }): boolean {
-  return c.last_message_at ? Date.now() - new Date(c.last_message_at).getTime() > STALE_MS : false;
-}
+// "Archivado" (hidden/snoozed) and "papelera" (no activity in 90+ days) are decided in SQL now —
+// see getConversationListPage and the chat_list_counts RPC (0062).
 
 function snoozeShortcuts(lang: "es" | "en"): { label: string; iso: string }[] {
   const mk = (fn: (d: Date) => void) => { const d = new Date(); fn(d); return d.toISOString(); };
@@ -541,13 +535,16 @@ export function ChatScreen({
   const [showCompose, setShowCompose] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
 
-  // Local copies kept live by targeted realtime refetches; re-seeded when the server sends new props.
+  // The list window is owned by the client from here on (the server only seeds the first page), so
+  // it is NOT re-seeded from listProp — that would replace a filtered window with the default one.
   const [list, setList] = useState(listProp);
-  useEffect(() => { setList(listProp); }, [listProp]);
   const [detail, setDetail] = useState(detailProp);
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+  // Refetches the list window with whatever filters are active. Held in a ref because the realtime
+  // handlers below are defined before the window state exists.
+  const refetchListRef = useRef<() => void>(() => {});
   // Realtime health (channel SUBSCRIBED?) + a handle to the resync fn, shared between the realtime
   // subscription and the adaptive poll below.
   const realtimeHealthyRef = useRef(false);
@@ -599,7 +596,10 @@ export function ChatScreen({
       putMessages(p.messages.map((m) => ({ businessId, kind: "wa" as const, threadId: convId, msgId: m.id, body: m.body, senderName: m.senderName, dir: m.dir, ts: m.ts })));
     const run = async () => {
       await sleep(10000); // let the app settle first
-      for (const c of listProp) {
+      // Its own unfiltered list, not the visible window: the cache backs the list's message-text
+      // search, so its coverage shouldn't depend on which filters the agent happens to have on.
+      const recent = await liveList(businessId).catch(() => [] as ConvListItem[]);
+      for (const c of recent) {
         if (stop) return;
         if ((c.last_message_at ?? "") < CUTOFF) continue;
         const key = `bf:${businessId}:${c.id}`;
@@ -631,14 +631,14 @@ export function ChatScreen({
   const softRefresh = useCallback(() => {
     const id = detailIdRef.current;
     if (id) liveDetail(id).then((d) => { if (d) setDetail((c) => (c && c.id === d.id ? d : c)); }).catch(() => {});
-    liveList(businessId).then(setList).catch(() => {});
-  }, [businessId]);
+    refetchListRef.current();
+  }, []);
 
   // Live updates via targeted refetches (no full route refresh — only what changed).
   useEffect(() => {
     const supabase = createClient();
     let tl: ReturnType<typeof setTimeout>, tm: ReturnType<typeof setTimeout>, th: ReturnType<typeof setTimeout>, down: ReturnType<typeof setTimeout>;
-    const softList = () => { clearTimeout(tl); tl = setTimeout(() => { liveList(businessId).then(setList).catch(() => {}); }, 250); };
+    const softList = () => { clearTimeout(tl); tl = setTimeout(() => { refetchListRef.current(); }, 250); };
     const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {}); }, 120); };
     const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
     const ch = supabase
@@ -690,7 +690,7 @@ export function ChatScreen({
         liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {});
         liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {});
       }
-      liveList(businessId).then(setList).catch(() => {});
+      refetchListRef.current();
     };
     resyncRef.current = resync;
     const tick = () => {
@@ -804,7 +804,7 @@ export function ChatScreen({
     if (selectMode) { e.preventDefault(); toggleSel(c.id); return; }
     openConv(c);
   };
-  const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); await liveList(businessId).then(setList).catch(() => {}); exitSelect(); })(); };
+  const runBulk = (fn: () => Promise<void>) => { if (!selected.size) return; setBulkMenu(null); (async () => { await fn(); refetchListRef.current(); exitSelect(); })(); };
   // Bulk reassign: warn if any selected chat is pinned ("mantener conmigo") — reassigning releases it.
   const runBulkAssign = async (agentId: string | null) => {
     setBulkMenu(null);
@@ -825,55 +825,72 @@ export function ChatScreen({
   };
 
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
-  const areaNames = useMemo(() => [...new Set(list.map((c) => c.area?.name).filter(Boolean))] as string[], [list]);
 
   const trashView = statusF === "trash";
-  const filtered = useMemo(() => {
-    return list.filter((c) => {
-      if (tab === "mine" && c.assignee_id !== meId) return false;
-      if (tab === "unassigned" && c.assignee_id != null) return false;
-      if (areaF && c.area?.name !== areaF) return false;
-      if (q) {
-        const hay = (c.contact?.name ?? "") + " " + c.preview;
-        if (!hay.toLowerCase().includes(q.toLowerCase())) return false;
-      }
-      const stale = isStale(c);
-      if (trashView) return stale; // papelera: only chats inactive 90+ days
-      if (stale) return false;     // stale chats live only in the trash
-      // Snoozed/hidden live in a separate view; active list excludes them.
-      if (isArchived(c) !== showArchived) return false;
-      if (statusF === "active") { if (!(c.status === "open" || c.status === "pending")) return false; }
-      else if (statusF && c.status !== statusF) return false;
-      if (unreadOnly && !(c.unread > 0)) return false;
-      return true;
-    });
-  }, [list, tab, statusF, trashView, q, meId, showArchived, areaF, unreadOnly]);
 
-  const archivedN = list.filter((c) => isArchived(c) && !isStale(c)).length;
+  // --- server-side list window -------------------------------------------------------------
+  // Filtering, ordering and every counter run in Postgres now; the client holds a window from the
+  // top of the list instead of every conversation the business has.
+  const LIST_PAGE = 40;
+  const [pages, setPages] = useState(1);
+  const [listTotal, setListTotal] = useState(listProp.length);
+  const [counts, setCounts] = useState<ChatListCounts>(EMPTY_CHAT_COUNTS);
+  const [listLoading, setListLoading] = useState(false);
+  // The typed search, debounced, together with the conversation ids its message text matched in
+  // this device's cache. They move as one value so a search costs a single list fetch: last_body is
+  // encrypted at rest, so SQL matches the contact name and the local hits are ORed in server-side.
+  const [search, setSearch] = useState<{ q: string; ids: string[] }>({ q: "", ids: [] });
+  useEffect(() => {
+    const needle = q.trim();
+    const t = setTimeout(async () => {
+      if (!needle) { setSearch({ q: "", ids: [] }); return; }
+      const hits = await searchLocal(businessId, needle, 200).catch(() => []);
+      setSearch({ q: needle, ids: [...new Set(hits.filter((h) => h.kind === "wa").map((h) => h.threadId))] });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, businessId]);
 
-  const mineN = list.filter((c) => c.assignee_id === meId).length;
-  // "Sin asignar" badge counts only active chats (open/pending, not stale, not archived).
-  const unN = list.filter((c) => c.assignee_id == null && !isStale(c) && !isArchived(c) && (c.status === "open" || c.status === "pending")).length;
+  const listQuery: ConvQuery = useMemo(() => ({
+    tab, meId,
+    areaId: areaF ?? undefined,
+    status: (trashView ? "trash" : (statusF ?? "")) as ConvQuery["status"],
+    unreadOnly,
+    archived: showArchived,
+    q: search.q,
+    extraIds: search.ids,
+  }), [tab, meId, areaF, statusF, trashView, unreadOnly, showArchived, search]);
 
-  // Counts for the filter chips — scoped by the active tab/area/archived view (not by the
-  // status/unread filters themselves).
-  const chipCounts = useMemo(() => {
-    const scope = list.filter((c) =>
-      !(tab === "mine" && c.assignee_id !== meId) &&
-      !(tab === "unassigned" && c.assignee_id != null) &&
-      !(areaF && c.area?.name !== areaF));
-    const trash = scope.filter(isStale).length;
-    const live = scope.filter((c) => !isStale(c) && isArchived(c) === showArchived);
-    return {
-      all: live.length,
-      active: live.filter((c) => c.status === "open" || c.status === "pending").length,
-      open: live.filter((c) => c.status === "open").length,
-      pending: live.filter((c) => c.status === "pending").length,
-      resolved: live.filter((c) => c.status === "resolved").length,
-      unread: live.filter((c) => c.unread > 0).length,
-      trash,
-    };
-  }, [list, tab, areaF, showArchived, meId]);
+  // Any filter change resets the window back to one page.
+  useEffect(() => { setPages(1); }, [listQuery]);
+
+  // Only the newest response may land: a filter change fires a fetch and a page reset, so two can
+  // be in flight, and letting a slower stale one win would leave the window out of sync with `pages`.
+  const listSeq = useRef(0);
+  const fetchList = useCallback(async (query: ConvQuery, howMany: number) => {
+    const seq = ++listSeq.current;
+    setListLoading(true);
+    try {
+      const [page, c] = await Promise.all([
+        liveListPage(businessId, { ...query, limit: howMany * LIST_PAGE }),
+        liveChatCounts(businessId, { areaId: query.areaId, archived: query.archived, tab: query.tab }),
+      ]);
+      if (seq !== listSeq.current) return;
+      setList(page.rows);
+      setListTotal(page.total);
+      setCounts(c);
+    } catch { /* keep the previous window */ }
+    finally { if (seq === listSeq.current) setListLoading(false); }
+  }, [businessId]);
+
+  useEffect(() => { fetchList(listQuery, pages); }, [fetchList, listQuery, pages]);
+  useEffect(() => { refetchListRef.current = () => { void fetchList(listQuery, pages); }; }, [fetchList, listQuery, pages]);
+
+  const filtered = list;
+  const chipCounts = counts;
+  const archivedN = counts.archived;
+  const mineN = counts.mine;
+  const unN = counts.unassigned;
+  const hasMore = list.length < listTotal;
 
   // The open chat belongs to the current tab only if its (live) assignment matches it. This keeps
   // a leftover/default-open chat from another tab (e.g. an unassigned one while on "Míos") from
@@ -891,7 +908,7 @@ export function ChatScreen({
       ? `¿Eliminar permanentemente ${chipCounts.trash} chat(s) sin actividad en 90+ días y TODOS sus mensajes? No se puede deshacer.`
       : `Permanently delete ${chipCounts.trash} chat(s) inactive for 90+ days and ALL their messages? This can't be undone.`)) return;
     setPurging(true);
-    try { await emptyChatTrash(businessId); const fresh = await liveList(businessId); setList(fresh); }
+    try { await emptyChatTrash(businessId); refetchListRef.current(); }
     catch { alert(lang === "es" ? "No se pudo vaciar la papelera." : "Couldn't empty the trash."); }
     setPurging(false);
   }
@@ -949,10 +966,12 @@ export function ChatScreen({
             <button className={"chip" + (unreadOnly ? " on" : "")} onClick={() => setUnreadOnly((v) => !v)}>
               <span className="chip-dot" style={{ background: "var(--red)" }} />{lang === "es" ? "No leídos" : "Unread"}{chipCounts.unread > 0 && <span className="chip-n">{chipCounts.unread}</span>}
             </button>
-            {areaNames.length > 0 && (
+            {areas.length > 0 && (
+              // By id, not name — the filter runs in SQL now, and the options come from the full
+              // area list instead of whatever happens to be inside the loaded window.
               <select className="select select-sm chip-select" value={areaF ?? ""} onChange={(e) => setAreaF(e.target.value || null)}>
                 <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
-                {areaNames.map((a) => <option key={a} value={a}>{a}</option>)}
+                {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             )}
             <button className={"chip" + (showArchived ? " on" : "")} onClick={() => setShowArchived((v) => !v)} title={lang === "es" ? "Pospuestos/Ocultos" : "Snoozed/Hidden"}>
@@ -1032,6 +1051,13 @@ export function ChatScreen({
                 </Link>
               );
             })
+          )}
+          {hasMore && (
+            <button className="btn btn-sm btn-ghost" style={{ width: "100%", margin: "8px 0" }}
+              disabled={listLoading} onClick={() => setPages((p) => p + 1)}>
+              {listLoading ? <Spinner size={14} /> : null}
+              {lang === "es" ? `Cargar más (${list.length} de ${listTotal})` : `Load more (${list.length} of ${listTotal})`}
+            </button>
           )}
         </div>
       </div>

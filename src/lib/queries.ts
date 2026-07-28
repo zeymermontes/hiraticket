@@ -1,14 +1,24 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Business, OrderRow } from "@/lib/types";
 
-/** The caller's first business (tenant), or null if they haven't created one. */
+/** The caller's business (tenant), or null if they genuinely don't belong to one yet.
+ *
+ *  Returning null makes the app layout offer first-run onboarding, which CREATES a business — so
+ *  null must mean "no membership", never "the read failed". A swallowed error here shows an
+ *  existing user the "create your workspace" screen and they end up with a duplicate tenant.
+ *  Every failure below therefore throws instead of degrading to null. */
 export async function getMyBusiness(): Promise<Business | null> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
   // Scope to the business the user is a MEMBER of. A platform admin can read every business via RLS,
   // so "the first readable business" would return someone else's tenant — we must filter by membership.
-  const { data: mem } = await supabase.from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();
+  // Ordered by created_at: with more than one membership the pick has to be STABLE, otherwise the
+  // app hops between workspaces from one request to the next.
+  const { data: mem, error: memErr } = await supabase
+    .from("business_members").select("business_id")
+    .eq("user_id", user.id).order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (memErr) throw new Error(`No se pudo leer tu membresía: ${memErr.message}`);
   if (!mem?.business_id) return null;
   const bizId = mem.business_id as string;
 
@@ -25,9 +35,14 @@ export async function getMyBusiness(): Promise<Business | null> {
     if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode`).eq("id", bizId).maybeSingle();
     if (r.error) r = await supabase.from("businesses").select(BASE).eq("id", bizId).maybeSingle();
+    // Even the minimal column set failed: that's a broken read (permissions, network), not a
+    // missing workspace — the membership above proves one exists.
+    if (r.error) throw new Error(`No se pudo leer tu negocio: ${r.error.message}`);
     data = r.data as typeof data;
   }
-  if (!data) return null;
+  // Membership points at a business that isn't readable/doesn't exist — a broken tenant, not a
+  // new user. Onboarding here would create a second one on top of the orphaned membership.
+  if (!data) throw new Error(`Tu membresía apunta al negocio ${bizId}, que no se pudo leer.`);
   const d = data as Record<string, unknown>;
   return {
     ...d,
@@ -46,30 +61,146 @@ export async function getMyBusiness(): Promise<Business | null> {
   } as Business;
 }
 
-export async function getOrders(businessId: string): Promise<OrderRow[]> {
-  const supabase = await createClient();
-  const cols = (due: string) =>
-    `id, code, priority, pay_status, total, updated_at, created_at, ${due}assignee_id, stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
-  // due_at (0029) / deleted_at (0039) may not exist yet — cascade the fallbacks.
-  let { data, error } = await supabase
-    .from("orders").select(cols("due_at, deleted_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false });
-  if (error) ({ data, error } = await supabase.from("orders").select(cols("due_at, ")).eq("business_id", businessId).order("updated_at", { ascending: false }));
-  if (error) ({ data, error } = await supabase.from("orders").select(cols("")).eq("business_id", businessId).order("updated_at", { ascending: false }));
-  if (error) throw new Error(error.message);
-  // Orders with a transfer receipt awaiting review (0048) → surface an "en revisión" flag.
-  let pendingSet = new Set<string>();
-  const pr = await supabase.from("payment_proofs").select("order_id").eq("business_id", businessId).eq("status", "pending");
-  if (!pr.error) pendingSet = new Set((pr.data ?? []).map((r) => r.order_id as string));
-  return ((data ?? []) as unknown as Record<string, unknown>[]).filter((o) => !o.deleted_at).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string) })) as unknown as OrderRow[];
+export type OrderSortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
+
+/** Search / filter / sort / page for the orders table — all of it resolved in SQL. */
+export interface OrderQuery {
+  q?: string;
+  stageId?: string;
+  areaId?: string;
+  assigneeId?: string;
+  priority?: string;
+  sort?: OrderSortKey;
+  dir?: "asc" | "desc";
+  page?: number;
+  per?: number;
+  trash?: boolean; // soft-deleted orders instead of live ones
 }
 
-/** Soft-deleted orders for the trash view (empty if the 0039 column isn't applied yet). */
-export async function getDeletedOrders(businessId: string): Promise<OrderRow[]> {
+export interface OrdersPage {
+  rows: OrderRow[];
+  total: number;     // matching rows across every page (drives the count pill + pager)
+  capped: boolean;   // the name search hit CONTACT_MATCH_CAP, so `total` may undercount
+}
+
+/** A typed search matching more contacts than this can't widen the order filter any further.
+ *  Surfaced as `capped` rather than silently truncating the result. */
+const CONTACT_MATCH_CAP = 500;
+
+const ORDER_COLS = (opt: string) =>
+  `id, code, priority, pay_status, total, updated_at, created_at, stage_id, area_id, ${opt}assignee_id, ` +
+  `stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
+
+const SORT_COL: Record<OrderSortKey, string> = {
+  code: "code_num",       // 0061 — numeric part, so HIR-999 sorts before HIR-1144
+  total: "total",
+  updated_at: "updated_at",
+  created_at: "created_at",
+  due_at: "due_at",
+};
+
+/** Search matches the order code OR the customer's name. The name lives on another table and
+ *  PostgREST can't OR across an embed, so the contacts are resolved first (same shape as
+ *  globalSearch). Stripping brackets keeps a typed "(" from breaking the .or() grammar. */
+function searchNeedle(q?: string): string {
+  return (q ?? "").trim().replace(/[(),]/g, " ").trim();
+}
+
+/** Every filter in an OrderQuery, applied to a PostgREST builder. `withDeleted` is false on the
+ *  fallback paths that run before 0039 added the soft-delete column. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyOrderFilters<T extends Record<string, any>>(
+  b: T, f: OrderQuery, needle: string, contactIds: string[], withDeleted = true,
+): T {
+  let x = b;
+  if (withDeleted) x = f.trash ? x.not("deleted_at", "is", null) : x.is("deleted_at", null);
+  if (f.stageId) x = x.eq("stage_id", f.stageId);
+  if (f.areaId) x = x.eq("area_id", f.areaId);
+  if (f.assigneeId) x = x.eq("assignee_id", f.assigneeId);
+  if (f.priority) x = x.eq("priority", f.priority);
+  if (needle) {
+    const ors = [`code.ilike.%${needle}%`];
+    if (contactIds.length) ors.push(`contact_id.in.(${contactIds.join(",")})`);
+    x = x.or(ors.join(","));
+  }
+  return x;
+}
+
+/** One page of orders for the table. Filtering, search, ordering and the total count all run in
+ *  Postgres — the table used to receive every order the business had ever created and do this in
+ *  the browser, which got slower with every order. */
+export async function getOrdersPage(businessId: string, f: OrderQuery = {}): Promise<OrdersPage> {
   const supabase = await createClient();
-  const cols = `id, code, priority, pay_status, total, updated_at, created_at, due_at, deleted_at, assignee_id, stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
-  const { data, error } = await supabase.from("orders").select(cols).eq("business_id", businessId).not("deleted_at", "is", null).order("updated_at", { ascending: false });
+  // The table pages 25 at a time; the ceiling is generous because the CSV export reuses this
+  // with a big `per` to pull the whole filtered set in one go.
+  const per = Math.min(Math.max(f.per ?? 25, 1), 5000);
+  const page = Math.max(f.page ?? 0, 0);
+  const sortKey = f.sort ?? "updated_at";
+  const ascending = f.dir === "asc";
+
+  const needle = searchNeedle(f.q);
+  let contactIds: string[] = [];
+  let capped = false;
+  if (needle) {
+    const { data } = await supabase
+      .from("contacts").select("id").eq("business_id", businessId)
+      .ilike("name", `%${needle}%`).limit(CONTACT_MATCH_CAP);
+    contactIds = (data ?? []).map((c) => c.id as string);
+    capped = contactIds.length === CONTACT_MATCH_CAP;
+  }
+
+  const build = (cols: string, withDeleted: boolean) =>
+    applyOrderFilters(
+      supabase.from("orders").select(cols, { count: "exact" }).eq("business_id", businessId),
+      f, needle, contactIds, withDeleted,
+    );
+  // nullsFirst:false keeps "no deadline" at the bottom in both directions, matching the old
+  // client-side sort (which forced nulls to "9999").
+  const ordered = (b: ReturnType<typeof build>, col: string) =>
+    b.order(col, { ascending, nullsFirst: false }).range(page * per, page * per + per - 1);
+
+  // code_num (0061) / due_at (0029) / deleted_at (0039) may not be applied yet — cascade.
+  let { data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, "), true), SORT_COL[sortKey]);
+  // Without 0061 there's no code_num: fall back to the lexical code (HIR-999 lands after HIR-1144,
+  // the one ordering difference; every other sort key is unaffected).
+  if (error && sortKey === "code") ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, "), true), "code"));
+  if (error) ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, "), false), sortKey === "code" ? "code" : SORT_COL[sortKey]));
+  if (error) ({ data, error, count } = await ordered(build(ORDER_COLS(""), false), sortKey === "due_at" ? "updated_at" : sortKey === "code" ? "code" : SORT_COL[sortKey]));
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  // Transfer receipts awaiting review (0048) — only for the page's rows, not the whole business.
+  let pendingSet = new Set<string>();
+  if (rows.length) {
+    const pr = await supabase.from("payment_proofs").select("order_id")
+      .eq("business_id", businessId).eq("status", "pending")
+      .in("order_id", rows.map((o) => o.id as string));
+    if (!pr.error) pendingSet = new Set((pr.data ?? []).map((r) => r.order_id as string));
+  }
+
+  return {
+    rows: rows.map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string) })) as unknown as OrderRow[],
+    total: count ?? rows.length,
+    capped,
+  };
+}
+
+/** Every order id matching the filters, ignoring the page window — backs "select all filtered"
+ *  and the CSV export, which both act on the whole result set, not just the visible page. */
+export async function getOrderIds(businessId: string, f: OrderQuery = {}, cap = 5000): Promise<string[]> {
+  const supabase = await createClient();
+  const needle = searchNeedle(f.q);
+  let contactIds: string[] = [];
+  if (needle) {
+    const { data } = await supabase.from("contacts").select("id").eq("business_id", businessId).ilike("name", `%${needle}%`).limit(CONTACT_MATCH_CAP);
+    contactIds = (data ?? []).map((c) => c.id as string);
+  }
+  const q = (withDeleted: boolean) =>
+    applyOrderFilters(supabase.from("orders").select("id").eq("business_id", businessId).limit(cap), f, needle, contactIds, withDeleted);
+  let { data, error } = await q(true);
+  if (error) ({ data, error } = await q(false)); // deleted_at (0039) not applied
   if (error) return [];
-  return ((data ?? []) as unknown as Record<string, unknown>[]).map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null })) as unknown as OrderRow[];
+  return ((data ?? []) as { id: string }[]).map((o) => o.id);
 }
 
 export interface ContactRow {

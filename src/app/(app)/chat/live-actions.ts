@@ -3,8 +3,10 @@
 // only re-queries what changed, not the whole route (layout badges, agents, other sections…).
 import { createClient } from "@/lib/supabase/server";
 import {
-  getConversationMessages, getConversationList, getConversationDetail, getStickerTray,
+  getConversationMessages, getConversationList, getConversationListPage, getChatListCounts,
+  getConversationDetail, getStickerTray,
   type ChatMessage, type ConvListItem, type ConvDetail, type StickerItem,
+  type ConvQuery, type ConvListPage, type ChatListCounts, type ConvTab,
 } from "@/lib/chat";
 import { getChatBadges, getNotifications, getNotificationFeed, type Notif, type NotifFilter } from "@/lib/notifications";
 import { getInternalUnread } from "@/lib/internal";
@@ -39,6 +41,21 @@ export async function loadOlderMessages(convId: string, before: string): Promise
 /** The conversation list (preview / unread / order). */
 export async function liveList(businessId: string): Promise<ConvListItem[]> {
   return getConversationList(businessId);
+}
+
+/** One window of the chat list with the active filters applied server-side. */
+export async function liveListPage(businessId: string, f: ConvQuery): Promise<ConvListPage> {
+  return getConversationListPage(businessId, f);
+}
+
+/** Tab badges + chip counts for the chat list (single RPC). */
+export async function liveChatCounts(
+  businessId: string, opts: { areaId?: string; archived?: boolean; tab?: ConvTab },
+): Promise<ChatListCounts> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
+  return getChatListCounts(businessId, user.id, opts);
 }
 
 /** Full detail for the open conversation (rarely needed; kept for completeness). */
