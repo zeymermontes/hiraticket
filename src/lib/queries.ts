@@ -160,10 +160,10 @@ export async function getOrdersPage(businessId: string, f: OrderQuery = {}): Pro
     b.order(col, { ascending, nullsFirst: false }).range(page * per, page * per + per - 1);
 
   // code_num (0061) / due_at (0029) / deleted_at (0039) may not be applied yet — cascade.
-  let { data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, "), true), SORT_COL[sortKey]);
+  let { data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, "), true), SORT_COL[sortKey]);
   // Without 0061 there's no code_num: fall back to the lexical code (HIR-999 lands after HIR-1144,
   // the one ordering difference; every other sort key is unaffected).
-  if (error && sortKey === "code") ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, "), true), "code"));
+  if (error && sortKey === "code") ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, "), true), "code"));
   if (error) ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, "), false), sortKey === "code" ? "code" : SORT_COL[sortKey]));
   if (error) ({ data, error, count } = await ordered(build(ORDER_COLS(""), false), sortKey === "due_at" ? "updated_at" : sortKey === "code" ? "code" : SORT_COL[sortKey]));
   if (error) throw new Error(error.message);
