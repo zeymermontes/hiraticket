@@ -30,3 +30,7 @@ yarn-error.log*
 # Worker de Go: artefacto de build. Render lo compila desde el Dockerfile
 # (COPY . . + go build), asi que el binario nunca se despliega desde el repo.
 services/whatsapp/hiraticket-whatsapp
+
+# Cache incremental de TypeScript ("incremental": true en tsconfig.json).
+# Es por maquina y se regenera solo; compartirlo por git solo genera ruido.
+tsconfig.tsbuildinfo
