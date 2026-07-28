@@ -182,7 +182,7 @@ export function OrderDrawer({
               onClick={() => start(async () => { await uncancelOrder(detail.id); router.refresh(); })}><Icon name="refresh" /></button>
           ) : (
             <button className="iconbtn" title={personal ? (lang === "es" ? "Cancelar tarea" : "Cancel task") : (lang === "es" ? "Cancelar pedido" : "Cancel order")} style={{ color: "var(--amber)" }} disabled={pending}
-              onClick={() => setShowCancel(true)}><Icon name="clock" /></button>
+              onClick={() => setShowCancel(true)}><Icon name="ban" /></button>
           )}
           <button className="iconbtn" title={personal ? (lang === "es" ? "Eliminar tarea" : "Delete task") : (lang === "es" ? "Eliminar pedido" : "Delete order")} style={{ color: "var(--red)" }} disabled={pending}
             onClick={async () => {
@@ -667,7 +667,7 @@ function CancelOrderModal({
     <div className="modal-back" onClick={onClose}>
       <div className="modal" role="dialog" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--amber-50, var(--surface-2))", color: "var(--amber)" }}><Icon name="clock" /></span>
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--amber-50, var(--surface-2))", color: "var(--amber)" }}><Icon name="ban" /></span>
           <div className="grow">
             <h3 style={{ margin: 0 }}>{personal ? (es ? "Cancelar tarea" : "Cancel task") : (es ? "Cancelar pedido" : "Cancel order")} {detail.code}</h3>
             <p className="muted t-sm" style={{ margin: 0 }}>

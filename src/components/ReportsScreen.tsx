@@ -307,7 +307,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           {data.cancelledCount > 0 && (
             <section className="ws-block">
               <div className="ws-block-head">
-                <Icon name="clock" size={16} />
+                <Icon name="ban" size={16} />
                 <h4>{personal ? (lang === "es" ? "Tareas canceladas" : "Cancelled tasks") : (lang === "es" ? "Pedidos cancelados" : "Cancelled orders")}</h4>
                 <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
                   {lang === "es" ? "no cuentan como venta" : "not counted as sales"}

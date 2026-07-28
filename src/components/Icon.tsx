@@ -39,6 +39,9 @@ export const ICONS: Record<string, IconFn> = {
   swap: () => <>{P("M7 8h12l-3-3M17 16H5l3 3")}</>,
   clock: () => <><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M12 8v4.3l2.8 1.7")}</>,
   check: () => <>{P("m5 12.5 4.5 4.5L19 7")}</>,
+  // 🚫 — círculo con la diagonal. La diagonal va sobre el radio (r·cos45 ≈ 5.8) para que toque
+  // el borde sin salirse, igual que el resto del set a 1.8 de trazo.
+  ban: () => <><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M6.2 6.2 17.8 17.8")}</>,
   chevd: () => <>{P("m6 9 6 6 6-6")}</>,
   filter: () => <>{P("M4 5h16l-6 7.5V19l-4 1.5v-8L4 5Z")}</>,
   x: () => <>{P("M6 6 18 18M18 6 6 18")}</>,
