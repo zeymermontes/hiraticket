@@ -35,6 +35,7 @@ import { liveList, liveListPage, liveChatCounts, liveMessages, liveConvHeader, l
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
+import { keepSubscribed } from "@/lib/realtime";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -668,8 +669,7 @@ export function ChatScreen({
     const softList = () => { clearTimeout(tl); tl = setTimeout(() => { refetchListRef.current(); }, 250); };
     const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {}); }, 120); };
     const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
-    const ch = supabase
-      .channel(`chat-${businessId}`)
+    const stop = keepSubscribed(supabase, `chat-${businessId}`, (ch) => ch
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, (p) => {
         const cid = (p.new as { conversation_id?: string })?.conversation_id ?? (p.old as { conversation_id?: string })?.conversation_id;
         if (cid && cid === detailIdRef.current) softMsgs();
@@ -681,23 +681,22 @@ export function ChatScreen({
         softList();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `business_id=eq.${businessId}` }, () => { softHeader(); softList(); })
-      .subscribe((status) => {
-        // Drive realtime health: the open chat updates live while SUBSCRIBED; if the channel errors/
-        // closes we surface a "reload" banner (instead of background polling). Debounced so a brief
-        // token-refresh reconnect doesn't flash the banner.
-        if (status === "SUBSCRIBED") {
-          const was = realtimeHealthyRef.current;
-          realtimeHealthyRef.current = true;
-          clearTimeout(down); // a blip shorter than the debounce never trips the banner
-          // Note: if the banner already showed (a real 6s+ outage), we keep it — you may have missed
-          // messages during the gap, so reload is the way to catch up.
-          if (!was) resyncRef.current?.(); // reconnected → catch up once (no-op while polling is disabled)
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          realtimeHealthyRef.current = false;
-          clearTimeout(down); down = setTimeout(() => setRealtimeDown(true), 6000);
-        }
-      });
-    return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); clearTimeout(down); supabase.removeChannel(ch); };
+      , {
+      // El canal ahora se reconecta solo (backoff + re-auth del socket). El banner deja de ser la
+      // única salida: solo avisa mientras dura la caída, y al volver se pone al día en vez de
+      // exigir recargar. Antes, un socket muerto se quedaba muerto hasta que el agente recargaba.
+      onHealthy: (reconnected) => {
+        realtimeHealthyRef.current = true;
+        clearTimeout(down); // un parpadeo más corto que el debounce nunca enciende el banner
+        setRealtimeDown(false);
+        if (reconnected) { refetchListRef.current(); softMsgs(); softHeader(); resyncRef.current?.(); }
+      },
+      onDown: () => {
+        realtimeHealthyRef.current = false;
+        clearTimeout(down); down = setTimeout(() => setRealtimeDown(true), 6000);
+      },
+    });
+    return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); clearTimeout(down); stop(); };
   }, [businessId]);
 
   // Safety-net poll — DISABLED. We rely on realtime for live updates and show a "reload" banner when

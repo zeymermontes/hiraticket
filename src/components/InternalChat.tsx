@@ -9,6 +9,7 @@ import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
+import { keepSubscribed } from "@/lib/realtime";
 import { putMessages } from "@/lib/localCache";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
@@ -158,8 +159,13 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 
   useEffect(() => {
     const supabase = createClient();
-    const ch = supabase
-      .channel(`internal-${businessId}`)
+    // Se reconecta solo: antes, si el socket moría, el hilo dejaba de actualizarse en vivo sin
+    // ninguna señal, y solo recargar lo revivía.
+    // chanRef se reasigna en cada (re)conexión: el "escribiendo…" se emite por ese canal, y tras
+    // reconectar el anterior ya no sirve.
+    const stop = keepSubscribed(supabase, `internal-${businessId}`, (ch) => {
+      chanRef.current = ch;
+      return ch
       .on("postgres_changes", { event: "*", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, (p) => {
         const row = (p.new ?? p.old) as { channel?: string };
         refreshThreads();
@@ -170,10 +176,12 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
         if (t.channel !== selRef.current || t.userId === meId) return;
         setTypingName(t.name ?? null);
         clearTimeout(typingTO.current); typingTO.current = setTimeout(() => setTypingName(null), 3500);
-      })
-      .subscribe();
-    chanRef.current = ch;
-    return () => { clearTimeout(typingTO.current); supabase.removeChannel(ch); chanRef.current = null; };
+      });
+    }, {
+      // Al reconectar, el hilo abierto pudo perderse mensajes mientras estuvo caído.
+      onHealthy: (reconnected) => { if (reconnected) { refreshMsgs(selRef.current); refreshThreads(); } },
+    });
+    return () => { clearTimeout(typingTO.current); stop(); chanRef.current = null; };
   }, [businessId, refreshThreads, refreshMsgs, meId]);
 
   // Drop the optimistic bubble once the real row lands (msgs grows) or on channel switch.

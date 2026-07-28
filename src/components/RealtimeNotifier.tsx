@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { getToastPreview } from "@/app/(app)/chat/actions";
 import { alertIncoming, requestNotifyPermissionOnce } from "@/lib/notify";
+import { keepSubscribed } from "@/lib/realtime";
 
 // Realtime payloads carry the STORED body — encrypted at rest (encm:v1:) for new messages. Use the
 // payload text only when it's legacy plaintext; otherwise fetch the decrypted preview server-side.
@@ -30,8 +31,9 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
     const supabase = createClient();
     const notify = () => { clearTimeout(tRef.current); tRef.current = setTimeout(() => onChangeRef.current?.(), 600); };
 
-    const ch = supabase
-      .channel(`notify-${businessId}`)
+    // keepSubscribed en vez de .subscribe(): el canal se reconecta solo con backoff y re-autentica
+    // el socket. Antes, si se caía, los avisos se apagaban en silencio hasta recargar la página.
+    const stop = keepSubscribed(supabase, `notify-${businessId}`, (ch) => ch
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, async (payload) => {
         const m = payload.new as { id?: string; direction?: string; body?: string | null; conversation_id?: string; type?: string };
         notify();
@@ -98,9 +100,12 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
           notify();
         }
       })
-      .subscribe();
+      , {
+      // Al reconectar, los badges y la campanita pueden haberse quedado atrás.
+      onHealthy: (reconnected) => { if (reconnected) notify(); },
+    });
 
-    return () => { clearTimeout(tRef.current); supabase.removeChannel(ch); };
+    return () => { clearTimeout(tRef.current); stop(); };
   }, [businessId, userId, myName, push]);
 
   return null;
