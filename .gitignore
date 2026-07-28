@@ -26,3 +26,7 @@ yarn-error.log*
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Worker de Go: artefacto de build. Render lo compila desde el Dockerfile
+# (COPY . . + go build), asi que el binario nunca se despliega desde el repo.
+services/whatsapp/hiraticket-whatsapp
