@@ -40,16 +40,20 @@ export async function globalSearch(businessId: string, qRaw: string): Promise<Se
   if (contactIds.length) convOr.push(`contact_id.in.${inList(contactIds)}`);
   let chats: SearchResults["chats"] = [];
   if (convOr.length) {
-    const { data } = await supabase
-      .from("conversations")
-      .select("id, status, last_message_at, contact:contacts(name,phone), messages(body,created_at)")
-      .eq("business_id", businessId).or(convOr.join(","))
-      .order("last_message_at", { ascending: false }).limit(5);
-    chats = (data ?? []).map((c: Record<string, unknown>) => {
+    // last_body (0060) is the denormalized preview; the old embed pulled every message of each
+    // matched conversation on every keystroke. Fall back to it only if 0060 isn't applied.
+    const sel = (cols: string) =>
+      supabase.from("conversations").select(cols)
+        .eq("business_id", businessId).or(convOr.join(","))
+        .order("last_message_at", { ascending: false }).limit(5);
+    let { data, error } = await sel("id, status, last_message_at, last_body, contact:contacts(name,phone)");
+    if (error) ({ data } = await sel("id, status, last_message_at, contact:contacts(name,phone), messages(body,created_at)"));
+    chats = ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
       const msgs = (c.messages as { body: string; created_at: string }[]) ?? [];
       const last = msgs.reduce<{ body: string; created_at: string } | null>((a, m) => (!a || m.created_at > a.created_at ? m : a), null);
+      const body = (c.last_body as string | null) ?? last?.body ?? "";
       const ct = c.contact as { name?: string; phone?: string } | null;
-      return { id: c.id as string, contactName: ct?.name ?? "—", phone: ct?.phone ?? "", preview: decryptBody(businessId, last?.body ?? ""), status: (c.status as SearchResults["chats"][number]["status"]) };
+      return { id: c.id as string, contactName: ct?.name ?? "—", phone: ct?.phone ?? "", preview: decryptBody(businessId, body), status: (c.status as SearchResults["chats"][number]["status"]) };
     });
   }
 

@@ -121,6 +121,18 @@ export async function moveOrderArea(orderId: string, areaId: string): Promise<vo
 export async function createBusiness(name: string, mode: string = "business"): Promise<void> {
   const supabase = await createClient();
   const personal = mode === "personal";
+
+  // Guard against a double-submit (or a getMyBusiness read that failed and sent an existing user
+  // back to onboarding) turning into a second tenant. Creating one is not idempotent: every call
+  // seeds its own stages, areas, subscription and WhatsApp session.
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const { data: existing, error: memErr } = await supabase
+      .from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (memErr) throw new Error(`No se pudo verificar tu membresía: ${memErr.message}`);
+    if (existing?.business_id) { revalidatePath("/", "layout"); return; }
+  }
+
   const { error } = await supabase.rpc("create_business", {
     p_name: name.trim() || (personal ? "Mi espacio" : "Mi negocio"),
     p_vertical: personal ? "personal" : "imprenta",

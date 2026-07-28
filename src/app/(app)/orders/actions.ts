@@ -2,8 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
-import { getMyBusiness, getDeletedOrders } from "@/lib/queries";
-import type { OrderRow } from "@/lib/types";
+import { getMyBusiness, getOrdersPage, getOrderIds, type OrderQuery, type OrdersPage } from "@/lib/queries";
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 import { encryptBody } from "@/lib/msgcrypto";
 
@@ -313,11 +312,19 @@ export async function setOrderDeleted(orderId: string, deleted: boolean): Promis
   return { ok: !error };
 }
 
-/** The current business's soft-deleted orders (for the trash view). */
-export async function loadDeletedOrders(): Promise<OrderRow[]> {
+/** One page of the orders table (live orders, or the trash with `trash: true`). Search, filters,
+ *  sorting and the total count are resolved in SQL — see getOrdersPage. */
+export async function loadOrdersPage(f: OrderQuery): Promise<OrdersPage> {
+  const biz = await getMyBusiness();
+  if (!biz) return { rows: [], total: 0, capped: false };
+  return getOrdersPage(biz.id, f);
+}
+
+/** Ids of every order matching the filters, across all pages — "select all filtered" + CSV export. */
+export async function loadOrderIds(f: OrderQuery): Promise<string[]> {
   const biz = await getMyBusiness();
   if (!biz) return [];
-  return getDeletedOrders(biz.id);
+  return getOrderIds(biz.id, f);
 }
 
 /** Permanently delete an order: its items + payments (FK cascade) and notes/events, then the order. */

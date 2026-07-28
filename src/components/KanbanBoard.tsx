@@ -1,12 +1,14 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { Spinner } from "@/components/Spinner";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useFlowToast } from "@/components/Toast";
 import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO } from "@/lib/types";
-import type { KanbanOrder, KanbanItem } from "@/lib/kanban";
+import { KANBAN_PAGE, type KanbanOrder, type KanbanItem, type KanbanFilters, type KanbanBoardData } from "@/lib/kanban";
+import { loadKanbanBoard, loadKanbanColumn } from "@/app/(app)/kanban/actions";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { Product as CatalogProduct } from "@/lib/extras";
@@ -16,10 +18,9 @@ import { loadOrderDetail, setItemStage } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 
 export function KanbanBoard({
-  orders, items = [], stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing,
+  initial, stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing,
 }: {
-  orders: KanbanOrder[];
-  items?: KanbanItem[];
+  initial: KanbanBoardData; // counts + first page of each column (board opens grouped by stage)
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
@@ -54,36 +55,106 @@ export function KanbanBoard({
     ? stages.map((s) => ({ id: s.id, label: s.name, color: s.color }))
     : areas.map((a) => ({ id: a.id, label: a.name, color: a.color }));
 
-  const pool = orders.filter((o) => {
-    if (q && !(o.code + " " + (o.contact?.name ?? "")).toLowerCase().includes(q.toLowerCase())) return false;
-    if (areaF && o.area_id !== areaF) return false;
-    if (assigneeF && o.assignee_id !== assigneeF) return false;
-    return true;
-  });
-  const codeNum = (o: KanbanOrder) => { const m = /(\d+)\s*$/.exec(o.code || ""); return m ? Number(m[1]) : 0; };
-  const colOrders = (colId: string) => {
-    const l = pool.filter((o) => (effGroup === "status" ? o.stage_id : o.area_id) === colId);
-    if (sortCode) l.sort((a, b) => (sortCode === "asc" ? codeNum(a) - codeNum(b) : codeNum(b) - codeNum(a)));
-    return l;
-  };
+  // --- ventana por columna ------------------------------------------------------------------
+  // Un tablero no se puede ventanear en conjunto: su contrato es "esta columna tiene N". Así que
+  // cada columna pagina sola y el badge lee el total del servidor (RPC kanban_counts, 0063).
+  const [cols, setCols] = useState<KanbanBoardData["columns"]>(initial.columns);
+  const [counts, setCounts] = useState<Record<string, number>>(initial.counts);
+  const [colLoading, setColLoading] = useState<Record<string, boolean>>({});
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => { const t = setTimeout(() => setDebouncedQ(q), 250); return () => clearTimeout(t); }, [q]);
 
-  const itemPool = items.filter((it) => {
-    if (q && !(it.order_code + " " + it.name + " " + (it.contact?.name ?? "")).toLowerCase().includes(q.toLowerCase())) return false;
-    if (assigneeF && it.assignee_id !== assigneeF) return false;
-    return true;
-  });
-  const colItems = (colId: string) => itemPool.filter((it) => it.stage_id === colId);
+  const filters: KanbanFilters = useMemo(() => ({
+    q: debouncedQ,
+    areaId: areaF || undefined,
+    assigneeId: assigneeF || undefined,
+    group: effGroup,
+    products,
+    sortCode,
+  }), [debouncedQ, areaF, assigneeF, effGroup, products, sortCode]);
+
+  const colIds = useMemo(() => columns.map((c) => c.id), [columns]);
+  const colIdsKey = colIds.join(",");
+
+  // Only the newest response may land — switching view/group refires while a fetch is in flight.
+  const seq = useRef(0);
+  const refetch = useCallback(async (f: KanbanFilters, ids: string[]) => {
+    const mine = ++seq.current;
+    setBoardLoading(true);
+    try {
+      const b = await loadKanbanBoard(ids, f);
+      if (mine !== seq.current) return;
+      setCols(b.columns);
+      setCounts(b.counts);
+    } catch { /* keep what's on screen */ }
+    finally { if (mine === seq.current) setBoardLoading(false); }
+  }, []);
+
+  // `initial` already is this exact board, so skip the duplicate fetch on mount.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    refetch(filters, colIdsKey.split(","));
+  }, [refetch, filters, colIdsKey]);
+
+  const colCards = (colId: string) => cols[colId] ?? [];
+  const colTotal = (colId: string) => counts[colId] ?? colCards(colId).length;
+
+  /** Next page of ONE column, appended. */
+  const loadMore = useCallback(async (colId: string) => {
+    if (colLoading[colId]) return;
+    const loaded = (cols[colId] ?? []).length;
+    if (loaded >= (counts[colId] ?? 0)) return;
+    setColLoading((s) => ({ ...s, [colId]: true }));
+    try {
+      const more = await loadKanbanColumn(colId, filters, loaded);
+      setCols((c) => {
+        const cur = c[colId] ?? [];
+        // De-dupe by id: a card moved by someone else can shift the offset under us.
+        const seen = new Set(cur.map((x) => x.id));
+        return { ...c, [colId]: [...cur, ...(more as typeof cur).filter((x) => !seen.has(x.id))] };
+      });
+    } catch { /* silencio: reintenta al seguir scrolleando */ }
+    finally { setColLoading((s) => ({ ...s, [colId]: false })); }
+  }, [cols, counts, colLoading, filters]);
+
+  const onColScroll = (colId: string) => (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore(colId);
+  };
 
   function onDrop(colId: string) {
     const id = drag;
     setDrag(null);
     setOver(null);
     if (!id) return;
+
+    // Optimista: la tarjeta salta de columna al instante y los dos contadores se ajustan. Con la
+    // columna paginada, esperar al refetch dejaba la tarjeta congelada en el origen.
+    let from: string | null = null;
+    setCols((c) => {
+      const next = { ...c };
+      for (const [k, list] of Object.entries(next)) {
+        const hit = list.find((x) => x.id === id);
+        if (!hit) continue;
+        from = k;
+        next[k] = list.filter((x) => x.id !== id) as typeof list;
+        next[colId] = [hit, ...(next[colId] ?? [])] as typeof list;
+        break;
+      }
+      return next;
+    });
+    if (from && from !== colId) {
+      const src = from;
+      setCounts((n) => ({ ...n, [src]: Math.max((n[src] ?? 1) - 1, 0), [colId]: (n[colId] ?? 0) + 1 }));
+    }
+
     start(async () => {
       if (products) await setItemStage(id, colId);
       else if (effGroup === "status") { const r = await moveOrderStage(id, colId); flowToast(r.flows, lang); }
       else await moveOrderArea(id, colId);
-      router.refresh();
+      refetch(filters, colIds); // reconcilia contra el servidor (flows pueden mover más cosas)
     });
   }
 
@@ -126,8 +197,10 @@ export function KanbanBoard({
       <div className="board scroll">
         <div className="board-inner">
           {columns.map((col) => {
-            const list = colOrders(col.id);
-            const itemList = products ? colItems(col.id) : [];
+            const cards = colCards(col.id);
+            const list = (products ? [] : cards) as KanbanOrder[];
+            const itemList = (products ? cards : []) as KanbanItem[];
+            const total = colTotal(col.id);
             return (
               <div key={col.id} className={"kcol" + (over === col.id ? " drop" : "")}
                 onDragOver={(e) => { e.preventDefault(); setOver(col.id); }}
@@ -138,10 +211,12 @@ export function KanbanBoard({
                     <span className="dot" style={{ width: 9, height: 9, borderRadius: 9, background: `var(--${col.color})`, display: "inline-block", flex: "none" }} />
                     <span className="truncate">{col.label}</span>
                   </span>
-                  <span className="badge badge-soft">{products ? itemList.length : list.length}</span>
+                  {/* Total real de la columna, no lo que se alcanzó a cargar. */}
+                  <span className="badge badge-soft">{total}</span>
                   <span className="grow" />
+                  {colLoading[col.id] && <Spinner size={13} />}
                 </div>
-                <div className="kcol-list scroll">
+                <div className="kcol-list scroll" onScroll={onColScroll(col.id)}>
                   {products && itemList.map((it) => {
                     const ag = it.assignee_id ? agentMap.get(it.assignee_id) : null;
                     return (
@@ -195,7 +270,15 @@ export function KanbanBoard({
                       </div>
                     </div>
                   ))}
-                  {(products ? itemList.length : list.length) === 0 && <div className="center" style={{ padding: "20px 0", color: "var(--text-faint)", fontSize: 12 }}>{lang === "es" ? "Vacío" : "Empty"}</div>}
+                  {cards.length === 0 && !boardLoading && <div className="center" style={{ padding: "20px 0", color: "var(--text-faint)", fontSize: 12 }}>{lang === "es" ? "Vacío" : "Empty"}</div>}
+                  {cards.length > 0 && cards.length < total && (
+                    <button className="btn btn-sm btn-ghost" style={{ width: "100%", margin: "6px 0" }}
+                      disabled={!!colLoading[col.id]} onClick={() => loadMore(col.id)}>
+                      {colLoading[col.id]
+                        ? (lang === "es" ? "Cargando…" : "Loading…")
+                        : `${lang === "es" ? "Cargar más" : "Load more"} (${cards.length}/${total})`}
+                    </button>
+                  )}
                 </div>
               </div>
             );

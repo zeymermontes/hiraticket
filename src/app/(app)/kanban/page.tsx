@@ -1,5 +1,5 @@
 import { getMyBusiness } from "@/lib/queries";
-import { getKanbanOrders, getKanbanItems } from "@/lib/kanban";
+import { getKanbanBoard } from "@/lib/kanban";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
 import { getProducts } from "@/lib/extras";
@@ -13,9 +13,7 @@ export default async function KanbanPage() {
   const business = await getMyBusiness();
   if (!business) return null;
 
-  const [orders, items, stages, areas, agents, sessions, catalog, integrations] = await Promise.all([
-    getKanbanOrders(business.id),
-    business.product_stages ? getKanbanItems(business.id) : Promise.resolve([]),
+  const [stages, areas, agents, sessions, catalog, integrations] = await Promise.all([
     getStages(business.id),
     getAreas(business.id),
     getAgents(business.id),
@@ -24,5 +22,22 @@ export default async function KanbanPage() {
     getActiveIntegrations(business.id),
   ]);
 
-  return <KanbanBoard orders={orders} items={items} stages={stages} areas={areas} agents={agents} catalog={catalog} businessId={business.id} connected={isConnected(sessions)} productStages={business.product_stages ?? false} shipping={integrations.shipping} invoicing={integrations.invoicing} />;
+  // Only the first page of each column (the board opens grouped by stage). Everything else is
+  // fetched per column as you scroll — the board used to ship every order AND every line item.
+  const initial = await getKanbanBoard(business.id, stages.map((s) => s.id), { group: "status" });
+
+  return (
+    <KanbanBoard
+      initial={initial}
+      stages={stages}
+      areas={areas}
+      agents={agents}
+      catalog={catalog}
+      businessId={business.id}
+      connected={isConnected(sessions)}
+      productStages={business.product_stages ?? false}
+      shipping={integrations.shipping}
+      invoicing={integrations.invoicing}
+    />
+  );
 }

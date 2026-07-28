@@ -1,4 +1,4 @@
-import { getMyBusiness, getOrders } from "@/lib/queries";
+import { getMyBusiness, getOrdersPage } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents, getConversationDetail } from "@/lib/chat";
 import { getSessions, isConnected } from "@/lib/whatsapp";
@@ -20,8 +20,9 @@ export default async function OrdersPage({
 
   const sp = await searchParams;
   const supabase = await createClient();
-  const [orders, areas, stages, agents, products, { data: contacts }] = await Promise.all([
-    getOrders(business.id),
+  // Only the first page — the table asks the server for the rest as you search / filter / paginate.
+  const [firstPage, areas, stages, agents, products, { data: contacts }] = await Promise.all([
+    getOrdersPage(business.id, { page: 0 }),
     getAreas(business.id),
     getStages(business.id),
     getAgents(business.id),
@@ -35,7 +36,7 @@ export default async function OrdersPage({
 
   return (
     <OrdersTable
-      rows={orders}
+      initial={firstPage}
       objectName={(business.object_singular ?? "Pedido") + "s"}
       businessId={business.id}
       areas={areas}

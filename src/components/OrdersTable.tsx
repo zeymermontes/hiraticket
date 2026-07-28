@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useState, useTransition } from "react";
+import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
@@ -13,24 +13,22 @@ import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
 import { CatalogPicker } from "@/components/CatalogPicker";
-import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadDeletedOrders, purgeOrder, bulkMoveOrderStage } from "@/app/(app)/orders/actions";
+import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadOrdersPage, loadOrderIds, purgeOrder, bulkMoveOrderStage } from "@/app/(app)/orders/actions";
+import type { OrderQuery, OrdersPage } from "@/lib/queries";
 import { moveOrderArea } from "@/app/(app)/actions";
 import { menuStyle } from "@/lib/popover";
 import { useFlowToast } from "@/components/Toast";
 
 type SortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 
-/** Numeric part of an order code ("HIR-1144" → 1144) so codes sort numerically, not lexically. */
-const codeNum = (code: string) => { const m = /(\d+)\s*$/.exec(code || ""); return m ? Number(m[1]) : 0; };
-
 function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
   return <Pill color={priorityColor(p as never)}><Icon name="flag" size={11} />{PRIO_LABEL[p]?.[lang] ?? p}</Pill>;
 }
 
 export function OrdersTable({
-  rows, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing,
+  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing,
 }: {
-  rows: OrderRow[];
+  initial: OrdersPage; // first page, rendered on the server; the rest is fetched on demand
   objectName: string;
   businessId: string;
   areas: Area[];
@@ -54,8 +52,8 @@ export function OrdersTable({
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [showNew, setShowNew] = useState(false);
-  const [stageF, setStageF] = useState("");
-  const [areaF, setAreaF] = useState("");
+  const [stageF, setStageF] = useState("");   // stage id ("" = all)
+  const [areaF, setAreaF] = useState("");     // area id
   const [assigneeF, setAssigneeF] = useState("");
   const [prioF, setPrioF] = useState("");
   const [dense, setDense] = useState(false);
@@ -65,42 +63,59 @@ export function OrdersTable({
   const [stageMenu, setStageMenu] = useState<DOMRect | null>(null); // bulk "change stage" popover
   const [, startBulk] = useTransition();
   const flowToast = useFlowToast();
-  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { const r = await bulkMoveOrderStage(ids, stageId); flowToast(r.flows, lang); setSel(new Set()); router.refresh(); }); };
   const [trashView, setTrashView] = useState(false);
-  const [trashRows, setTrashRows] = useState<OrderRow[]>([]);
   const PER = 25;
-  const openTrash = (on: boolean) => { setTrashView(on); setSel(new Set()); setPage(0); if (on) loadDeletedOrders().then(setTrashRows).catch(() => {}); };
+
+  // Server-side window. Search/filters/sort/paging are query params now: the table holds one page,
+  // not every order the business ever created.
+  const [view, setView] = useState<OrderRow[]>(initial.rows);
+  const [total, setTotal] = useState(initial.total);
+  const [capped, setCapped] = useState(initial.capped);
+  const [loading, setLoading] = useState(false);
+  const [debouncedQ, setDebouncedQ] = useState("");
+
+  // Typing hits the server, so debounce it (the old filter was in-memory and could run per keystroke).
+  useEffect(() => { const t = setTimeout(() => setDebouncedQ(q), 250); return () => clearTimeout(t); }, [q]);
+
+  const filters: OrderQuery = useMemo(() => ({
+    q: debouncedQ, stageId: stageF || undefined, areaId: areaF || undefined,
+    assigneeId: assigneeF || undefined, priority: prioF || undefined,
+    sort: sortKey, dir, trash: trashView,
+  }), [debouncedQ, stageF, areaF, assigneeF, prioF, sortKey, dir, trashView]);
+
+  // A changed filter invalidates the page number — go back to the first page.
+  useEffect(() => { setPage(0); }, [filters]);
+
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((k) => k + 1);
+
+  // `initial` already IS page 0 with the default filters — don't re-fetch it on mount.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    let stale = false;
+    setLoading(true);
+    loadOrdersPage({ ...filters, page, per: PER })
+      .then((r) => { if (stale) return; setView(r.rows); setTotal(r.total); setCapped(r.capped); })
+      .catch(() => {})
+      .finally(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
+  }, [filters, page, reloadKey]);
+
+  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { const r = await bulkMoveOrderStage(ids, stageId); flowToast(r.flows, lang); setSel(new Set()); reload(); }); };
+  const openTrash = (on: boolean) => { setTrashView(on); setSel(new Set()); setPage(0); };
   const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   useEffect(() => { if (autoOpen) setShowNew(true); }, [autoOpen]);
-  useEffect(() => { setPage(0); }, [q, stageF, areaF, assigneeF, prioF]);
 
-  const sortedAll = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const base = trashView ? trashRows : rows;
-    const filtered = base.filter((o) =>
-      (!needle || o.code.toLowerCase().includes(needle) || (o.contact?.name ?? "").toLowerCase().includes(needle)) &&
-      (!stageF || o.stage?.name === stageF) &&
-      (!areaF || o.area?.name === areaF) &&
-      (!assigneeF || o.assignee_id === assigneeF) &&
-      (!prioF || o.priority === prioF),
-    );
-    const sorted = [...filtered].sort((a, b) => {
-      let av: string | number, bv: string | number;
-      if (sortKey === "total") { av = a.total; bv = b.total; }
-      else if (sortKey === "updated_at") { av = a.updated_at; bv = b.updated_at; }
-      else if (sortKey === "created_at") { av = a.created_at ?? a.updated_at; bv = b.created_at ?? b.updated_at; }
-      else if (sortKey === "due_at") { av = a.due_at ?? "9999"; bv = b.due_at ?? "9999"; } // no deadline sorts last
-      else { av = codeNum(a.code); bv = codeNum(b.code); } // by HIR- number (numeric, not lexical)
-      const r = av < bv ? -1 : av > bv ? 1 : 0;
-      return dir === "asc" ? r : -r;
-    });
-    return sorted;
-  }, [rows, trashRows, trashView, q, sortKey, dir, stageF, areaF, assigneeF, prioF]);
-
-  const pageCount = Math.max(1, Math.ceil(sortedAll.length / PER));
+  const pageCount = Math.max(1, Math.ceil(total / PER));
   const curPage = Math.min(page, pageCount - 1); // clamp so a shrunk list never lands on an empty page
-  const view = useMemo(() => sortedAll.slice(curPage * PER, curPage * PER + PER), [sortedAll, curPage]);
+
+  /** "Select all filtered" spans every page, so the ids come from the server. */
+  const selectAllFiltered = async (on: boolean) => {
+    if (!on) { setSel(new Set()); return; }
+    setSel(new Set(await loadOrderIds(filters)));
+  };
 
   function sortBy(k: SortKey) {
     if (sortKey === k) setDir(dir === "asc" ? "desc" : "asc");
@@ -121,11 +136,20 @@ export function OrdersTable({
       day: "2-digit", month: "short",
     });
 
-  function exportCsv() {
+  const EXPORT_CAP = 5000;
+  async function exportCsv() {
+    // The export covers the whole filtered set, not the visible page, so it re-queries with a
+    // wide window. Rare and user-initiated, unlike the per-page reads.
+    const { rows: all, total: matched } = await loadOrdersPage({ ...filters, page: 0, per: EXPORT_CAP });
+    if (matched > all.length) {
+      alert(lang === "es"
+        ? `Se exportan los primeros ${all.length} de ${matched}. Afina los filtros para exportar el resto.`
+        : `Exporting the first ${all.length} of ${matched}. Narrow the filters to export the rest.`);
+    }
     const head = personal
       ? ["Code", "Contact", "Stage", "Area", "Agent", "Priority", "Created", "Updated"]
       : ["Code", "Customer", "Stage", "Area", "Agent", "Priority", "Total", "Created", "Updated"];
-    const lines = sortedAll.map((o) => {
+    const lines = all.map((o) => {
       const base = [o.code, o.contact?.name ?? "", o.stage?.name ?? "", o.area?.name ?? "", (o.assignee_id && agentMap.get(o.assignee_id)?.name) || "", o.priority];
       const tail = [o.created_at ?? "", o.updated_at];
       return [...base, ...(personal ? [] : [o.total]), ...tail].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",");
@@ -139,7 +163,8 @@ export function OrdersTable({
     <div className="page">
       <div className="phead">
         <h1>{objectName}</h1>
-        <Pill color="slate" large>{sortedAll.length} {objectName.toLowerCase()}</Pill>
+        <Pill color="slate" large>{total}{capped ? "+" : ""} {objectName.toLowerCase()}</Pill>
+        {loading && <span className="muted t-sm">{lang === "es" ? "Cargando…" : "Loading…"}</span>}
         <span className="grow" />
         <div className="seg seg-sm">
           <button className={!dense ? "on" : ""} onClick={() => setDense(false)} title={lang === "es" ? "Cómodo" : "Comfortable"}><Icon name="layers" size={14} /></button>
@@ -154,11 +179,11 @@ export function OrdersTable({
         </div>
         <select className="select select-sm" value={stageF} onChange={(e) => setStageF(e.target.value)}>
           <option value="">{lang === "es" ? "Todo estado" : "All status"}</option>
-          {stages.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+          {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <select className="select select-sm" value={areaF} onChange={(e) => setAreaF(e.target.value)}>
           <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
-          {areas.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+          {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <select className="select select-sm" value={assigneeF} onChange={(e) => setAssigneeF(e.target.value)}>
           <option value="">{lang === "es" ? "Todo agente" : "All agents"}</option>
@@ -169,7 +194,7 @@ export function OrdersTable({
           {(["urgent", "high", "normal", "low"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
         </select>
         <span className="grow" />
-        <button className={"btn btn-sm " + (trashView ? "btn-danger" : "btn-outline")} type="button" onClick={() => openTrash(!trashView)} title={lang === "es" ? "Papelera (eliminados)" : "Trash (deleted)"}><Icon name="trash" size={14} /> {lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${trashRows.length})` : ""}</button>
+        <button className={"btn btn-sm " + (trashView ? "btn-danger" : "btn-outline")} type="button" onClick={() => openTrash(!trashView)} title={lang === "es" ? "Papelera (eliminados)" : "Trash (deleted)"}><Icon name="trash" size={14} /> {lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${total})` : ""}</button>
         <button className="btn btn-sm btn-outline" type="button" onClick={exportCsv}><Icon name="file" size={14} /> {lang === "es" ? "Exportar" : "Export"}</button>
         <button className="btn btn-sm btn-primary" type="button" onClick={() => setShowNew(true)}>
           <Icon name="plus" size={14} /> {t("new_order")}
@@ -203,7 +228,7 @@ export function OrdersTable({
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: 32 }}><input type="checkbox" title={lang === "es" ? "Seleccionar todos los filtrados" : "Select all filtered"} checked={sortedAll.length > 0 && sortedAll.every((o) => sel.has(o.id))} onChange={(e) => setSel(e.target.checked ? new Set(sortedAll.map((o) => o.id)) : new Set())} /></th>
+              <th style={{ width: 32 }}><input type="checkbox" title={lang === "es" ? "Seleccionar todos los filtrados" : "Select all filtered"} checked={view.length > 0 && view.every((o) => sel.has(o.id))} onChange={(e) => selectAllFiltered(e.target.checked)} /></th>
               <Sort k="code">{personal ? (lang === "es" ? "Tarea" : "Task") : t("col_order")}</Sort>
               <th>{personal ? (lang === "es" ? "Contacto" : "Contact") : t("col_customer")}</th>
               <th>{t("col_status")}</th>
@@ -243,8 +268,8 @@ export function OrdersTable({
                 {trashView ? (
                   <td onClick={(e) => e.stopPropagation()}>
                     <div className="row gap-1">
-                      <button className="iconbtn sm" title={lang === "es" ? "Restaurar" : "Restore"} onClick={() => { setTrashRows((rs) => rs.filter((x) => x.id !== o.id)); setOrderDeleted(o.id, false); router.refresh(); }}><Icon name="refresh" size={15} /></button>
-                      <button className="iconbtn sm" style={{ color: "var(--red)" }} title={lang === "es" ? "Eliminar definitivamente" : "Delete permanently"} onClick={() => { if (!confirm(lang === "es" ? "¿Eliminar definitivamente? No se puede recuperar." : "Delete permanently? This can't be undone.")) return; setTrashRows((rs) => rs.filter((x) => x.id !== o.id)); purgeOrder(o.id); }}><Icon name="trash" size={15} /></button>
+                      <button className="iconbtn sm" title={lang === "es" ? "Restaurar" : "Restore"} onClick={async () => { await setOrderDeleted(o.id, false); reload(); }}><Icon name="refresh" size={15} /></button>
+                      <button className="iconbtn sm" style={{ color: "var(--red)" }} title={lang === "es" ? "Eliminar definitivamente" : "Delete permanently"} onClick={async () => { if (!confirm(lang === "es" ? "¿Eliminar definitivamente? No se puede recuperar." : "Delete permanently? This can't be undone.")) return; await purgeOrder(o.id); reload(); }}><Icon name="trash" size={15} /></button>
                     </div>
                   </td>
                 ) : <td className="muted t-sm">{relDate(o.updated_at)}</td>}
@@ -264,7 +289,7 @@ export function OrdersTable({
 
       {pageCount > 1 && (
         <div className="row gap-2" style={{ padding: "10px 4px", alignItems: "center" }}>
-          <span className="muted t-sm">{lang === "es" ? "Mostrando" : "Showing"} {curPage * PER + 1}–{Math.min((curPage + 1) * PER, sortedAll.length)} {lang === "es" ? "de" : "of"} {sortedAll.length}</span>
+          <span className="muted t-sm">{lang === "es" ? "Mostrando" : "Showing"} {curPage * PER + 1}–{Math.min((curPage + 1) * PER, total)} {lang === "es" ? "de" : "of"} {total}</span>
           <span className="grow" />
           <button className="btn btn-sm btn-outline" disabled={curPage === 0} onClick={() => setPage(Math.max(0, curPage - 1))}>‹</button>
           <span className="t-sm">{curPage + 1} / {pageCount}</span>
@@ -282,6 +307,7 @@ export function OrdersTable({
           contacts={contacts}
           invoice={invoice}
           onClose={() => setShowNew(false)}
+          onCreated={reload} // client-fetched window: refresh() wouldn't bring the new order in
         />
       )}
 
@@ -298,7 +324,7 @@ export function OrdersTable({
               if (note) await addOrderNote(id, note);
             }
             setSel(new Set());
-            router.refresh();
+            reload(); // the table window is client-fetched now, so refresh() alone wouldn't update it
           }}
         />
       )}
@@ -315,7 +341,7 @@ export function OrdersTable({
           connected={connected}
           shipping={shipping}
           invoicing={invoicing}
-          onClose={() => router.push("/orders", { scroll: false })}
+          onClose={() => { router.push("/orders", { scroll: false }); reload(); }}
         />
       )}
     </div>
