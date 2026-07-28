@@ -106,6 +106,10 @@ export interface ReportData {
   // Discounts granted in the range (count + $), attributed to the order's assignee.
   discountCount: number;
   discountTotal: number;
+  // Cancelados (0065): fuera de ventas/utilidad, contados aparte para que no "desaparezcan".
+  cancelledCount: number;
+  cancelledTotal: number;   // suma de sus totales — lo que se dejó de vender
+  refundedTotal: number;    // dinero devuelto (pagos negativos), en positivo
   byAgentDiscounts: { id: string; name: string; color: string; count: number; amount: number }[];
   // Per-order detail for the report export (names already resolved).
   orders: {
@@ -125,10 +129,11 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       `code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${opt}` +
       `contact:contacts(name,phone), items:order_items(name,qty,unit_price,subtotal), payments(amount)`;
     const get = (opt: string) => supabase.from("orders").select(cols(opt))
-      .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
+      .eq("business_id", businessId).is("deleted_at", null).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false });
-    // discount (0058) / due_at (0029) may not exist yet — cascade the fallbacks.
-    let { data, error } = await get("due_at, discount, discount_pct, discount_note, ");
+    // discount (0058) / due_at (0029) / cancelled_at (0065) may not exist yet — cascade.
+    let { data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, ");
+    if (error) ({ data, error } = await get("due_at, discount, discount_pct, discount_note, "));
     if (error) ({ data, error } = await get("due_at, "));
     if (error) ({ data } = await get(""));
     return data ?? [];
@@ -159,7 +164,19 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orderProfit = (o: any) => ((o.items ?? []) as any[]).reduce((s, it) => s + itemProfit(it), 0) - Number(o.discount ?? 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = (orders ?? []) as any[]; // joined select() string defeats column inference
+  const allRows = (orders ?? []) as any[]; // joined select() string defeats column inference
+  // Un pedido cancelado no es una venta. Se aparta ANTES de cualquier cálculo: todo lo de abajo
+  // (ventas, utilidad, ticket promedio, tendencias, tops de producto, conteos por etapa/área/agente)
+  // trabaja sobre `rows`, así que sacarlos aquí los excluye de todo de una sola vez.
+  const cancelledRows = allRows.filter((o) => o.cancelled_at);
+  const rows = allRows.filter((o) => !o.cancelled_at);
+  const cancelledCount = cancelledRows.length;
+  const cancelledTotal = cancelledRows.reduce((s, o) => s + Number(o.total ?? 0), 0);
+  // Reembolsos = pagos negativos (los inserta cancelOrder). Se reportan en positivo.
+  const refundedTotal = Math.abs(
+    allRows.reduce((s, o) => s + ((o.payments ?? []) as { amount: number }[])
+      .reduce((t, p) => t + Math.min(0, Number(p.amount) || 0), 0), 0),
+  );
   const countBy = <T extends { id: string; name: string; color: string }>(
     items: T[], key: "stage_id" | "area_id",
   ) => items.map((it) => ({ name: it.name, color: it.color, count: rows.filter((o) => o[key] === it.id).length }));
@@ -243,6 +260,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
     discountCount: discounted.length,
     discountTotal,
+    cancelledCount,
+    cancelledTotal,
+    refundedTotal,
     byAgentDiscounts,
     orders: rows.map((o) => ({
       code: (o.code as string) ?? "",

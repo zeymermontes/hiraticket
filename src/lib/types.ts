@@ -57,6 +57,7 @@ export interface OrderRow {
   assignee_id: string | null;
   stage_id: string | null; // the table filters by id now that filtering runs in SQL
   area_id: string | null;
+  cancelled_at?: string | null; // 0065 — se muestra marcado y deja de contar como venta
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   contact: { name: string } | null;

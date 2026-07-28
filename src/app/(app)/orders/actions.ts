@@ -312,6 +312,71 @@ export async function setOrderDeleted(orderId: string, deleted: boolean): Promis
   return { ok: !error };
 }
 
+/** Cancel an order, optionally recording a refund. Cancelling is NOT deleting: the order stays
+ *  visible and keeps its history, it just stops counting as a sale in reports.
+ *
+ *  A refund goes in as a NEGATIVE payment rather than editing totals: that way "cobrado" drops on
+ *  its own, pay_status is recomputed from the same sum as always, and there's an auditable row
+ *  with who refunded, how much and when. Partial refunds work for free. */
+export async function cancelOrder(
+  orderId: string,
+  opts?: { reason?: string | null; refund?: number | null },
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order, error: findErr } = await supabase
+    .from("orders").select("business_id, total, cancelled_at").eq("id", orderId).maybeSingle();
+  if (findErr) return { ok: false, error: findErr.message };
+  if (!order) return { ok: false, error: "El pedido no existe." };
+  if (order.cancelled_at) return { ok: true }; // ya cancelado — no duplicar el reembolso
+
+  const refund = Math.max(0, Number(opts?.refund ?? 0));
+  if (refund > 0) {
+    const { error: payErr } = await supabase.from("payments").insert({
+      business_id: order.business_id, order_id: orderId,
+      amount: -refund, method: "refund",
+      note: (opts?.reason ?? "").trim() || "Reembolso por cancelación",
+      created_by: user?.id ?? null,
+    });
+    if (payErr) return { ok: false, error: payErr.message };
+    await recomputePayStatus(supabase, orderId, order.total as number);
+  }
+
+  const { error } = await supabase.from("orders").update({
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: user?.id ?? null,
+    cancelled_reason: (opts?.reason ?? "").trim() || null,
+  }).eq("id", orderId);
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("events").insert({
+    business_id: order.business_id, parent_type: "order", parent_id: orderId,
+    actor_id: user?.id ?? null, kind: "cancelled",
+    text: refund > 0 ? `Cancelado · reembolso $${refund}` : "Cancelado",
+  });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); revalidatePath("/reports");
+  return { ok: true };
+}
+
+/** Undo a cancellation. El reembolso NO se revierte solo: es un movimiento de dinero real y
+ *  borrarlo en automático escondería que ocurrió. Se quita a mano desde el historial de pagos. */
+export async function uncancelOrder(orderId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
+  const { error } = await supabase.from("orders")
+    .update({ cancelled_at: null, cancelled_by: null, cancelled_reason: null }).eq("id", orderId);
+  if (error) return { ok: false, error: error.message };
+  if (order) {
+    await supabase.from("events").insert({
+      business_id: order.business_id, parent_type: "order", parent_id: orderId,
+      actor_id: user?.id ?? null, kind: "cancelled", text: "Cancelación revertida",
+    });
+  }
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); revalidatePath("/reports");
+  return { ok: true };
+}
+
 /** One page of the orders table (live orders, or the trash with `trash: true`). Search, filters,
  *  sorting and the total count are resolved in SQL — see getOrdersPage. */
 export async function loadOrdersPage(f: OrderQuery): Promise<OrdersPage> {

@@ -27,6 +27,8 @@ export interface OrderDetail {
   area_id: string | null;
   assignee_id: string | null;
   conversation_id: string | null;
+  cancelled_at: string | null;      // 0065 — cancelado ≠ borrado: sigue visible, deja de ser venta
+  cancelled_reason: string | null;
   contact: { id: string; name: string; phone: string | null; tags: string[] | null } | null;
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
@@ -43,7 +45,10 @@ export interface OrderDetail {
 
 export async function getOrderDetail(orderId: string): Promise<OrderDetail | null> {
   const supabase = await createClient();
-  const base = (due: string) => `id, code, total, priority, pay_status, created_at, updated_at, ${due}stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)`;
+  // `cancel` va aparte de `due` para poder soltarlo en el último fallback: si 0065 no está
+  // aplicada, pedirlo en TODOS los niveles dejaría el detalle del pedido sin abrir.
+  const CANCEL = "cancelled_at, cancelled_reason, ";
+  const base = (due: string, cancel: string = CANCEL) => `id, code, total, priority, pay_status, created_at, updated_at, ${due}${cancel}stage_id, area_id, assignee_id, conversation_id, contact:contacts(id,name,phone,tags), stage:stages(name,color), area:areas(name,color)`;
   // Cascade fallbacks: product_stages join (0019) and due_at (0029) may not be applied yet.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let order: any, orderErr: unknown;
@@ -53,7 +58,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ")).eq("id", orderId).maybeSingle());
-  if (orderErr) ({ data: order } = await supabase.from("orders").select(base("")).eq("id", orderId).maybeSingle());
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(base("due_at, ", "")).eq("id", orderId).maybeSingle()); // 0065 sin aplicar
+  if (orderErr) ({ data: order } = await supabase.from("orders").select(base("", "")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
   const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes] = await Promise.all([

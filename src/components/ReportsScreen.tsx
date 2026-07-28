@@ -302,6 +302,37 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           <BarList title={lang === "es" ? "Por etapa" : "By stage"} rows={data.byStage} />
           <BarList title={lang === "es" ? "Por área" : "By area"} rows={data.byArea} />
           <BarList title={lang === "es" ? "Por agente" : "By agent"} rows={data.byAgent} />
+          {/* Los cancelados ya salieron de ventas y utilidad. Se muestran aquí para que no
+              "desaparezcan" sin explicación cuando alguien cuadre las cifras del periodo. */}
+          {data.cancelledCount > 0 && (
+            <section className="ws-block">
+              <div className="ws-block-head">
+                <Icon name="clock" size={16} />
+                <h4>{personal ? (lang === "es" ? "Tareas canceladas" : "Cancelled tasks") : (lang === "es" ? "Pedidos cancelados" : "Cancelled orders")}</h4>
+                <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                  {lang === "es" ? "no cuentan como venta" : "not counted as sales"}
+                </span>
+              </div>
+              <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
+                <div>
+                  <div className="t-xs muted">{lang === "es" ? "Cancelados" : "Cancelled"}</div>
+                  <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{data.cancelledCount}</div>
+                </div>
+                {!personal && (
+                  <div>
+                    <div className="t-xs muted">{lang === "es" ? "Valor cancelado" : "Cancelled value"}</div>
+                    <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.cancelledTotal))}</div>
+                  </div>
+                )}
+                {!personal && data.refundedTotal > 0 && (
+                  <div>
+                    <div className="t-xs muted">{lang === "es" ? "Reembolsado" : "Refunded"}</div>
+                    <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--red)" }}>{money(Math.round(data.refundedTotal))}</div>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
           {!personal && (
             <section className="ws-block">
               <div className="ws-block-head">

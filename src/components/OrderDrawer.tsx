@@ -5,6 +5,7 @@ import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useFlowToast } from "@/components/Toast";
+import { useConfirm } from "@/components/Confirm";
 import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
 import { CatalogPicker } from "@/components/CatalogPicker";
@@ -16,7 +17,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
@@ -49,6 +50,8 @@ export function OrderDrawer({
   const router = useRouter();
   const flowToast = useFlowToast();
   const [pending, start] = useTransition();
+  const [showCancel, setShowCancel] = useState(false);
+  const ask = useConfirm(); // diálogo propio de Hiraticket, no el confirm() del navegador
   // Keep the detail live: re-seed from the prop, and re-fetch after each mutation so the drawer
   // updates in place (it's often opened from local state — Kanban/chat — that router.refresh
   // doesn't touch).
@@ -165,11 +168,36 @@ export function OrderDrawer({
         <div className="drawer-head">
           <span className="t-ic" style={{ width: 40, height: 40, borderRadius: 11, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="orders" /></span>
           <div className="grow" style={{ minWidth: 0 }}>
-            <div className="row gap-2"><span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>{detail.code}</span>{detail.stage && <Pill color={detail.stage.color as PillColor} dot>{detail.stage.name}</Pill>}</div>
+            <div className="row gap-2">
+              <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>{detail.code}</span>
+              {/* Cancelado desplaza a la etapa: es el estado que importa leer primero. */}
+              {detail.cancelled_at
+                ? <Pill color="red" dot title={detail.cancelled_reason ?? undefined}>{personal ? (lang === "es" ? "Cancelada" : "Cancelled") : (lang === "es" ? "Cancelado" : "Cancelled")}</Pill>
+                : detail.stage && <Pill color={detail.stage.color as PillColor} dot>{detail.stage.name}</Pill>}
+            </div>
             <div className="t-sm muted">{lang === "es" ? "Creado" : "Created"} {date(detail.created_at)} · {lang === "es" ? "Actualizado" : "Updated"} {date(detail.updated_at)}</div>
           </div>
+          {detail.cancelled_at ? (
+            <button className="iconbtn" title={lang === "es" ? "Reactivar" : "Reactivate"} disabled={pending}
+              onClick={() => start(async () => { await uncancelOrder(detail.id); router.refresh(); })}><Icon name="refresh" /></button>
+          ) : (
+            <button className="iconbtn" title={personal ? (lang === "es" ? "Cancelar tarea" : "Cancel task") : (lang === "es" ? "Cancelar pedido" : "Cancel order")} style={{ color: "var(--amber)" }} disabled={pending}
+              onClick={() => setShowCancel(true)}><Icon name="clock" /></button>
+          )}
           <button className="iconbtn" title={personal ? (lang === "es" ? "Eliminar tarea" : "Delete task") : (lang === "es" ? "Eliminar pedido" : "Delete order")} style={{ color: "var(--red)" }} disabled={pending}
-            onClick={() => { if (!confirm(personal ? (lang === "es" ? "¿Eliminar esta tarea? Se puede recuperar." : "Delete this task? It can be restored.") : (lang === "es" ? "¿Eliminar este pedido? Se puede recuperar." : "Delete this order? It can be restored."))) return; start(async () => { await setOrderDeleted(detail.id, true); onClose(); router.refresh(); }); }}><Icon name="trash" /></button>
+            onClick={async () => {
+              const ok = await ask({
+                icon: "trash", danger: true,
+                title: personal ? (lang === "es" ? "Eliminar tarea" : "Delete task") : (lang === "es" ? "Eliminar pedido" : "Delete order"),
+                message: personal
+                  ? (lang === "es" ? "Se moverá a la papelera y se puede recuperar." : "It moves to the trash and can be restored.")
+                  : (lang === "es" ? "Se moverá a la papelera y se puede recuperar." : "It moves to the trash and can be restored."),
+                confirmLabel: lang === "es" ? "Eliminar" : "Delete",
+                cancelLabel: lang === "es" ? "Volver" : "Back",
+              });
+              if (!ok) return;
+              start(async () => { await setOrderDeleted(detail.id, true); onClose(); router.refresh(); });
+            }}><Icon name="trash" /></button>
           <button className="iconbtn" onClick={onClose}><Icon name="x" /></button>
         </div>
 
@@ -600,7 +628,89 @@ export function OrderDrawer({
           onRemove={detail.contact ? (t) => runOpt({ contact: { ...detail.contact!, tags: (detail.contact!.tags ?? []).filter((x) => x !== t) } }, () => removeContactTag(detail.contact!.id, t)) : undefined}
           onClose={() => setTagRect(null)} />
       )}
+      {showCancel && (
+        <CancelOrderModal
+          detail={detail} lang={lang} personal={personal}
+          onClose={() => setShowCancel(false)}
+          onDone={() => { setShowCancel(false); router.refresh(); }} />
+      )}
     </>
+  );
+}
+
+/** Cancelar un pedido: motivo + qué pasó con el dinero.
+ *
+ *  El reembolso se pregunta en vez de asumirse porque las dos respuestas son comunes y opuestas:
+ *  cancelar antes de cobrar no mueve dinero, y cancelar algo ya pagado sí. Se precarga con lo
+ *  pagado (el caso más frecuente) pero se puede bajar para devoluciones parciales.
+ *
+ *  En modo personal no hay dinero, así que el bloque entero desaparece. */
+function CancelOrderModal({
+  detail, lang, personal, onClose, onDone,
+}: { detail: OrderDetail; lang: "es" | "en"; personal: boolean; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState("");
+  const [refund, setRefund] = useState(String(detail.paid > 0 ? detail.paid : 0));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const amount = Math.max(0, Math.min(Number(refund) || 0, detail.paid));
+  const es = lang === "es";
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    const r = await cancelOrder(detail.id, { reason, refund: personal ? 0 : amount });
+    setBusy(false);
+    if (!r.ok) { setErr(r.error ?? (es ? "No se pudo cancelar." : "Couldn't cancel.")); return; }
+    onDone();
+  };
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal" role="dialog" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--amber-50, var(--surface-2))", color: "var(--amber)" }}><Icon name="clock" /></span>
+          <div className="grow">
+            <h3 style={{ margin: 0 }}>{personal ? (es ? "Cancelar tarea" : "Cancel task") : (es ? "Cancelar pedido" : "Cancel order")} {detail.code}</h3>
+            <p className="muted t-sm" style={{ margin: 0 }}>
+              {es ? "Sigue visible en su historial, pero deja de contar como venta en reportes." : "It stays visible in its history but stops counting as a sale in reports."}
+            </p>
+          </div>
+        </div>
+        <div className="modal-body">
+          <label className="lbl">{es ? "Motivo" : "Reason"} <span className="muted" style={{ fontWeight: 400 }}>({es ? "opcional" : "optional"})</span></label>
+          <input className="inp-inline" style={{ width: "100%" }} value={reason} autoFocus
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={es ? "Ej. el cliente ya no lo quiere" : "e.g. customer changed their mind"} />
+
+          {!personal && detail.paid > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <label className="lbl">{es ? "Dinero devuelto" : "Money refunded"}</label>
+              <div className="row gap-2" style={{ alignItems: "center" }}>
+                <span className="mono">$</span>
+                <input className="inp-inline" style={{ width: 120 }} inputMode="decimal" value={refund}
+                  onChange={(e) => setRefund(e.target.value)} />
+                <button className="btn btn-sm btn-ghost" type="button" onClick={() => setRefund(String(detail.paid))}>{es ? "Todo" : "All"}</button>
+                <button className="btn btn-sm btn-ghost" type="button" onClick={() => setRefund("0")}>{es ? "Nada" : "None"}</button>
+              </div>
+              <p className="muted t-xs" style={{ marginTop: 6 }}>
+                {es
+                  ? `Este pedido tiene $${formatMoney(detail.paid)} cobrados. Se registrará como reembolso en el historial de pagos.`
+                  : `This order has $${formatMoney(detail.paid)} collected. It will be recorded as a refund in the payment history.`}
+              </p>
+            </div>
+          )}
+          {!personal && detail.paid <= 0 && (
+            <p className="muted t-sm" style={{ marginTop: 12 }}>{es ? "No hay pagos registrados, así que no hay nada que devolver." : "No payments recorded, so there's nothing to refund."}</p>
+          )}
+          {err && <p className="t-sm" style={{ color: "var(--red)", marginTop: 10 }}>{err}</p>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>{es ? "Volver" : "Back"}</button>
+          <button className="btn btn-primary" onClick={submit} disabled={busy}>
+            {busy ? (es ? "Cancelando…" : "Cancelling…") : (es ? "Cancelar pedido" : "Cancel order")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

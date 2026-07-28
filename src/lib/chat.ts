@@ -109,6 +109,7 @@ export interface ChatOrderCard {
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   items: { name: string; qty: number; unit_price: number; subtotal: number }[];
+  cancelled_at?: string | null; // 0065
 }
 
 export interface ConvDetail {
@@ -401,6 +402,19 @@ export async function getConversationMessages(
   return signMedia(messages);
 }
 
+/** Pedidos del cliente para el panel de la conversación. La papelera queda fuera: un pedido
+ *  borrado seguía apareciendo aquí aunque ya no estuviera ni en la tabla ni en el tablero.
+ *  cancelled_at (0065) va con fallback para que el panel no se vacíe si aún no está aplicada. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function ordersOfContact(supabase: any, contactId: string) {
+  const q = (cancel: string) => supabase.from("orders")
+    .select(`id, code, total, priority, stage_id, assignee_id, created_at, updated_at, ${cancel}stage:stages(name,color), area:areas(name,color), items:order_items(name, qty, unit_price, subtotal)`)
+    .eq("contact_id", contactId).is("deleted_at", null)
+    .order("created_at", { ascending: false });
+  const res = await q("cancelled_at, ");
+  return res.error ? await q("") : res;
+}
+
 export async function getConversationDetail(
   convId: string,
 ): Promise<ConvDetail | null> {
@@ -430,13 +444,7 @@ export async function getConversationDetail(
         .eq("parent_type", "conversation")
         .eq("parent_id", convId)
         .order("created_at", { ascending: false }),
-      conv.contact_id
-        ? supabase
-            .from("orders")
-            .select("id, code, total, priority, stage_id, assignee_id, created_at, updated_at, stage:stages(name,color), area:areas(name,color), items:order_items(name, qty, unit_price, subtotal)")
-            .eq("contact_id", conv.contact_id)
-            .order("created_at", { ascending: false })
-        : Promise.resolve({ data: [] as unknown[] }),
+      conv.contact_id ? ordersOfContact(supabase, conv.contact_id) : Promise.resolve({ data: [] as unknown[] }),
     ]);
 
   return {

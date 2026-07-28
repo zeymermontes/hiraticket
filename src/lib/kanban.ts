@@ -14,6 +14,7 @@ export interface KanbanOrder {
   area: { name: string; color: string } | null;
   items: { name: string }[];
   pending_proof?: boolean; // a customer transfer receipt is awaiting review
+  cancelled_at?: string | null; // 0065
 }
 
 export interface KanbanItem {
@@ -83,11 +84,11 @@ export async function getKanbanOrderColumn(
   const needle = (f.q ?? "").trim().replace(/[(),]/g, " ").trim();
   const contactIds = needle ? await matchingContactIds(supabase, businessId, needle) : [];
 
-  const COLS = "id, code, total, priority, due_at, stage_id, area_id, assignee_id, " +
+  const COLS = (cancel: string) => `id, code, total, priority, due_at, stage_id, area_id, assignee_id, ${cancel}` +
     "contact:contacts(name), stage:stages(name,color), area:areas(name,color), items:order_items(name)";
 
-  const build = () => {
-    let b = supabase.from("orders").select(COLS)
+  const build = (cancel: string) => {
+    let b = supabase.from("orders").select(COLS(cancel))
       .eq("business_id", businessId).is("deleted_at", null)
       .eq(f.group === "area" ? "area_id" : "stage_id", colId);
     if (f.areaId) b = b.eq("area_id", f.areaId);
@@ -104,7 +105,10 @@ export async function getKanbanOrderColumn(
       : b.order("updated_at", { ascending: false });
   };
 
-  const { data, error } = await build().range(offset, offset + limit - 1);
+  // cancelled_at (0065) puede no estar aplicada: sin este fallback la columna entera se vaciaría,
+  // así que el orden de despliegue (migración antes o después del código) dejaría de importar.
+  let { data, error } = await build("cancelled_at, ").range(offset, offset + limit - 1);
+  if (error) ({ data, error } = await build("").range(offset, offset + limit - 1));
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as unknown as Record<string, unknown>[];
 
