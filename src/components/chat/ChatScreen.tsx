@@ -34,6 +34,7 @@ import { liveList, liveListPage, liveChatCounts, liveMessages, liveConvHeader, l
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
+import { useComposerFocus } from "@/lib/composerFocus";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -1223,6 +1224,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
   const [cannedRect, setCannedRect] = useState<DOMRect | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useComposerFocus(taRef, detail.id); // cursor listo al abrir/cambiar de chat (igual en el de equipo)
   const [slash, setSlash] = useState<{ q: string; at: number } | null>(null);
   const [slashSel, setSlashSel] = useState(0);
   const [slashRect, setSlashRect] = useState<DOMRect | null>(null);

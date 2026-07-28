@@ -18,6 +18,7 @@ import {
 } from "@/app/(app)/internal/actions";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import type { StickerItem } from "@/lib/chat";
+import { useComposerFocus } from "@/lib/composerFocus";
 
 /** Merge message lists by id (incoming wins, so edits/reactions/deletes apply), sorted by time. */
 function mergeInternal(a: InternalMsg[], b: InternalMsg[]): InternalMsg[] {
@@ -104,6 +105,7 @@ export function InternalChat({ initial, businessId }: { initial: { threads: Inte
   const isFresh = (m: InternalMsg) => m.author_id !== meId && !seen.current.has(m.id);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useComposerFocus(taRef, sel); // cursor listo al abrir/cambiar de canal (igual en el de clientes)
   const emojiBtn = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
