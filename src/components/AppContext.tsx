@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { type Lang, type StringKey, tr } from "@/lib/i18n";
+import { brandRamp, BRAND_VARS } from "@/lib/palette";
 
 type Theme = "light" | "dark";
 type Density = "comfortable" | "compact";
@@ -18,12 +19,9 @@ interface AppState {
   t: (k: StringKey) => string;
 }
 
-// Brand presets carry the full ramp so derived shades stay in sync (not just --brand).
-const BRAND_RAMP: Record<string, { brand: string; b50: string; b700: string; on: string }> = {
-  "#0E8C82": { brand: "#0E8C82", b50: "#E6F4F2", b700: "#0A6B63", on: "#ffffff" },
-  "#2563EB": { brand: "#2563EB", b50: "#E8EFFD", b700: "#1D4FBF", on: "#ffffff" },
-  "#7C3AED": { brand: "#7C3AED", b50: "#F0E9FD", b700: "#6429C4", on: "#ffffff" },
-};
+// La rampa se deriva del color base (ver `brandRamp`): antes era una tabla de cuatro colores a
+// mano que además dejaba fuera --brand-600/-300/-100, así que esos se quedaban en el amarillo
+// original al cambiar de marca.
 
 const Ctx = createContext<AppState | null>(null);
 
@@ -68,16 +66,15 @@ export function AppProvider({ children, personal = false }: { children: React.Re
 
   useEffect(() => {
     const root = document.documentElement;
-    const ramp = BRAND_RAMP[brand];
+    const ramp = brandRamp(brand);
     if (ramp) {
-      root.style.setProperty("--brand", ramp.brand);
-      root.style.setProperty("--brand-50", ramp.b50);
-      root.style.setProperty("--brand-700", ramp.b700);
-      root.style.setProperty("--on-brand", ramp.on);
+      for (const [v, val] of Object.entries(ramp)) root.style.setProperty(v, val);
     } else {
       // empty/default → fall back to tokens.css (Hirata yellow + its ramp)
-      ["--brand", "--brand-50", "--brand-700", "--on-brand"].forEach((v) => root.style.removeProperty(v));
+      BRAND_VARS.forEach((v) => root.style.removeProperty(v));
     }
+    // Vive en localStorage, igual que el tema, el idioma y la densidad: es una preferencia de quien
+    // la elige y no toca a nadie más del equipo. El precio es que no viaja a otro navegador.
     try { localStorage.setItem("ht_brand", JSON.stringify(brand)); } catch {}
   }, [brand]);
 

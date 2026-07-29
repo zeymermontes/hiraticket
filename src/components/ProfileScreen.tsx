@@ -6,36 +6,8 @@ import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { updateMyProfile } from "@/app/(app)/profile/actions";
+import { PALETTE_GROUPS } from "@/lib/palette";
 
-/**
- * Un grupo por matiz, con tres tonos cada uno: claro, medio y oscuro. Se muestran juntos para que
- * se lea como "el mismo color, más fuerte o más suave".
- *
- * Ninguno pasa de cierta claridad a propósito: las iniciales del avatar son blancas fijas
- * (`.av { color: #fff }`), así que un tono pastel se vería como texto blanco sobre casi blanco.
- * Los primeros doce (el tono medio de cada matiz) son la paleta original de color_from_email (0042),
- * así que a nadie le cambia el color que ya tenía.
- */
-const PALETTE_GROUPS = [
-  ["#14B8A6", "#0E8C82", "#0B5F58"], // brand
-  ["#3B82F6", "#2563EB", "#1D4ED8"], // azul
-  ["#8B5CF6", "#7C3AED", "#6D28D9"], // violeta
-  ["#EC4899", "#DB2777", "#BE185D"], // rosa
-  ["#EF4444", "#DC2626", "#B91C1C"], // rojo
-  ["#F97316", "#EA580C", "#C2410C"], // naranja
-  ["#D97706", "#CA8A04", "#92400E"], // ámbar
-  ["#22C55E", "#16A34A", "#15803D"], // verde
-  ["#06B6D4", "#0891B2", "#0E7490"], // cian
-  ["#6366F1", "#4F46E5", "#4338CA"], // índigo
-  ["#A855F7", "#9333EA", "#7E22CE"], // púrpura
-  ["#2DD4BF", "#0D9488", "#0F766E"], // turquesa
-  ["#F43F5E", "#E11D48", "#BE123C"], // carmín
-  ["#D946EF", "#C026D3", "#A21CAF"], // fucsia
-  ["#0EA5E9", "#0284C7", "#0369A1"], // celeste
-  ["#10B981", "#059669", "#047857"], // esmeralda
-  ["#84CC16", "#65A30D", "#4D7C0F"], // lima
-  ["#94A3B8", "#64748B", "#475569"], // pizarra
-];
 
 export function ProfileScreen({ initial }: { initial: { userId: string; email: string; name: string; color: string; avatarUrl: string | null } }) {
   const { lang } = useApp();

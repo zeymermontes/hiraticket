@@ -3,6 +3,8 @@ import React, { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { clearCache } from "@/lib/localCache";
+import { clearMediaCache } from "@/lib/mediaCache";
+import { PALETTE_GROUPS } from "@/lib/palette";
 import { Icon } from "@/components/Icon";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled } from "@/lib/notify";
 import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
@@ -220,10 +222,24 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
                 <button className={density === "compact" ? "on" : ""} onClick={() => setDensity("compact")}>{lang === "es" ? "Compacto" : "Compact"}</button>
               </div>
             </div>
-            <div className="row gap-2"><span className="grow">{lang === "es" ? "Color de marca" : "Brand color"}</span>
-              <div className="row gap-2">
-                {[["", "#F5C518"], ["#0E8C82", "#0E8C82"], ["#2563EB", "#2563EB"], ["#7C3AED", "#7C3AED"]].map(([val, col]) => (
-                  <button key={col} onClick={() => setBrand(val)} aria-label="brand" style={{ width: 26, height: 26, borderRadius: "50%", background: col, border: (brand === val ? "2px solid var(--text)" : "2px solid var(--border)"), cursor: "pointer" }} />
+            <div className="col gap-2">
+              <span>{lang === "es" ? "Color de marca" : "Brand color"}
+                <span className="t-xs muted" style={{ display: "block" }}>
+                  {lang === "es" ? "Solo cambia cómo la ves tú, en este navegador. No afecta a tu equipo." : "Only changes how you see it, in this browser. Doesn't affect your team."}
+                </span>
+              </span>
+              {/* Los tres tonos de un matiz van pegados; el espacio grande separa un matiz del otro. */}
+              <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
+                <button onClick={() => setBrand("")} aria-label="default" aria-pressed={brand === ""}
+                  title={lang === "es" ? "Amarillo Hirata (predeterminado)" : "Hirata yellow (default)"}
+                  style={{ width: 24, height: 24, borderRadius: 6, background: "#F5C518", border: brand === "" ? "2px solid var(--text)" : "2px solid var(--border)", cursor: "pointer" }} />
+                {PALETTE_GROUPS.map((group) => (
+                  <div key={group[1]} className="row" style={{ gap: 2 }}>
+                    {group.map((c) => (
+                      <button key={c} onClick={() => setBrand(c)} title={c} aria-label={c} aria-pressed={brand === c}
+                        style={{ width: 24, height: 24, borderRadius: 6, background: c, border: brand === c ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer" }} />
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>
@@ -257,7 +273,7 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
           <div className="ws-block-head"><Icon name="lock" size={16} /><h4>{lang === "es" ? "Cuenta" : "Account"}</h4></div>
           <div className="ws-block-body col gap-2">
             {isPlatformAdmin && <a className="btn btn-outline btn-block" href="/platform"><Icon name="shield" size={15} />{lang === "es" ? "Consola de plataforma" : "Platform console"}</a>}
-            <a className="btn btn-outline btn-block" href="/logout" onClick={() => { clearCache().catch(() => {}); }}><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
+            <a className="btn btn-outline btn-block" href="/logout" onClick={() => { clearCache().catch(() => {}); clearMediaCache().catch(() => {}); }}><Icon name="lock" size={15} />{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
           </div>
         </section>
        </div>
