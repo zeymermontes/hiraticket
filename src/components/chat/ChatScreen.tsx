@@ -36,7 +36,7 @@ const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending:
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
-import { dragOutProps, copyFile, copyLink, canCopyFile } from "@/lib/mediaDrag";
+import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -222,14 +222,11 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
   }, [prev, next, onClose]);
   const m = items[Math.min(i, items.length - 1)];
   const url = m?.media_url ?? "";
-  async function download() {
-    try {
-      const res = await fetch(url); const blob = await res.blob();
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = m.media_name || (m.type === "sticker" ? "sticker.webp" : "foto.jpg"); a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-    } catch { window.open(url, "_blank"); }
-  }
+  // Unificado con el resto: Storage responde a ?download=<nombre>, así que no hace falta traer el
+  // archivo entero a memoria. El fallback a blob sigue dentro de downloadMedia.
+  const download = () => {
+    downloadMedia(url, m.media_name || (m.type === "sticker" ? "sticker.webp" : "foto.jpg"), m.media_mime);
+  };
   return (
     <div className="lightbox" onClick={onClose}>
       <div className="lb-actions" onClick={(e) => e.stopPropagation()}>
@@ -393,11 +390,16 @@ export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: stri
   if (m.type === "audio") return <AudioPlayer url={url} />;
   // document / other
   return (
-    <a href={url} target="_blank" rel="noreferrer" download={m.media_name || undefined} className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}
-      {...dragOutProps(url, m.media_mime, m.media_name)}>
-      <span className="doc-ic" style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
-      <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
-    </a>
+    <span className="row gap-2" style={{ padding: "6px 4px", alignItems: "center" }}>
+      {/* La tarjeta sigue abriendo el archivo (a veces quieres verlo); el botón lo BAJA directo,
+          sin pasar por una pestaña nueva. */}
+      <a href={url} target="_blank" rel="noreferrer" className="row gap-2 grow" style={{ minWidth: 0, textDecoration: "none", color: "inherit" }}
+        {...dragOutProps(url, m.media_mime, m.media_name)}>
+        <span className="doc-ic" style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
+        <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
+      </a>
+      <button className="iconbtn sm" title="Descargar" onClick={(e) => { e.preventDefault(); e.stopPropagation(); downloadMedia(url, m.media_name, m.media_mime); }}><Icon name="download" size={15} /></button>
+    </span>
   );
 }
 
@@ -460,6 +462,11 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
             {!m.deleted && !!m.media_url && canCopyFile(m.media_mime) && (
               <button className="menu-item" onClick={async () => { close(); onCopied?.(await copyFile(m.media_url!, m.media_mime) ? "file" : null); }}>
                 <Icon name="file" size={15} />{lang === "es" ? "Copiar archivo" : "Copy file"}
+              </button>
+            )}
+            {!m.deleted && !!m.media_url && (
+              <button className="menu-item" onClick={() => { close(); downloadMedia(m.media_url!, m.media_name, m.media_mime); }}>
+                <Icon name="download" size={15} />{lang === "es" ? "Descargar" : "Download"}
               </button>
             )}
             {!m.deleted && !!m.media_url && (

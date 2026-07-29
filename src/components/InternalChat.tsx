@@ -12,7 +12,7 @@ import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
 import { keepSubscribed } from "@/lib/realtime";
 import { putMessages } from "@/lib/localCache";
-import { copyFile, copyLink, canCopyFile } from "@/lib/mediaDrag";
+import { copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
@@ -333,7 +333,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           )}
           {!m.deleted && !m.id.startsWith("tmp") && (
             <InternalMsgMenu out={mine} canEdit={mine && m.type === "text"} canDelete={mine} lang={lang}
-              media={m.media_url && !m.deleted ? { url: m.media_url, mime: m.media_mime } : null}
+              media={m.media_url && !m.deleted ? { url: m.media_url, mime: m.media_mime, name: m.media_name } : null}
               onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
               onReply={() => { setReply(m); setEditing(null); taRef.current?.focus(); }}
               onForward={(rect) => setFwdTarget({ id: m.id, rect })}
@@ -537,7 +537,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 }
 
 /** Per-message hover menu for internal chat — same actions/icons/order as the WhatsApp chat. */
-function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForward, onEdit, onDelete, onReact, onCopied }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; media?: { url: string; mime: string | null } | null; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onCopied?: (r: "file" | "link" | null) => void }) {
+function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForward, onEdit, onDelete, onReact, onCopied }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; media?: { url: string; mime: string | null; name: string | null } | null; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onCopied?: (r: "file" | "link" | null) => void }) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -556,6 +556,11 @@ function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForw
             {media && canCopyFile(media.mime) && (
               <button className="menu-item" onClick={async () => { setOpen(false); onCopied?.(await copyFile(media.url, media.mime) ? "file" : null); }}>
                 <Icon name="file" size={15} />{lang === "es" ? "Copiar archivo" : "Copy file"}
+              </button>
+            )}
+            {media && (
+              <button className="menu-item" onClick={() => { setOpen(false); downloadMedia(media.url, media.name, media.mime); }}>
+                <Icon name="download" size={15} />{lang === "es" ? "Descargar" : "Download"}
               </button>
             )}
             {media && (

@@ -63,6 +63,40 @@ export async function copyLink(url: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(url); return true; } catch { return false; }
 }
 
+/** Descarga el adjunto directo, sin abrir pestaña ni preview.
+ *
+ *  El atributo `download` de un <a> lo ignora el navegador cuando el archivo es de otro origen, y
+ *  los adjuntos viven en Supabase Storage — por eso hasta ahora abrían pestaña en vez de bajar.
+ *
+ *  Camino preferido: Storage acepta `?download=<nombre>` y devuelve el Content-Disposition, así
+ *  que el navegador baja el archivo con su nombre real sin que tengamos que traerlo a memoria
+ *  (importa con videos y PDFs grandes). Si la URL no es de Storage, se cae al blob. */
+export async function downloadMedia(url: string, name: string | null | undefined, mime?: string | null): Promise<boolean> {
+  const file = fileName(name, mime);
+  try {
+    if (url.includes("/storage/v1/object/")) {
+      const sep = url.includes("?") ? "&" : "?";
+      triggerAnchor(`${url}${sep}download=${encodeURIComponent(file)}`, file);
+      return true;
+    }
+    const blob = await (await fetch(url)).blob();
+    const obj = URL.createObjectURL(blob);
+    triggerAnchor(obj, file);
+    setTimeout(() => URL.revokeObjectURL(obj), 10_000);
+    return true;
+  } catch { return false; }
+}
+
+function triggerAnchor(href: string, name: string) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = name;
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 /** Reencoda a PNG vía canvas (WebP y JPEG no son pegables directo en varios navegadores). */
 async function toPng(blob: Blob): Promise<Blob> {
   const bmp = await createImageBitmap(blob);
