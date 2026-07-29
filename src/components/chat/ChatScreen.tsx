@@ -36,6 +36,7 @@ const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending:
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
+import { dragOutProps, copyFile, copyLink, canCopyFile } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -197,10 +198,13 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
   return (
+    // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
+    // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
     <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={{ ...box, cursor: "zoom-in" }}
-      onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}>
+      onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
+      {...dragOutProps(url, m.media_mime, m.media_name)}>
       {!loaded && <span className="media-skeleton" />}
-      <img src={url} alt="" onLoad={() => setLoaded(true)} className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+      <img src={url} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false} style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
     </a>
   );
 }
@@ -384,12 +388,13 @@ export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: stri
   if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;
   if (m.type === "video") {
     const box = mediaBox(m, 260, 320, 260, 180);
-    return <div className="media-frame" style={box}><video src={url} controls className="media-el" style={{ objectFit: "cover" }} /></div>;
+    return <div className="media-frame" style={box} {...dragOutProps(url, m.media_mime, m.media_name)}><video src={url} controls className="media-el" style={{ objectFit: "cover" }} /></div>;
   }
   if (m.type === "audio") return <AudioPlayer url={url} />;
   // document / other
   return (
-    <a href={url} target="_blank" rel="noreferrer" className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}>
+    <a href={url} target="_blank" rel="noreferrer" download={m.media_name || undefined} className="row gap-2" style={{ padding: "6px 4px", textDecoration: "none", color: "inherit" }}
+      {...dragOutProps(url, m.media_mime, m.media_name)}>
       <span className="doc-ic" style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
       <span style={{ minWidth: 0 }}><span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || "Archivo"}</span><span className="t-xs muted">{(m.media_mime || "").split("/").pop()}</span></span>
     </a>
@@ -437,7 +442,7 @@ function QuotedBlock({ m }: { m: ChatMessage }) {
   return <div className="truncate" title={lang === "es" ? "Ir al mensaje" : "Go to message"} onClick={(e) => { e.stopPropagation(); jumpToMessage(m.id); }} style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240, cursor: "pointer" }}>{label}</div>;
 }
 
-function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void }) {
+function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopied }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void; onCopied?: (r: "file" | "link" | null) => void }) {
   const { lang } = useApp();
   const { ref, open, rect, toggle, close } = usePopover();
   return (
@@ -450,6 +455,18 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward }: { m:
             <button className="menu-item" onClick={() => { const r = rect; close(); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {!m.deleted && (m.type === "text" || !!m.media_url) && <button className="menu-item" onClick={() => { close(); onForward(); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>}
+            {/* Dos acciones separadas: copiar el ARCHIVO (solo imágenes — el portapapeles web no
+                admite otros tipos) y copiar su enlace. Antes una sola decidía por ti. */}
+            {!m.deleted && !!m.media_url && canCopyFile(m.media_mime) && (
+              <button className="menu-item" onClick={async () => { close(); onCopied?.(await copyFile(m.media_url!, m.media_mime) ? "file" : null); }}>
+                <Icon name="file" size={15} />{lang === "es" ? "Copiar archivo" : "Copy file"}
+              </button>
+            )}
+            {!m.deleted && !!m.media_url && (
+              <button className="menu-item" onClick={async () => { close(); onCopied?.(await copyLink(m.media_url!) ? "link" : null); }}>
+                <Icon name="paperclip" size={15} />{lang === "es" ? "Copiar enlace" : "Copy link"}
+              </button>
+            )}
             {out && m.type === "text" && <button className="menu-item" onClick={() => { close(); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {out && <button className="menu-item danger" onClick={() => { close(); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
           </div>
@@ -1190,6 +1207,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [staged, setStaged] = useState<File[]>([]);
   const [caption, setCaption] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -1198,26 +1216,50 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
   const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
 
+  // Cancelar SIEMPRE debe funcionar. Antes, si un envío fallaba o se quedaba colgado, el modal
+  // quedaba con `sending` en true: la X y el scrim están deshabilitados mientras envía, así que la
+  // conversación se quedaba bloqueada hasta recargar o cambiar de chat (que remonta el componente).
+  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); };
+
+  // Cambiar de conversación no debe arrastrar un envío a medias de la anterior.
+  useEffect(() => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); }, [detail.id]);
+
   // Upload staged files, then send (caption goes on the first item, like WhatsApp).
   async function sendStaged() {
-    if (!staged.length) return;
+    if (!staged.length || sending) return;
     setSending(true);
+    setSendErr(null);
     const supabase = createClient();
+    const failed: File[] = [];
     try {
       for (let i = 0; i < staged.length; i++) {
         const file = staged[i];
-        const ext = (file.name.split(".").pop() || "bin").toLowerCase();
-        const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-        if (error) { console.error(error); continue; }
-        // Store the storage PATH; the private bucket is served via signed URLs on read.
-        const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-        await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+        try {
+          const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+          const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
+          if (error) throw new Error(error.message);
+          // Store the storage PATH; the private bucket is served via signed URLs on read.
+          const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
+          await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+        } catch (e) {
+          // Un archivo que falla no debe tumbar a los demás ni perderse: se queda en la bandeja
+          // para reintentarlo, en vez de desaparecer en silencio como antes.
+          console.error(e);
+          failed.push(file);
+        }
       }
-      setStaged([]); setCaption("");
+      if (failed.length) {
+        setStaged(failed);
+        setSendErr(lang === "es"
+          ? `No se pudo enviar ${failed.length} de ${staged.length}. Puedes reintentar o cancelar.`
+          : `Couldn't send ${failed.length} of ${staged.length}. Retry or cancel.`);
+      } else {
+        setStaged([]); setCaption("");
+      }
       refresh();
     } finally {
-      setSending(false);
+      setSending(false); // pase lo que pase, el modal vuelve a ser usable
     }
   }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
@@ -1621,6 +1663,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 )}
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)} onForward={() => setForwarding([m])}
+                    onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
                     onReact={(rect) => setReactTarget({ id: m.id, rect })}
                     onDelete={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar mensaje" : "Delete message", message: lang === "es" ? "Se elimina para todos en la conversación." : "It is deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
                 )}
@@ -1787,11 +1830,12 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
 
       {staged.length > 0 && (
         <div className="modal-wrap">
-          <div className="scrim" onClick={() => { if (!sending) setStaged([]); }} />
+          <div className="scrim" onClick={cancelStaged} />
           <div className="modal">
             <div className="modal-head">
               <h3 className="grow">{lang === "es" ? "Enviar archivos" : "Send files"}{staged.length > 1 ? ` (${staged.length})` : ""}</h3>
-              <button className="iconbtn" disabled={sending} onClick={() => setStaged([])}><Icon name="x" /></button>
+              {/* Nunca deshabilitada: quedarse sin salida es peor que cortar un envío a medias. */}
+              <button className="iconbtn" onClick={cancelStaged}><Icon name="x" /></button>
             </div>
             <div className="modal-body">
               <div className="row gap-2" style={{ flexWrap: "wrap", justifyContent: "center" }}>
@@ -1800,8 +1844,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               </div>
             </div>
             <div className="modal-foot">
-              <div className="field field-filled grow"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
-              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : (lang === "es" ? "Enviar" : "Send")}</button>
+              <div className="col gap-2 grow" style={{ minWidth: 0 }}>
+                {sendErr && <div className="t-xs" style={{ color: "var(--red)" }}>{sendErr}</div>}
+                <div className="field field-filled"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
+              </div>
+              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : sendErr ? (lang === "es" ? "Reintentar" : "Retry") : (lang === "es" ? "Enviar" : "Send")}</button>
             </div>
           </div>
         </div>

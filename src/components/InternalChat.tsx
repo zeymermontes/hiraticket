@@ -5,12 +5,14 @@ import { Icon } from "@/components/Icon";
 import { useConfirm } from "@/components/Confirm";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useToast } from "@/components/Toast";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
 import { keepSubscribed } from "@/lib/realtime";
 import { putMessages } from "@/lib/localCache";
+import { copyFile, copyLink, canCopyFile } from "@/lib/mediaDrag";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
@@ -58,6 +60,7 @@ function renderBody(body: string, mentionNames: string[]) {
 export function InternalChat({ initial, businessId, initialChannel }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string; initialChannel?: string | null }) {
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
+  const { push } = useToast();
   const [threads, setThreads] = useState(initial.threads);
   const [sel, setSel] = useState<string>(initial.threads[0]?.key ?? "team");
   const [msgs, setMsgs] = useState<InternalMsg[]>([]);
@@ -83,6 +86,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const [staged, setStaged] = useState<File[]>([]);
   const [caption, setCaption] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState<string | null>(null);
   const [mention, setMention] = useState<{ q: string; at: number; rect: DOMRect } | null>(null);
   const [mentionSel, setMentionSel] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -186,6 +190,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 
   // Drop the optimistic bubble once the real row lands (msgs grows) or on channel switch.
   useEffect(() => { setExtra([]); }, [sel, msgs.length]);
+  // Cambiar de canal no debe arrastrar un envío a medias del anterior.
+  useEffect(() => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); }, [sel]);
   // After paint, mark everything on screen as seen so it won't re-animate on the next render.
   useEffect(() => { for (const m of msgs) seen.current.add(m.id); }, [msgs]);
 
@@ -236,21 +242,40 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const stageFiles = (files: FileList | File[]) => setStaged((s) => [...s, ...Array.from(files)]);
   const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
   // Upload staged files, then send (caption goes on the first item, like the WhatsApp chat).
+  // Cancelar SIEMPRE debe funcionar: si un envío fallaba, `sending` dejaba el modal sin salida
+  // (la X y el scrim se deshabilitan mientras envía) y el canal quedaba bloqueado hasta recargar.
+  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); };
+
   async function sendStaged() {
-    if (!staged.length) return;
-    const ch = sel; setSending(true);
+    if (!staged.length || sending) return;
+    const ch = sel; setSending(true); setSendErr(null);
     const supabase = createClient();
+    const failed: File[] = [];
     try {
       for (let i = 0; i < staged.length; i++) {
         const file = staged[i];
-        const ext = (file.name.split(".").pop() || "bin").toLowerCase();
-        const path = `${businessId}/internal/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-        if (error) { console.error(error); continue; }
-        const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-        await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+        try {
+          const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+          const path = `${businessId}/internal/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
+          if (error) throw new Error(error.message);
+          const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
+          await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+        } catch (e) {
+          // El que falla se queda en la bandeja para reintentar, en vez de desaparecer.
+          console.error(e);
+          failed.push(file);
+        }
       }
-      setStaged([]); setCaption(""); refreshMsgs(ch); refreshThreads();
+      if (failed.length) {
+        setStaged(failed);
+        setSendErr(lang === "es"
+          ? `No se pudo enviar ${failed.length} de ${staged.length}. Puedes reintentar o cancelar.`
+          : `Couldn't send ${failed.length} of ${staged.length}. Retry or cancel.`);
+      } else {
+        setStaged([]); setCaption("");
+      }
+      refreshMsgs(ch); refreshThreads();
     } finally { setSending(false); }
   }
   const startEdit = (m: InternalMsg) => { setEditing(m); setReply(null); setText(m.body); taRef.current?.focus(); };
@@ -308,6 +333,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           )}
           {!m.deleted && !m.id.startsWith("tmp") && (
             <InternalMsgMenu out={mine} canEdit={mine && m.type === "text"} canDelete={mine} lang={lang}
+              media={m.media_url && !m.deleted ? { url: m.media_url, mime: m.media_mime } : null}
+              onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
               onReply={() => { setReply(m); setEditing(null); taRef.current?.focus(); }}
               onForward={(rect) => setFwdTarget({ id: m.id, rect })}
               onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })} />
@@ -482,11 +509,12 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 
       {staged.length > 0 && (
         <div className="modal-wrap">
-          <div className="scrim" onClick={() => { if (!sending) setStaged([]); }} />
+          <div className="scrim" onClick={cancelStaged} />
           <div className="modal">
             <div className="modal-head">
               <h3 className="grow">{lang === "es" ? "Enviar archivos" : "Send files"}{staged.length > 1 ? ` (${staged.length})` : ""}</h3>
-              <button className="iconbtn" disabled={sending} onClick={() => setStaged([])}><Icon name="x" /></button>
+              {/* Nunca deshabilitada: quedarse sin salida es peor que cortar un envío a medias. */}
+              <button className="iconbtn" onClick={cancelStaged}><Icon name="x" /></button>
             </div>
             <div className="modal-body">
               <div className="row gap-2" style={{ flexWrap: "wrap", justifyContent: "center" }}>
@@ -495,8 +523,11 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
               </div>
             </div>
             <div className="modal-foot">
-              <div className="field field-filled grow"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
-              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : (lang === "es" ? "Enviar" : "Send")}</button>
+              <div className="col gap-2 grow" style={{ minWidth: 0 }}>
+                {sendErr && <div className="t-xs" style={{ color: "var(--red)" }}>{sendErr}</div>}
+                <div className="field field-filled"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
+              </div>
+              <button className="btn btn-primary" disabled={sending} onClick={sendStaged}><Icon name="send" size={15} />{sending ? (lang === "es" ? "Enviando…" : "Sending…") : sendErr ? (lang === "es" ? "Reintentar" : "Retry") : (lang === "es" ? "Enviar" : "Send")}</button>
             </div>
           </div>
         </div>
@@ -506,7 +537,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 }
 
 /** Per-message hover menu for internal chat — same actions/icons/order as the WhatsApp chat. */
-function InternalMsgMenu({ out, canEdit, canDelete, lang, onReply, onForward, onEdit, onDelete, onReact }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void }) {
+function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForward, onEdit, onDelete, onReact, onCopied }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; media?: { url: string; mime: string | null } | null; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onCopied?: (r: "file" | "link" | null) => void }) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -521,6 +552,17 @@ function InternalMsgMenu({ out, canEdit, canDelete, lang, onReply, onForward, on
             <button className="menu-item" onClick={() => { const r = rect; setOpen(false); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             <button className="menu-item" onClick={() => { const r = rect; setOpen(false); onForward(r); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>
+            {/* Paridad con el chat de clientes: archivo y enlace como acciones separadas. */}
+            {media && canCopyFile(media.mime) && (
+              <button className="menu-item" onClick={async () => { setOpen(false); onCopied?.(await copyFile(media.url, media.mime) ? "file" : null); }}>
+                <Icon name="file" size={15} />{lang === "es" ? "Copiar archivo" : "Copy file"}
+              </button>
+            )}
+            {media && (
+              <button className="menu-item" onClick={async () => { setOpen(false); onCopied?.(await copyLink(media.url) ? "link" : null); }}>
+                <Icon name="paperclip" size={15} />{lang === "es" ? "Copiar enlace" : "Copy link"}
+              </button>
+            )}
             {canEdit && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
             {canDelete && <button className="menu-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar" : "Delete"}</button>}
           </div>
