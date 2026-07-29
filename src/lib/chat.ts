@@ -162,15 +162,25 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
   });
 }
 
+/** Recientes que conserva la bandeja. Es memoria de uso, no un archivo: pasado eso, el sticker
+ *  que sigues usando reaparece solo y el que no, estorba. Los favoritos no tienen tope. */
+const RECENT_STICKERS = 20;
+
 export interface StickerItem { id: string; url: string; fav: boolean; name?: string | null; tags?: string[] } // id = a message to re-send from
 
 /** The send-sticker tray: favorites (pinned, with name/tags) + recent distinct stickers used.
  *  Each item carries a message id to re-send the stored WebP from + a signed preview URL. */
 export async function getStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
   const supabase = await createClient();
-  const favCols = (meta: string) => supabase.from("sticker_favorites").select(`message_id, media_url${meta}`).eq("business_id", businessId).order("created_at", { ascending: false });
+  const { data: { user } } = await supabase.auth.getUser();
+  // Favoritos: los míos, más los antiguos sin dueño (0069), que se siguen viendo para no
+  // desaparecerle a nadie lo que ya tenía. SIN límite: son una lista curada, no un historial.
+  const favCols = (meta: string) => supabase.from("sticker_favorites").select(`message_id, media_url${meta}`)
+    .eq("business_id", businessId)
+    .or(`created_by.eq.${user?.id ?? "00000000-0000-0000-0000-000000000000"},created_by.is.null`)
+    .order("created_at", { ascending: false });
   const [recentRes, favRes0] = await Promise.all([
-    supabase.from("messages").select("id, media_url").eq("business_id", businessId).eq("type", "sticker").not("media_url", "is", null).order("created_at", { ascending: false }).limit(120),
+    supabase.from("messages").select("id, media_url").eq("business_id", businessId).eq("type", "sticker").not("media_url", "is", null).order("created_at", { ascending: false }).limit(200),
     favCols(", name, tags"),
   ]);
   // name/tags (0034) may not be applied yet → retry without them.
@@ -180,7 +190,7 @@ export async function getStickerTray(businessId: string): Promise<{ favorites: S
 
   // Dedupe recent by stored path (same sticker resent many times → show once).
   const seen = new Set<string>();
-  const uniqRecent = ((recentRes.data ?? []) as { id: string; media_url: string }[]).filter((r) => r.media_url && !seen.has(r.media_url) && (seen.add(r.media_url), true)).slice(0, 48);
+  const uniqRecent = ((recentRes.data ?? []) as { id: string; media_url: string }[]).filter((r) => r.media_url && !seen.has(r.media_url) && (seen.add(r.media_url), true)).slice(0, RECENT_STICKERS);
 
   // Sign favorites + recent together (one signing batch), then split back.
   const favStubs = favRows.map((f) => ({ id: f.message_id, media_url: f.media_url }));

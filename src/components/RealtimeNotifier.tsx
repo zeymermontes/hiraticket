@@ -2,7 +2,7 @@
 import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import { getToastPreview } from "@/app/(app)/chat/actions";
+import { getToastPreview, getMediaPreviewUrl } from "@/app/(app)/chat/actions";
 import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } from "@/lib/notify";
 import { keepSubscribed } from "@/lib/realtime";
 import { DEFAULT_NOTIF_PREFS, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
@@ -104,9 +104,14 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
         const body = await previewOf("wa", m.id, m.body);
         const preview = body || (m.type && m.type !== "text" ? typeLabel[m.type] ?? "📎 Adjunto" : "Mensaje");
         const href = `/chat?c=${m.conversation_id}`;
-        push({ kind: "info", title: name, message: preview.slice(0, 90), href });
+        // Un "🩷 Sticker" no dice cuál te mandaron. Con miniatura se entiende de un vistazo.
+        let thumb: string | undefined;
+        if ((m.type === "sticker" || m.type === "image") && m.id) {
+          thumb = (await getMediaPreviewUrl(m.id).catch(() => null)) ?? undefined;
+        }
+        push({ kind: "info", title: name, message: preview.slice(0, 90), href, imageUrl: thumb });
         // Suena y avisa fuera de la pestaña. Mismo tratamiento que el chat de equipo abajo.
-        alertIncoming({ title: name, body: preview.slice(0, 120), href, tag: `wa-${m.conversation_id}` });
+        alertIncoming({ title: name, body: preview.slice(0, 120), href, tag: `wa-${m.conversation_id}`, image: thumb });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, () => notify())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, async (payload) => {
@@ -150,6 +155,26 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
       // tampoco deja ver el asignado anterior para saber si de verdad cambió.
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "events", filter: `business_id=eq.${businessId}` }, async (payload) => {
         const e = payload.new as { kind?: string; target_id?: string | null; actor_id?: string | null; parent_type?: string; parent_id?: string };
+        if (e.kind === "reaction") {
+          // Reaccionaron a un mensaje mío. Llega por evento y no por el UPDATE de `messages`
+          // porque sin replica identity full el cliente no ve qué cambió — y ponérsela a la tabla
+          // más grande haría que cada acuse de entrega escribiera la fila entera al WAL.
+          if (e.target_id !== userId) return;
+          if (!notifOn(prefsRef.current, "mine")) return;
+          let client = "";
+          try {
+            const { data: conv } = await supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", e.parent_id ?? "").maybeSingle();
+            const c = (conv as { contact?: unknown } | null)?.contact;
+            const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
+            client = (cc?.name || cc?.phone || "").trim();
+          } catch {}
+          const emoji = (e as { text?: string }).text || "👍";
+          const title = `${emoji} ${client || "Alguien"} reaccionó a tu mensaje`;
+          push({ kind: "info", title, message: emoji, href: `/chat?c=${e.parent_id}`, key: `react-${e.parent_id}` });
+          alertIncoming({ title, body: emoji, href: `/chat?c=${e.parent_id}`, tag: `react-${e.parent_id}` });
+          notify();
+          return;
+        }
         if (e.kind !== "swap" || e.target_id !== userId || e.actor_id === userId) return;
         if (!notifOn(prefsRef.current, "transfers")) return;
         let who = "", client = "";

@@ -1,5 +1,6 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getMyBusiness } from "@/lib/queries";
 import { getConversationDetail, type ConvDetail } from "@/lib/chat";
 import { encryptBody, decryptBody } from "@/lib/msgcrypto";
@@ -189,7 +190,9 @@ export async function saveStickerFavorite(messageId: string, name: string, tags:
   const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
   if (!m?.media_url) return;
   const meta = { name: name.trim() || null, tags: tags.map((t) => t.trim().toLowerCase()).filter(Boolean) };
-  const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", m.business_id).eq("media_url", m.media_url).maybeSingle();
+  // Por usuario (0069): antes la unicidad era (negocio, sticker) y el favorito de uno era el de
+  // todos — marcarlo o quitarlo se lo cambiaba al resto del equipo.
+  const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", m.business_id).eq("media_url", m.media_url).eq("created_by", userId ?? "").maybeSingle();
   if (existing) {
     const { error } = await supabase.from("sticker_favorites").update(meta).eq("id", existing.id);
     if (error) await supabase.from("sticker_favorites").update({}).eq("id", existing.id); // name/tags (0034) not applied
@@ -202,10 +205,11 @@ export async function saveStickerFavorite(messageId: string, name: string, tags:
 
 /** Remove a sticker from favorites (keyed by its stored WebP). */
 export async function removeStickerFavorite(messageId: string): Promise<void> {
-  const { supabase } = await ctx();
+  const { supabase, userId } = await ctx();
   const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
   if (!m?.media_url) return;
-  await supabase.from("sticker_favorites").delete().eq("business_id", m.business_id).eq("media_url", m.media_url);
+  // Solo el mío: quitarlo de mi bandeja no debe borrarlo de la de mis compañeros.
+  await supabase.from("sticker_favorites").delete().eq("business_id", m.business_id).eq("media_url", m.media_url).eq("created_by", userId ?? "");
 }
 
 /** Queue an outbound media message (file already uploaded to storage). */
@@ -514,4 +518,17 @@ export async function requestMediaFetch(messageId: string): Promise<{ ok: boolea
     .update({ pending_op: "fetch_media", media_fetch_error: null })
     .eq("id", messageId).is("media_url", null);
   return { ok: !error };
+}
+
+/** URL firmada del adjunto de un mensaje, para la miniatura de una notificación.
+ *  El payload de realtime trae la RUTA de storage, no algo que el navegador pueda pintar. */
+export async function getMediaPreviewUrl(messageId: string): Promise<string | null> {
+  const { supabase } = await ctx();
+  const { data } = await supabase.from("messages").select("media_url").eq("id", messageId).maybeSingle();
+  const path = (data as { media_url?: string | null } | null)?.media_url;
+  if (!path) return null;
+  if (path.startsWith("http")) return path;
+  const admin = createAdminClient();
+  const { data: signed } = await admin.storage.from("media").createSignedUrl(path, 60 * 10);
+  return signed?.signedUrl ?? null;
 }

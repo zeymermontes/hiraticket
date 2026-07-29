@@ -1916,6 +1916,22 @@ func (m *Manager) applyReaction(ctx context.Context, biz, targetWaID, emoji, by 
 	}
 	b, _ := json.Marshal(out)
 	m.exec(ctx, `UPDATE messages SET reactions=$3 WHERE business_id=$1 AND wa_id=$2`, biz, targetWaID, string(b))
+
+	// Aviso al agente cuyo mensaje reaccionaron. Va por `events` y no por el UPDATE de messages:
+	// sin replica identity full el cliente no puede ver qué cambió, y ponérsela a `messages` —la
+	// tabla más grande y la que más se actualiza— haría que cada acuse de entrega escribiera la
+	// fila entera al WAL. events ya está en realtime (0068) y lleva target_id.
+	if emoji == "" {
+		return // quitar una reacción no avisa
+	}
+	var convID, author sql.NullString
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT conversation_id, author_id FROM messages WHERE business_id=$1 AND wa_id=$2`, biz, targetWaID).
+		Scan(&convID, &author); err != nil || !convID.Valid {
+		return
+	}
+	m.exec(ctx, `INSERT INTO events (business_id, parent_type, parent_id, kind, text, target_id)
+		VALUES ($1,'conversation',$2,'reaction',$3,$4)`, biz, convID.String, emoji, nullIf(author.String))
 }
 
 // ---------- helpers ----------

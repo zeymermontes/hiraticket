@@ -85,14 +85,14 @@ export function playPing() {
 
 /** Notificación del sistema. Solo cuando la pestaña NO está al frente: con la pestaña visible el
  *  toast ya cumple, y duplicarlo es ruido. */
-export function desktopNotify(opts: { title: string; body: string; href?: string; tag?: string }) {
+export function desktopNotify(opts: { title: string; body: string; href?: string; tag?: string; image?: string }) {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (!desktopEnabled() || Notification.permission !== "granted") return;
   if (document.visibilityState === "visible") return;
   try {
     const n = new Notification(opts.title, {
       body: opts.body,
-      icon: "/icon.svg",
+      icon: opts.image || "/icon.svg",
       // Mismo tag = la nueva reemplaza a la anterior, así 20 mensajes de un chat no apilan
       // 20 notificaciones del sistema.
       tag: opts.tag,
@@ -116,7 +116,7 @@ export function vibrate(pattern: number | number[]) {
 export const CALL_VIBRATION = [400, 200, 400, 200, 400];
 
 /** Sonido + notificación del sistema para un mensaje entrante. */
-export function alertIncoming(opts: { title: string; body: string; href?: string; tag?: string }) {
+export function alertIncoming(opts: { title: string; body: string; href?: string; tag?: string; image?: string }) {
   playPing();
   desktopNotify(opts);
 }

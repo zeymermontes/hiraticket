@@ -2014,7 +2014,10 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
                 <Pill color={ar.color as PillColor}>{ar.name}</Pill>
               </button>
             ))}
-            {detail.assignee_id && <>
+            {/* Siempre visible. Antes se escondía si el chat no tenía agente, pero la asignación
+                masiva de la lista sí la ofrecía siempre — y aun sin agente hace algo: suelta el
+                candado de "mantener conmigo". */}
+            {<>
               <div className="menu-sep" />
               <button className="menu-item" onClick={() => pick("unassign", "")}>
                 <Pill color="slate"><Icon name="agents" size={11} />{lang === "es" ? "Sin asignar" : "Unassign"}</Pill>

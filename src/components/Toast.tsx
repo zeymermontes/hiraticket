@@ -13,6 +13,8 @@ export interface ToastInput {
    *  en vez de apilarse. Es lo que permite que "Llamada entrante" se convierta en "Llamada
    *  perdida" sin que queden los dos en pantalla. */
   key?: string;
+  /** Miniatura a la izquierda (sticker o foto): un "🩷 Sticker" no dice cuál te mandaron. */
+  imageUrl?: string;
 }
 interface Toast extends ToastInput { id: number }
 
@@ -76,7 +78,9 @@ function ToastCard({ t, onClose }: { t: Toast; onClose: () => void }) {
   const go = () => { if (t.href) { router.push(t.href); onClose(); } };
   return (
     <div className={"toast toast-" + kind + (t.href ? " toast-click" : "")} onClick={t.href ? go : undefined} role={t.href ? "button" : undefined}>
-      <span className="toast-ic"><Icon name={ICON[kind]} size={16} /></span>
+      {t.imageUrl
+        ? <img src={t.imageUrl} alt="" className="toast-ic" style={{ objectFit: "contain", background: "var(--surface-2)" }} />
+        : <span className="toast-ic"><Icon name={ICON[kind]} size={16} /></span>}
       <div className="toast-body">
         {t.title && <div className="toast-title">{t.title}</div>}
         <div className="toast-msg">{t.message}</div>
