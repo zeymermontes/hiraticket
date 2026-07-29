@@ -20,17 +20,23 @@ import { useEffect, useRef, useState } from "react";
  */
 
 /** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
-const WORKER_URL = "/media-worker.js?v=1";
+const WORKER_URL = "/media-worker.js?v=2";
 
 type Reply =
   | { id: number; type: "blob"; blob: Blob }
   | { id: number; type: "progress"; pct: number | null }
+  | { id: number; type: "toobig"; bytes: number }
   | { id: number; type: "done" }
   | { id: number; type: "miss" }
   | { id: number; type: "error" };
 
+/** `tooBig` trae el tamaño real cuando el archivo no cabe en el caché. Sirve de dos cosas: no
+ *  volver a pedirlo, y decirle a la burbuja que esa foto es pesada sin depender de `media_size`
+ *  —- que viene nulo en todos los mensajes anteriores a la migración 0067. */
+type Answer = { blob: Blob | null; tooBig?: number };
+
 interface Pending {
-  resolve: (b: Blob | null) => void;
+  resolve: (a: Answer) => void;
   onProgress?: (pct: number | null) => void;
 }
 
@@ -48,12 +54,14 @@ function getWorker(): Worker | null {
       if (!p) return;
       if (msg.type === "progress") return p.onProgress?.(msg.pct);
       pending.delete(msg.id);
-      p.resolve(msg.type === "blob" ? msg.blob : null);
+      if (msg.type === "blob") return p.resolve({ blob: msg.blob });
+      if (msg.type === "toobig") return p.resolve({ blob: null, tooBig: msg.bytes });
+      p.resolve({ blob: null });
     };
     // Si el worker muere, se responde a todo lo pendiente y se marca como no disponible para caer
     // al camino sin caché en vez de dejar promesas colgadas para siempre.
     worker.onerror = () => {
-      for (const [, p] of pending) p.resolve(null);
+      for (const [, p] of pending) p.resolve({ blob: null });
       pending.clear();
       worker = null;
     };
@@ -63,9 +71,9 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string | null, onProgress?: (pct: number | null) => void): Promise<Blob | null> {
+function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string | null, onProgress?: (pct: number | null) => void): Promise<Answer> {
   const w = getWorker();
-  if (!w) return Promise.resolve(null);
+  if (!w) return Promise.resolve({ blob: null });
   const id = ++seq;
   return new Promise((resolve) => {
     pending.set(id, { resolve, onProgress });
@@ -82,8 +90,9 @@ function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string 
  * bajando de todos modos, y los bytes se guardan de fondo. Cambiarlo a un blob a medio camino solo
  * daría un parpadeo para ahorrar una descarga que ya ocurrió.
  */
-export function useCachedMedia(path: string | null | undefined, url: string | null | undefined): string | undefined {
+export function useCachedMedia(path: string | null | undefined, url: string | null | undefined): { src: string | undefined; tooBigBytes: number } {
   const [cached, setCached] = useState<string | null>(null);
+  const [tooBigBytes, setTooBig] = useState(0);
 
   // La URL firmada cambia en cada refetch, y devolverla tal cual era un error grave: el `src` del
   // <img> cambiaba de cadena a media descarga, y ante un src nuevo el navegador CANCELA lo que iba
@@ -108,9 +117,11 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
     let objectUrl: string | null = null;
     // "warm" devuelve el blob si YA estaba guardado, y null si hubo que bajarlo —- en ese caso los
     // bytes quedan en el caché para la próxima y aquí no se toca el src, que ya está pintando.
-    ask("warm", path, urlRef.current).then((blob) => {
-      if (!alive || !blob) return;
-      objectUrl = URL.createObjectURL(blob);
+    ask("warm", path, urlRef.current).then((a) => {
+      if (!alive) return;
+      if (a.tooBig) return setTooBig(a.tooBig);
+      if (!a.blob) return;
+      objectUrl = URL.createObjectURL(a.blob);
       setCached(objectUrl);
     });
     return () => {
@@ -119,7 +130,7 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
     };
   }, [path]);
 
-  return cached ?? stableUrl;
+  return { src: cached ?? stableUrl, tooBigBytes };
 }
 
 /**
@@ -132,7 +143,7 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
  * posible y vale más mostrar "cargando" que un número inventado.
  */
 export async function fetchWithProgress(path: string | null | undefined, url: string, onProgress: (pct: number | null) => void): Promise<string | null> {
-  const blob = await ask("get", path, url, onProgress);
+  const { blob } = await ask("get", path, url, onProgress);
   if (blob) return URL.createObjectURL(blob);
   // Sin worker (o si falló): que el <img> lo intente con la URL firmada es mejor que no mostrar nada.
   return null;

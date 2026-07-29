@@ -147,6 +147,25 @@ function useChatRefresh() {
   const router = useRouter();
   return ctx ?? (() => router.refresh());
 }
+
+/**
+ * Refresco ligero: solo el encabezado de la conversación (estado, asignado, área, candado) más la
+ * lista. Es lo único que cambia al aceptar, resolver, transferir, silenciar o poner el candado.
+ *
+ * El refresco completo vuelve a traer TODOS los mensajes, notas, eventos y pedidos, y vuelve a
+ * firmar cada archivo —- y luego React repinta ese árbol entero. Medido: la acción responde en
+ * ~283 ms y React no se queda ni un milisegundo, así que los segundos que se sienten después venían
+ * de aquí, no del servidor ni de la base. Para un cambio de estado, traer el hilo completo es
+ * trabajo tirado.
+ *
+ * El completo se sigue usando donde de verdad hace falta: notas y pedidos no viajan por realtime.
+ */
+const ChatHeaderRefreshContext = createContext<(() => void) | null>(null);
+function useChatHeaderRefresh() {
+  const ctx = useContext(ChatHeaderRefreshContext);
+  const full = useChatRefresh();
+  return ctx ?? full;
+}
 // Optimistically patch the open conversation's detail (instant feedback before the action resolves).
 const ChatPatchContext = createContext<((patch: Partial<ConvDetail>) => void) | null>(null);
 function useChatPatch() { return useContext(ChatPatchContext) ?? (() => {}); }
@@ -227,11 +246,19 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   // AUNQUE no haya miniatura: la regla anterior solo lo aplicaba con miniatura, y por eso una foto
   // de 16 MB de un mensaje viejo seguía intentando cargarse entera en la burbuja. No se lograba
   // nada con eso: tardaba una eternidad y de paso trababa la pestaña.
-  const heavy = (m.media_size ?? 0) > HEAVY_IMAGE_BYTES;
+  // El tamaño puede venir de la fila (media_size) o de lo que aprendió el worker al mirar la
+  // cabecera. Hacen falta los dos: media_size es NULL en todos los mensajes anteriores a la
+  // migración 0067 —- justamente los viejos, que son los que más duelen.
+  //
+  // `learned` se guarda aparte y nunca se borra. Si dependiera del hook, al volverse pesada le
+  // pasaríamos `null`, el hook olvidaría el dato, y `heavy` oscilaría entre true y false sin parar.
+  const [learned, setLearned] = useState(0);
+  const heavy = Math.max(m.media_size ?? 0, learned) > HEAVY_IMAGE_BYTES;
   // Solo para pintar. El href y el arrastre siguen con la URL firmada: un blob local no sirve
   // fuera de esta pestaña, y es lo que hace que "Guardar imagen como…" y arrastrar a otra app
   // sigan funcionando.
-  const cached = useCachedMedia(heavy ? null : m.media_path, heavy ? null : url);
+  const { src: cached, tooBigBytes } = useCachedMedia(heavy ? null : m.media_path, heavy ? null : url);
+  useEffect(() => { if (tooBigBytes) setLearned(tooBigBytes); }, [tooBigBytes]);
   const src = heavy ? thumb : cached;
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
@@ -259,7 +286,7 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
         // peor que no mostrar nada. Se ofrece abrirla, que es donde sí hay barra de progreso.
         <span className="media-tap"><Icon name="download" size={18} />{lang === "es" ? "Ver foto" : "View photo"}</span>
       )}
-      {heavy && <span className="media-heavy">{fmtBytes(m.media_size ?? 0)}</span>}
+      {heavy && <span className="media-heavy">{fmtBytes(Math.max(m.media_size ?? 0, learned))}</span>}
     </a>
   );
 }
@@ -785,6 +812,14 @@ export function ChatScreen({
     refetchListRef.current();
   }, []);
 
+  // Solo el encabezado + la lista. Ver ChatHeaderRefreshContext: para un cambio de estado o de
+  // asignado, volver a traer el hilo completo y repintarlo es trabajo tirado.
+  const headerRefresh = useCallback(() => {
+    const id = detailIdRef.current;
+    if (id) liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {});
+    refetchListRef.current();
+  }, []);
+
   // Live updates via targeted refetches (no full route refresh — only what changed).
   useEffect(() => {
     const supabase = createClient();
@@ -1108,6 +1143,7 @@ export function ChatScreen({
 
   return (
     <ChatRefreshContext.Provider value={softRefresh}>
+    <ChatHeaderRefreshContext.Provider value={headerRefresh}>
     <ChatPatchContext.Provider value={patchDetail}>
     <div
       className="chat"
@@ -1276,6 +1312,7 @@ export function ChatScreen({
       {showCompose && <NewConversationModal lang={lang} onClose={() => setShowCompose(false)} onStarted={(id) => { setShowCompose(false); router.push(`/chat?c=${id}`); router.refresh(); }} />}
     </div>
     </ChatPatchContext.Provider>
+    </ChatHeaderRefreshContext.Provider>
     </ChatRefreshContext.Provider>
   );
 }
@@ -1336,6 +1373,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const refresh = useChatRefresh();
+  const headerRefresh = useChatHeaderRefresh();
   const patch = useChatPatch();
   const [pending, start] = useTransition();
   const [text, setText] = useState("");
@@ -1704,13 +1742,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         {detail.status !== "resolved" ? (
           <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
-            onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}>
+            onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); t.done(); refresh(); t.settled(); }); }}>
+          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
@@ -2082,7 +2120,7 @@ export function MediaThumb({ file, onRemove }: { file: File; onRemove: () => voi
 /* ---------- Transfer popover ---------- */
 function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; meId?: string; onAssignedToMe?: (convId: string) => void }) {
   const { lang } = useApp();
-  const refresh = useChatRefresh();
+  const refresh = useChatHeaderRefresh();
   const patch = useChatPatch();
   const ask = useConfirm();
   const { ref, open, rect, toggle, close } = usePopover();
@@ -2151,6 +2189,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
+  const headerRefresh = useChatHeaderRefresh();
   const patch = useChatPatch();
   const flowToast = useFlowToast();
   const ask = useConfirm();
@@ -2370,22 +2409,22 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               <SnoozeControl detail={detail} />
               <button className="act" onClick={() => { setActionsRect(null); setShowXfer(true); }}><Icon name="swap" />{lang === "es" ? "Transferir" : "Transfer"}</button>
               <button ref={tagBtn} className="act" disabled={!detail.contact} onClick={() => { if (tagBtn.current) setTagRect(tagBtn.current.getBoundingClientRect()); }}><Icon name="tag" />{lang === "es" ? "Etiqueta" : "Tag"}</button>
-              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); refresh(); })}>
+              <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); headerRefresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
-              <button className={"act" + (detail.muted ? " warn" : "")} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
+              <button className={"act" + (detail.muted ? " warn" : "")} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); headerRefresh(); }); }}>
                 <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
               </button>
               {detail.locked_to
-                ? <button className="act warn" title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); refresh(); }); }}>
+                ? <button className="act warn" title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); headerRefresh(); }); }}>
                     <Icon name="lock" />{lang === "es" ? "Soltar cliente" : "Release client"}
                   </button>
-                : <button className="act" title={lang === "es" ? "Mantener este cliente asignado a ti pase lo que pase" : "Keep this client assigned to you no matter what"} onClick={() => { patch({ locked_to: meId, assignee_id: meId }); start(async () => { await lockConvToMe(detail.id); refresh(); }); }}>
+                : <button className="act" title={lang === "es" ? "Mantener este cliente asignado a ti pase lo que pase" : "Keep this client assigned to you no matter what"} onClick={() => { patch({ locked_to: meId, assignee_id: meId }); start(async () => { await lockConvToMe(detail.id); headerRefresh(); }); }}>
                     <Icon name="lock" />{lang === "es" ? "Mantener conmigo" : "Keep with me"}
                   </button>}
               {detail.status === "resolved"
-                ? <button className="act full" onClick={() => { const t = timedClick("reabrir"); patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" onClick={() => { const t = timedClick("resolver(panel)"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" onClick={() => { const t = timedClick("reabrir"); patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" onClick={() => { const t = timedClick("resolver(panel)"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
@@ -2408,7 +2447,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
 
 function StatusControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
-  const refresh = useChatRefresh();
+  const refresh = useChatHeaderRefresh();
   const patch = useChatPatch();
   const flowToast = useFlowToast();
   const { ref, open, rect, toggle, close } = usePopover();
@@ -2434,7 +2473,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
 
 function SnoozeControl({ detail }: { detail: ConvDetail }) {
   const { lang } = useApp();
-  const refresh = useChatRefresh();
+  const refresh = useChatHeaderRefresh();
   const { ref, open, rect, toggle, close } = usePopover();
   const [, start] = useTransition();
   const snoozed = detail.snoozed_until ? new Date(detail.snoozed_until).getTime() > Date.now() : false;

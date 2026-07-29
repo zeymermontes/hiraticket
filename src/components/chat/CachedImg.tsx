@@ -10,6 +10,6 @@ import { useCachedMedia } from "@/lib/mediaCache";
  * `path` es la ruta en storage (estable). Ver `@/lib/mediaCache`.
  */
 export function CachedImg({ path, url, ...rest }: { path?: string | null; url?: string | null } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src">) {
-  const src = useCachedMedia(path, url);
+  const { src } = useCachedMedia(path, url);
   return <img {...rest} src={src} />;
 }
