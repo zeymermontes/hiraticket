@@ -1,5 +1,6 @@
 import { getMyBusiness } from "@/lib/queries";
-import { getConversationListPage, getConversationDetail, getAgents } from "@/lib/chat";
+import { getSessionUser } from "@/lib/auth";
+import { getConversationListPage, getConversationDetail, getAgents, getChatListCounts } from "@/lib/chat";
 import { getAreas, getStages } from "@/lib/business";
 import { getProducts } from "@/lib/extras";
 import { getSessions, isConnected } from "@/lib/whatsapp";
@@ -22,11 +23,14 @@ export default async function ChatPage({
   const supabase = await createClient();
   // With an explicit ?c (search, Clientes, notifications) the detail is fetched in parallel with
   // everything else — it doesn't depend on the list, and serializing it made deep links slow.
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   // Seed the list with the window the UI opens on (tab "Míos", chip "Activos") — ChatScreen owns
   // it from there and refetches as filters change, so this is one page, not every conversation.
-  const [firstPage, agents, areas, stages, sessions, products, integrations, urlDetail] = await Promise.all([
+  const [firstPage, initialCounts, agents, areas, stages, sessions, products, integrations, urlDetail] = await Promise.all([
     getConversationListPage(business.id, { tab: "mine", meId: user!.id, status: "active", limit: 40 }),
+    // Sembrados aquí para que los chips salgan con su número en el primer pintado. Antes arrancaban
+    // en cero y solo aparecían cuando llegaba el fetch del cliente — eso era el "tarda en aparecer".
+    getChatListCounts(business.id, user!.id, { tab: "mine" }),
     getAgents(business.id),
     getAreas(business.id),
     getStages(business.id),
@@ -52,6 +56,7 @@ export default async function ChatPage({
   return (
     <ChatScreen
       list={list}
+      initialCounts={initialCounts}
       detail={detail}
       selectedId={detail?.id ?? null}
       agents={agents}

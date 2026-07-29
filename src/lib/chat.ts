@@ -1,3 +1,5 @@
+import { cache } from "react";
+import { getSessionUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MSG_PAGE } from "@/lib/types";
@@ -136,7 +138,7 @@ export interface ConvDetail {
 }
 
 /** Members of a business with their display name + avatar color. */
-export async function getAgents(businessId: string): Promise<Agent[]> {
+async function _getAgents(businessId: string): Promise<Agent[]> {
   const supabase = await createClient();
   const { data: members } = await supabase
     .from("business_members")
@@ -162,6 +164,13 @@ export async function getAgents(businessId: string): Promise<Agent[]> {
   });
 }
 
+/** Envuelto en React cache(): dentro de UNA petición, varias llamadas con los mismos argumentos
+ *  se resuelven con un solo viaje a Supabase. Importa porque el layout y la página se renderizan en
+ *  la misma petición y ambos piden esto — antes eran dos viajes idénticos, y a ~68 ms cada uno
+ *  (Render en Oregon, Supabase en us-east-1) eso se nota en cada clic.
+ *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
+export const getAgents = cache(_getAgents);
+
 /** Recientes que conserva la bandeja. Es memoria de uso, no un archivo: pasado eso, el sticker
  *  que sigues usando reaparece solo y el que no, estorba. Los favoritos no tienen tope. */
 const RECENT_STICKERS = 20;
@@ -172,7 +181,7 @@ export interface StickerItem { id: string; url: string; fav: boolean; name?: str
  *  Each item carries a message id to re-send the stored WebP from + a signed preview URL. */
 export async function getStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   // Favoritos: los míos, más los antiguos sin dueño (0069), que se siguen viendo para no
   // desaparecerle a nadie lo que ya tenía. SIN límite: son una lista curada, no un historial.
   const favCols = (meta: string) => supabase.from("sticker_favorites").select(`message_id, media_url${meta}`)

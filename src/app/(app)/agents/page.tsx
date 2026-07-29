@@ -1,4 +1,5 @@
 import { getMyBusiness } from "@/lib/queries";
+import { getSessionUser } from "@/lib/auth";
 import { getAgentsDetailed } from "@/lib/agents";
 import { getAreas } from "@/lib/business";
 import { createClient } from "@/lib/supabase/server";
@@ -15,7 +16,7 @@ export default async function AgentsPage() {
     getAreas(business.id),
   ]);
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const isAdmin = agents.find((a) => a.id === user?.id)?.role === "admin";
 
   return <AgentsScreen businessId={business.id} agents={agents} areas={areas} isAdmin={!!isAdmin} />;

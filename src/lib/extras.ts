@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { getAgents } from "@/lib/chat";
 import { getStages, getAreas } from "@/lib/business";
@@ -35,7 +36,7 @@ export interface Product {
   id: string; name: string; kind: "product" | "service"; price: number; active: boolean; price_tiers: PriceTier[];
   cost: number | null; // what it costs the business (null = unknown → default margin applies in reports)
 }
-export async function getProducts(businessId: string): Promise<Product[]> {
+async function _getProducts(businessId: string): Promise<Product[]> {
   const supabase = await createClient();
   // Resilient to a not-yet-applied 0057 (cost) / 0024 (price_tiers).
   let { data, error } = await supabase
@@ -55,6 +56,13 @@ export async function getProducts(businessId: string): Promise<Product[]> {
     return { ...p, price_tiers: Array.isArray(t) ? (t as PriceTier[]) : [], cost: c == null ? null : Number(c) };
   }) as Product[];
 }
+
+/** Envuelto en React cache(): dentro de UNA petición, varias llamadas con los mismos argumentos
+ *  se resuelven con un solo viaje a Supabase. Importa porque el layout y la página se renderizan en
+ *  la misma petición y ambos piden esto — antes eran dos viajes idénticos, y a ~68 ms cada uno
+ *  (Render en Oregon, Supabase en us-east-1) eso se nota en cada clic.
+ *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
+export const getProducts = cache(_getProducts);
 
 export interface Appointment {
   id: string; title: string; starts_at: string; status: string;

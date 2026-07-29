@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isEncrypted, MASK, decryptSecret } from "@/lib/secrets";
@@ -91,7 +92,7 @@ export async function getPluginRuntimeConfig(businessId: string, pluginId: strin
 /** Which integration surfaces are live for this business (drives UI visibility — one query).
  *  shipping: the active shipping plugin id (skydropx | enviosperros) or null.
  *  invoicing: whether Facturapi is active. */
-export async function getActiveIntegrations(businessId: string): Promise<{ shipping: string | null; invoicing: boolean }> {
+async function _getActiveIntegrations(businessId: string): Promise<{ shipping: string | null; invoicing: boolean }> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("business_plugins").select("plugin_id")
@@ -100,6 +101,13 @@ export async function getActiveIntegrations(businessId: string): Promise<{ shipp
   const ids = new Set((data ?? []).map((r) => r.plugin_id as string));
   return { shipping: ids.has("skydropx") ? "skydropx" : ids.has("enviosperros") ? "enviosperros" : null, invoicing: ids.has("facturapi") };
 }
+
+/** Envuelto en React cache(): dentro de UNA petición, varias llamadas con los mismos argumentos
+ *  se resuelven con un solo viaje a Supabase. Importa porque el layout y la página se renderizan en
+ *  la misma petición y ambos piden esto — antes eran dos viajes idénticos, y a ~68 ms cada uno
+ *  (Render en Oregon, Supabase en us-east-1) eso se nota en cada clic.
+ *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
+export const getActiveIntegrations = cache(_getActiveIntegrations);
 
 /** Catalogue merged with this business's installs (secrets masked). */
 export async function getBusinessCatalog(businessId: string): Promise<CatalogEntry[]> {

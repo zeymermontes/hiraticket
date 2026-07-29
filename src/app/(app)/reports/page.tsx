@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness } from "@/lib/queries";
 import { getReports } from "@/lib/extras";
 import { createClient } from "@/lib/supabase/server";
@@ -19,7 +20,7 @@ export default async function ReportsPage({
 
   // Reports are admin-only — role straight from the membership row (same check as plugins).
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: mem } = user
     ? await supabase.from("business_members").select("role").eq("business_id", business.id).eq("user_id", user.id).maybeSingle()
     : { data: null };

@@ -1,3 +1,5 @@
+import { cache } from "react";
+import { getSessionUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Business, OrderRow } from "@/lib/types";
 
@@ -7,9 +9,9 @@ import type { Business, OrderRow } from "@/lib/types";
  *  null must mean "no membership", never "the read failed". A swallowed error here shows an
  *  existing user the "create your workspace" screen and they end up with a duplicate tenant.
  *  Every failure below therefore throws instead of degrading to null. */
-export async function getMyBusiness(): Promise<Business | null> {
+async function _getMyBusiness(): Promise<Business | null> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return null;
   // Scope to the business the user is a MEMBER of. A platform admin can read every business via RLS,
   // so "the first readable business" would return someone else's tenant — we must filter by membership.
@@ -60,6 +62,13 @@ export async function getMyBusiness(): Promise<Business | null> {
     manual_margin_pct: Number(d.manual_margin_pct ?? 50),
   } as Business;
 }
+
+/** Envuelto en React cache(): dentro de UNA petición, varias llamadas con los mismos argumentos
+ *  se resuelven con un solo viaje a Supabase. Importa porque el layout y la página se renderizan en
+ *  la misma petición y ambos piden esto — antes eran dos viajes idénticos, y a ~68 ms cada uno
+ *  (Render en Oregon, Supabase en us-east-1) eso se nota en cada clic.
+ *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
+export const getMyBusiness = cache(_getMyBusiness);
 
 export type OrderSortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 

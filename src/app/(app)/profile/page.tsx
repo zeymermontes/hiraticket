@@ -1,11 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { ProfileScreen } from "@/components/ProfileScreen";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return null;
 
   // avatar_url (0045) may not be applied yet — fall back gracefully.

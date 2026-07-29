@@ -562,9 +562,10 @@ function lockConfirmOpts(agentName: string, lang: "es" | "en"): ConfirmOpts {
 }
 
 export function ChatScreen({
-  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, initialCounts,
 }: {
   list: ConvListItem[];
+  initialCounts?: ChatListCounts;
   detail: ConvDetail | null;
   selectedId: string | null;
   agents: Agent[];
@@ -911,7 +912,8 @@ export function ChatScreen({
   const LIST_PAGE = 40;
   const [pages, setPages] = useState(1);
   const [listTotal, setListTotal] = useState(listProp.length);
-  const [counts, setCounts] = useState<ChatListCounts>(EMPTY_CHAT_COUNTS);
+  // Sembrados por el servidor: los chips salen con su número en el primer pintado.
+  const [counts, setCounts] = useState<ChatListCounts>(initialCounts ?? EMPTY_CHAT_COUNTS);
   const [listLoading, setListLoading] = useState(false);
   // The typed search, debounced, together with the conversation ids its message text matched in
   // this device's cache. They move as one value so a search costs a single list fetch: last_body is
@@ -947,20 +949,42 @@ export function ChatScreen({
     const seq = ++listSeq.current;
     setListLoading(true);
     try {
-      const [page, c] = await Promise.all([
-        liveListPage(businessId, { ...query, limit: howMany * LIST_PAGE }),
-        liveChatCounts(businessId, { areaId: query.areaId, archived: query.archived, tab: query.tab }),
-      ]);
+      const page = await liveListPage(businessId, { ...query, limit: howMany * LIST_PAGE });
       if (seq !== listSeq.current) return;
       setList(page.rows);
       setListTotal(page.total);
-      setCounts(c);
     } catch { /* keep the previous window */ }
     finally { if (seq === listSeq.current) setListLoading(false); }
   }, [businessId]);
 
-  useEffect(() => { fetchList(listQuery, pages); }, [fetchList, listQuery, pages]);
-  useEffect(() => { refetchListRef.current = () => { void fetchList(listQuery, pages); }; }, [fetchList, listQuery, pages]);
+  // El servidor ya mandó la primera página con los filtros por defecto: pedirla otra vez al montar
+  // es un viaje redundante en el momento más sensible, justo cuando la pantalla acaba de abrir.
+  const listMounted = useRef(false);
+  useEffect(() => {
+    if (!listMounted.current) { listMounted.current = true; return; }
+    fetchList(listQuery, pages);
+  }, [fetchList, listQuery, pages]);
+
+  // Los contadores solo dependen de área/archivados/pestaña. Iban pegados al fetch de la lista, así
+  // que cada tecla del buscador y cada clic en un chip los volvía a pedir sin que pudieran cambiar.
+  const countsKey = `${listQuery.tab}|${listQuery.areaId ?? ""}|${listQuery.archived ? 1 : 0}`;
+  const countsSeq = useRef(0);
+  const refreshCounts = useCallback(async () => {
+    const seq = ++countsSeq.current;
+    const [tab, areaId, archived] = countsKey.split("|");
+    try {
+      const c = await liveChatCounts(businessId, { tab: tab as ConvQuery["tab"], areaId: areaId || undefined, archived: archived === "1" });
+      if (seq === countsSeq.current) setCounts(c);
+    } catch { /* se conservan los anteriores */ }
+  }, [businessId, countsKey]);
+  const countsMounted = useRef(false);
+  useEffect(() => {
+    // Mismo motivo: initialCounts ya trae los de la pestaña con la que abre.
+    if (!countsMounted.current && initialCounts) { countsMounted.current = true; return; }
+    countsMounted.current = true;
+    refreshCounts();
+  }, [refreshCounts, initialCounts]);
+  useEffect(() => { refetchListRef.current = () => { void fetchList(listQuery, pages); void refreshCounts(); }; }, [fetchList, listQuery, pages, refreshCounts]);
 
   const filtered = list;
   const chipCounts = counts;
