@@ -38,6 +38,8 @@ import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
 import { StickerCell } from "@/components/chat/StickerCell";
+import { useCachedMedia } from "@/lib/mediaCache";
+import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
@@ -199,6 +201,10 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   const [loaded, setLoaded] = useState(false);
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
+  // Solo para pintar. El href y el arrastre siguen con la URL firmada: un blob local no sirve
+  // fuera de esta pestaña, y es lo que hace que "Guardar imagen como…" y arrastrar a otra app
+  // sigan funcionando.
+  const src = useCachedMedia(m.media_path, url);
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
     // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
@@ -206,7 +212,7 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
       onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
       {...dragOutProps(url, m.media_mime, m.media_name)}>
       {!loaded && <span className="media-skeleton" />}
-      <img src={url} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false} style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+      <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false} style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
     </a>
   );
 }
@@ -224,6 +230,8 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
   }, [prev, next, onClose]);
   const m = items[Math.min(i, items.length - 1)];
   const url = m?.media_url ?? "";
+  // La foto grande sale del caché si ya se vio en el hilo: abrir el visor no la vuelve a bajar.
+  const src = useCachedMedia(m?.media_path, url);
   // Unificado con el resto: Storage responde a ?download=<nombre>, así que no hace falta traer el
   // archivo entero a memoria. El fallback a blob sigue dentro de downloadMedia.
   const download = () => {
@@ -238,7 +246,7 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
         <button onClick={onClose} title={lang === "es" ? "Cerrar" : "Close"}><Icon name="x" size={20} /></button>
       </div>
       {items.length > 1 && <button className="lb-nav lb-prev" onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="prev"><span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="chevd" size={26} /></span></button>}
-      <img src={url} alt="" className="lb-img" onClick={(e) => e.stopPropagation()} />
+      <img src={src} alt="" className="lb-img" onClick={(e) => e.stopPropagation()} />
       {items.length > 1 && <button className="lb-nav lb-next" onClick={(e) => { e.stopPropagation(); next(); }} aria-label="next"><span style={{ display: "inline-flex", transform: "rotate(-90deg)" }}><Icon name="chevd" size={26} /></span></button>}
       {items.length > 1 && <div className="lb-count">{i + 1} / {items.length}</div>}
     </div>
@@ -343,7 +351,7 @@ function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerI
   return (
     <div className="col gap-2 scroll" style={{ padding: 2, overflowY: "auto" }}>
       <div className="row gap-2" style={{ alignItems: "center" }}>
-        <span className="sticker-pick" style={{ width: 44, height: 44, flex: "none", padding: 4 }}><img src={s.url} alt="" /></span>
+        <span className="sticker-pick" style={{ width: 44, height: 44, flex: "none", padding: 4 }}><CachedImg path={s.path} url={s.url} alt="" /></span>
         <span className="grow" style={{ fontWeight: 700, fontSize: 13 }}>{s.fav ? (lang === "es" ? "Editar favorito" : "Edit favorite") : (lang === "es" ? "Guardar en favoritos" : "Save to favorites")}</span>
       </div>
       <div className="field field-sm field-filled">
@@ -1656,7 +1664,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                       {row.items.slice(0, 4).map((m, idx) => (
                         <a key={m.id} id={`m-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { if (m.media_url) { e.preventDefault(); openLightbox(m.id); } }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
-                          <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          <CachedImg path={m.media_path} url={m.media_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                           {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, borderRadius: 6 }}>+{row.items.length - 4}</span>}
                           {m.state === "failed" && (
                             <button title={lang === "es" ? "Reintentar" : "Retry"} onClick={(e) => { e.preventDefault(); e.stopPropagation(); start(async () => { await retryMessage(m.id); refresh(); }); }}
@@ -1840,7 +1848,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} onRemove={savingSticker.fav ? () => { removeFavorite(savingSticker); setSavingSticker(null); } : undefined} />
                     ) : confirmSticker ? (
                       <div className="col gap-3" style={{ padding: 8, alignItems: "center", justifyContent: "center", flex: 1 }}>
-                        <span className="sticker-pick" style={{ width: 140, height: 140, padding: 8, pointerEvents: "none" }}><img src={confirmSticker.url} alt="" /></span>
+                        <span className="sticker-pick" style={{ width: 140, height: 140, padding: 8, pointerEvents: "none" }}><CachedImg path={confirmSticker.path} url={confirmSticker.url} alt="" /></span>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{lang === "es" ? "¿Enviar este sticker?" : "Send this sticker?"}</div>
                         <div className="row gap-2" style={{ width: "100%" }}>
                           <button className="btn btn-outline grow" onClick={() => setConfirmSticker(null)}>{lang === "es" ? "Cancelar" : "Cancel"}</button>

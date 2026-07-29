@@ -14,7 +14,9 @@ async function signInternalMedia(msgs: InternalMsg[]): Promise<InternalMsg[]> {
     const { data } = await admin.storage.from("media").createSignedUrls(paths, 60 * 60 * 24 * 7);
     const signed = new Map<string, string>();
     (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
-    return msgs.map((m) => (m.media_url && signed.has(m.media_url) ? { ...m, media_url: signed.get(m.media_url)! } : m));
+    // media_path conserva la ruta: la URL firmada cambia de token en cada llamada, así que no sirve
+    // como llave de caché en el navegador (ver `useCachedMedia`).
+    return msgs.map((m) => (m.media_url && signed.has(m.media_url) ? { ...m, media_url: signed.get(m.media_url)!, media_path: m.media_url } : m));
   } catch { return msgs; }
 }
 
@@ -37,6 +39,8 @@ export interface InternalMsg {
   reactions: { emoji: string; by: string }[];
   type: string;
   media_url: string | null;
+  /** Ruta en storage, estable — llave de caché del navegador. Ver `useCachedMedia`. */
+  media_path?: string | null;
   media_mime: string | null;
   media_name: string | null;
   forwarded: boolean;

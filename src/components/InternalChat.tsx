@@ -23,6 +23,8 @@ import {
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import { saveStickerFavorite, removeStickerFavorite } from "@/app/(app)/chat/actions";
 import { StickerCell } from "@/components/chat/StickerCell";
+import { useCachedMedia } from "@/lib/mediaCache";
+import { CachedImg } from "@/components/chat/CachedImg";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus } from "@/lib/composerFocus";
 
@@ -418,7 +420,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                         {row.items.slice(0, 4).map((m, idx) => (
                           <a key={m.id} id={`im-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); openLightbox(m.id); }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
-                            <img src={m.media_url ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            <CachedImg path={m.media_path} url={m.media_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                             {idx === 3 && row.items.length > 4 && <span style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800 }}>+{row.items.length - 4}</span>}
                           </a>
                         ))}

@@ -27,7 +27,9 @@ async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
     (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
     return messages.map((m) => {
       const p = mediaPath(m.media_url);
-      return p && signed.has(p) ? { ...m, media_url: signed.get(p)! } : m;
+      // media_path viaja junto con la URL firmada: es la identidad estable del archivo y es lo que
+      // el navegador usa como llave de caché, porque el token de la firma cambia en cada llamada.
+      return p && signed.has(p) ? { ...m, media_url: signed.get(p)!, media_path: p } : m;
     });
   } catch {
     return messages; // admin/storage not configured — leave as-is
@@ -72,6 +74,9 @@ export interface ChatMessage {
   author_id: string | null;
   created_at: string;
   media_url: string | null;
+  /** Ruta en storage, estable. `media_url` es una URL firmada cuyo token cambia en cada llamada,
+   *  así que esta es la llave de caché del navegador (ver `useCachedMedia`). */
+  media_path?: string | null;
   media_mime: string | null;
   media_name: string | null;
   media_purged_at?: string | null; // 0066 — el archivo se purgó por peso+antigüedad
