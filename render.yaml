@@ -3,13 +3,18 @@
 # blueprint only declares the web service and its environment.
 #
 # Deploy: push to GitHub → Render → New → Blueprint → pick this repo.
-# Then set the three Supabase env vars (marked sync:false) in the dashboard.
+# Then fill in every env var marked sync:false from the dashboard.
+#
+# REGION: must stay `virginia`. Supabase lives in us-east-1, and running the app in Oregon
+# put the whole continent between every query — ~68ms per round trip instead of ~2-5ms, on
+# ~35 trips per navigation. Render cannot change a service's region after creation, so a
+# service created in the wrong region has to be rebuilt from scratch.
 services:
   - type: web
     name: hiraticket
     runtime: node
     plan: starter
-    region: oregon
+    region: virginia
     branch: main
     buildCommand: npm ci && npm run build
     startCommand: npm run start
@@ -18,21 +23,58 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.11.0
+      # --- Supabase ---
       - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # --- Encryption keys: NEVER rotate these ---
+      # MESSAGE_SECRET_KEY decrypts every message body stored as `encm:v1:`. It must be the
+      # SAME value as the WhatsApp worker's, or outbound messages get marked failed with no
+      # visible error. PLUGIN_SECRET_KEY decrypts stored plugin credentials. Losing either
+      # loses the data it protects — there is no recovery.
+      - key: MESSAGE_SECRET_KEY
+        sync: false
+      - key: PLUGIN_SECRET_KEY
+        sync: false
+      # --- Public URLs (used for OAuth callbacks, webhooks and email links) ---
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      # --- WhatsApp Cloud API (official / Tech Provider path) ---
+      - key: WHATSAPP_CLOUD_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_TEST_WABA_ID
+        sync: false
+      - key: WHATSAPP_TEST_PHONE_NUMBER_ID
+        sync: false
+      - key: NEXT_PUBLIC_FB_APP_ID
+        sync: false
+      - key: NEXT_PUBLIC_WA_ES_CONFIG_ID
+        sync: false
+      # Comma-separated allowlist for who sees the official-WhatsApp onboarding.
+      - key: WA_OFFICIAL_EMAILS
+        sync: false
+      # --- Mercado Pago ---
+      - key: MP_INTEGRATOR_ID
+        sync: false
 
-  # WhatsApp worker (whatsmeow, Go). Sessions persist in Postgres — no disk needed.
+  # WhatsApp worker (whatsmeow, Go). Sessions persist in Postgres — no disk needed, and the
+  # session survives a region move without rescanning the QR.
   - type: worker
     name: hiraticket-whatsapp
     runtime: docker
     dockerfilePath: ./services/whatsapp/Dockerfile
     dockerContext: ./services/whatsapp
     plan: starter
-    region: oregon
+    region: virginia
     branch: main
     autoDeploy: true
     envVars:
@@ -46,4 +88,8 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Must match the web service's value exactly. Without it the worker still boots and
+      # only prints a warning, then silently marks every encrypted outbound message failed.
+      - key: MESSAGE_SECRET_KEY
         sync: false
