@@ -1,5 +1,6 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness } from "@/lib/queries";
 import { getInternalThreads, getInternalMessages, type InternalThread, type InternalMsg } from "@/lib/internal";
 import type { Agent } from "@/lib/chat";
@@ -8,7 +9,7 @@ import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
 
 async function ctx() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const biz = await getMyBusiness();
   return { supabase, userId: user?.id ?? null, businessId: biz?.id ?? null };
 }

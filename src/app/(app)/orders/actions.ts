@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 import { getMyBusiness, getOrdersPage, getOrderIds, type OrderQuery, type OrdersPage } from "@/lib/queries";
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
@@ -12,7 +13,7 @@ export async function addOrderNote(orderId: string, body: string, itemId?: strin
   const text = body.trim();
   if (!text) return;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
   if (!order) return;
   const base = { business_id: order.business_id, parent_type: "order", parent_id: orderId, author_id: user?.id ?? null, body: text };
@@ -51,7 +52,7 @@ export async function getPayLink(orderId: string): Promise<string | null> {
 /** Send a payment link (public checkout page) to the order's chat. */
 export async function chargeOrder(orderId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id, pay_token").eq("id", orderId).maybeSingle();
   if (!order?.conversation_id) return;
   const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
@@ -82,7 +83,7 @@ async function recomputePayStatus(supabase: SB, orderId: string, total: number):
 export async function addPayment(orderId: string, amount: number, method?: string | null, note?: string | null): Promise<void> {
   if (!amount || amount <= 0) return;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
   if (!order) return;
   await supabase.from("payments").insert({ business_id: order.business_id, order_id: orderId, amount, method: method ?? null, note: note ?? null, created_by: user?.id ?? null });
@@ -105,7 +106,7 @@ export async function deletePayment(paymentId: string): Promise<void> {
 /** Mark an order fully paid — records a payment for the outstanding balance, then sets 'paid'. */
 export async function markPaid(orderId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
   if (!order) return;
   const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
@@ -122,7 +123,7 @@ export async function markPaid(orderId: string): Promise<void> {
  *  (the proof amount, or the outstanding balance if none was given) and recomputes pay_status. */
 export async function reviewPaymentProof(proofId: string, decision: "approved" | "rejected"): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: proof } = await supabase.from("payment_proofs").select("business_id, order_id, amount, status").eq("id", proofId).maybeSingle();
   if (!proof || proof.status !== "pending") return;
   const orderId = proof.order_id as string;
@@ -218,7 +219,7 @@ export async function addOrderTag(orderId: string, tag: string): Promise<void> {
 /** Assign an order to an agent. */
 export async function assignOrder(orderId: string, agentId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
   await supabase.from("orders").update({ assignee_id: agentId }).eq("id", orderId);
   if (order) {
@@ -237,7 +238,7 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
 export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<{ flows: string[] }> {
   if (!orderIds.length) return { flows: [] };
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: first } = await supabase.from("orders").select("business_id").eq("id", orderIds[0]).maybeSingle();
   const businessId = (first?.business_id as string) ?? null;
   await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).in("id", orderIds);
@@ -323,7 +324,7 @@ export async function cancelOrder(
   opts?: { reason?: string | null; refund?: number | null },
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order, error: findErr } = await supabase
     .from("orders").select("business_id, total, cancelled_at").eq("id", orderId).maybeSingle();
   if (findErr) return { ok: false, error: findErr.message };
@@ -362,7 +363,7 @@ export async function cancelOrder(
  *  borrarlo en automático escondería que ocurrió. Se quita a mano desde el historial de pagos. */
 export async function uncancelOrder(orderId: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
   const { error } = await supabase.from("orders")
     .update({ cancelled_at: null, cancelled_by: null, cancelled_reason: null }).eq("id", orderId);
@@ -421,7 +422,7 @@ interface NewOrder {
 /** Create an order (and its contact if new) from the New Order modal. */
 export async function createOrder(businessId: string, input: NewOrder): Promise<void> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   // Un contacto conocido (el del chat, o uno elegido de la lista) gana sobre el nombre: es la
   // única forma de garantizar que el pedido cae en el MISMO contacto que tiene la conversación.

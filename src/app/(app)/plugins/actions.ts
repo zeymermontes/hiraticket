@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { addonMrr, type PluginConfigField, type PluginPricing } from "@/lib/plugins";
 import { encryptSecret, MASK } from "@/lib/secrets";
 
@@ -17,7 +18,7 @@ async function getPluginMeta(supabase: Awaited<ReturnType<typeof createClient>>,
 /** Install (activate) a plugin for a business. Sets the add-on MRR contribution. */
 export async function installPlugin(businessId: string, pluginId: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { pricing, name } = await getPluginMeta(supabase, pluginId);
   const mrr = addonMrr(pricing);
   const { error } = await supabase.from("business_plugins").upsert({

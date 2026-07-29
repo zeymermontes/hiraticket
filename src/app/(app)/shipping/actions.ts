@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { skydropxQuote, skydropxCreate, enviosperrosQuote, enviosperrosCreate, type ShipAddress, type ShipParcel, type ShipRate } from "@/lib/shipping";
@@ -78,7 +79,7 @@ export async function createOrderShipment(
   orderId: string, quotationId: string, rateId: string, dest: ShipAddress, parcel: ShipParcel,
 ): Promise<{ ok: boolean; shipmentId?: string; tracking?: string; labelUrl?: string | null; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, code").eq("id", orderId).maybeSingle();
   if (!order) return { ok: false, error: "order" };
   const businessId = order.business_id as string;
@@ -122,7 +123,7 @@ export async function createOrderShipment(
 /** WhatsApp the tracking number to the order's conversation (queued; worker sends). */
 export async function notifyTracking(orderId: string, shipmentId: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const [{ data: order }, { data: ship }] = await Promise.all([
     supabase.from("orders").select("business_id, code, conversation_id, contact_id").eq("id", orderId).maybeSingle(),
     supabase.from("shipments").select("carrier, tracking_number").eq("id", shipmentId).maybeSingle(),

@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type FiscalData } from "@/lib/invoicing";
@@ -24,7 +25,7 @@ export async function issueInvoice(
   orderId: string, fiscal: FiscalData, paymentForm: string, saveProfile: boolean, sendEmail: boolean,
 ): Promise<{ ok: boolean; invoiceId?: string; uuid?: string; pdfUrl?: string | null; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, code, contact_id, requires_invoice, tax_rate").eq("id", orderId).maybeSingle();
   if (!order) return { ok: false, error: "order" };
   const businessId = order.business_id as string;
@@ -88,7 +89,7 @@ export async function issueInvoice(
 /** WhatsApp the invoice (folio + PDF link) to the order's conversation. */
 export async function notifyInvoice(orderId: string, invoiceId: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const [{ data: order }, { data: inv }] = await Promise.all([
     supabase.from("orders").select("business_id, code, conversation_id, contact_id").eq("id", orderId).maybeSingle(),
     supabase.from("invoices").select("uuid, pdf_url").eq("id", invoiceId).maybeSingle(),

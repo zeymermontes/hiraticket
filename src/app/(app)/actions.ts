@@ -1,11 +1,12 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { encryptBody } from "@/lib/msgcrypto";
 
 async function actorCtx() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   return { supabase, userId: user?.id ?? null };
 }
 
@@ -125,7 +126,7 @@ export async function createBusiness(name: string, mode: string = "business"): P
   // Guard against a double-submit (or a getMyBusiness read that failed and sent an existing user
   // back to onboarding) turning into a second tenant. Creating one is not idempotent: every call
   // seeds its own stages, areas, subscription and WhatsApp session.
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (user) {
     const { data: existing, error: memErr } = await supabase
       .from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();

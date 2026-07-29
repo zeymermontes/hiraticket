@@ -1,11 +1,12 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 
 /** Update the signed-in agent's own profile (display name / color / avatar). RLS: "own profile write". */
 export async function updateMyProfile(patch: { full_name?: string; avatar_color?: string; avatar_url?: string | null }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: "no-auth" };
 
   const clean: Record<string, unknown> = {};

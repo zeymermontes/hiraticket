@@ -1,5 +1,6 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getMyBusiness } from "@/lib/queries";
 import { getConversationDetail, type ConvDetail } from "@/lib/chat";
@@ -23,7 +24,7 @@ export async function getToastPreview(kind: "wa" | "internal", id: string): Prom
 
 async function ctx() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   return { supabase, userId: user?.id ?? null };
 }
 

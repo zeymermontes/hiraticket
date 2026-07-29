@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { configuredOrigin } from "@/lib/url";
 
@@ -8,7 +9,7 @@ type Role = "admin" | "agent" | "viewer";
 
 async function me() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   return user;
 }
 async function assertAdmin(businessId: string): Promise<string | null> {

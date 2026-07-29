@@ -2,6 +2,7 @@
 // Targeted realtime refetches — used by the client instead of router.refresh() so a new message
 // only re-queries what changed, not the whole route (layout badges, agents, other sections…).
 import { createClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/auth";
 import {
   getConversationMessages, getConversationList, getConversationListPage, getChatListCounts,
   getConversationDetail, getStickerTray,
@@ -15,7 +16,7 @@ import { getMyBusiness } from "@/lib/queries";
 /** Paginated notification feed for the bell + /notifications page (infinite scroll). */
 export async function loadNotificationFeed(before?: string, filter: NotifFilter = "all", unreadOnly = false): Promise<Notif[]> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   const biz = await getMyBusiness();
   if (!user || !biz) return [];
   const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
@@ -53,7 +54,7 @@ export async function liveChatCounts(
   businessId: string, opts: { areaId?: string; archived?: boolean; tab?: ConvTab },
 ): Promise<ChatListCounts> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
   return getChatListCounts(businessId, user.id, opts);
 }
@@ -91,7 +92,7 @@ export async function liveConvHeader(convId: string): Promise<Partial<ConvDetail
 /** Nav badges + bell notifications, so the Shell can stay live without a full route refresh. */
 export async function liveBadges(businessId: string): Promise<{ mine: number; unassigned: number; internal: number; notifications: Notif[] }> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { mine: 0, unassigned: 0, internal: 0, notifications: [] };
   const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
