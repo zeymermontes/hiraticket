@@ -177,7 +177,12 @@ function ContactBlock({ m }: { m: ChatMessage }) {
 }
 
 /** Popover whose menu is fixed-positioned from the trigger rect, so it never gets clipped
- *  by a scrolling/overflow ancestor. */
+ *  by a scrolling/overflow ancestor.
+ *
+ *  Ojo con el disparador: NO se deshabilita mientras corre una transición. Abrir un menú no muta
+ *  nada, y tenerlo bloqueado hasta que el servidor contestara hacía que después de transferir el
+ *  botón dejara de responder —- se veía como que la app se había trabado. Lo mismo aplica a
+ *  cualquier botón que ya aplique su cambio de forma optimista. */
 function usePopover() {
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -1684,14 +1689,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           </button>
         )}
         {detail.status !== "resolved" ? (
-          <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }} disabled={pending}
+          <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
             onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
+          <button className="btn btn-sm btn-primary" onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
@@ -2090,7 +2095,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
 
   return (
     <span style={{ display: "inline-flex" }}>
-      <button ref={ref} className="btn btn-sm btn-outline" disabled={pending} onClick={toggle}>
+      <button ref={ref} className="btn btn-sm btn-outline" onClick={toggle}>
         <Icon name="swap" size={14} />{lang === "es" ? "Transferir" : "Transfer"}
       </button>
       {open && rect && (
@@ -2353,19 +2358,19 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               <button className="act" disabled={pending} onClick={() => start(async () => { await setConvHidden(detail.id, !detail.hidden); refresh(); })}>
                 <Icon name="eye" />{detail.hidden ? (lang === "es" ? "Mostrar" : "Unhide") : (lang === "es" ? "Ocultar" : "Hide")}
               </button>
-              <button className={"act" + (detail.muted ? " warn" : "")} disabled={pending} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
+              <button className={"act" + (detail.muted ? " warn" : "")} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); refresh(); }); }}>
                 <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
               </button>
               {detail.locked_to
-                ? <button className="act warn" disabled={pending} title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); refresh(); }); }}>
+                ? <button className="act warn" title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); refresh(); }); }}>
                     <Icon name="lock" />{lang === "es" ? "Soltar cliente" : "Release client"}
                   </button>
-                : <button className="act" disabled={pending} title={lang === "es" ? "Mantener este cliente asignado a ti pase lo que pase" : "Keep this client assigned to you no matter what"} onClick={() => { patch({ locked_to: meId, assignee_id: meId }); start(async () => { await lockConvToMe(detail.id); refresh(); }); }}>
+                : <button className="act" title={lang === "es" ? "Mantener este cliente asignado a ti pase lo que pase" : "Keep this client assigned to you no matter what"} onClick={() => { patch({ locked_to: meId, assignee_id: meId }); start(async () => { await lockConvToMe(detail.id); refresh(); }); }}>
                     <Icon name="lock" />{lang === "es" ? "Mantener conmigo" : "Keep with me"}
                   </button>}
               {detail.status === "resolved"
-                ? <button className="act full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); })}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" disabled={pending} onClick={() => start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); })}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" onClick={() => { patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
