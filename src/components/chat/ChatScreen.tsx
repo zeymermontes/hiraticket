@@ -38,7 +38,7 @@ import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
 import { StickerCell } from "@/components/chat/StickerCell";
-import { useCachedMedia } from "@/lib/mediaCache";
+import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -188,6 +188,20 @@ function usePopover() {
 
 /** Reserve the exact display box (from stored w/h, or a default) so media never reflows the
  *  thread when it finishes loading — no "pop", and the scroll-to-bottom stays accurate. */
+/**
+ * Arriba de esto no se carga el original en el hilo: se muestra la miniatura y el archivo completo
+ * espera a que alguien abra el visor.
+ *
+ * Es lo que hace WhatsApp Web, y por una razón concreta: una foto de 16 MB no solo tarda en bajar,
+ * decodificarla congela la interfaz. Y en un chat con veinte fotos así, abrir la conversación
+ * significaba bajar cientos de megas que probablemente nadie va a mirar de cerca.
+ */
+const HEAVY_IMAGE_BYTES = 1.5 * 1024 * 1024;
+
+/** La miniatura JPEG que WhatsApp manda dentro del mensaje (data URI, unos KB). La guarda el worker
+ *  en `meta.thumb`. Los mensajes de antes de ese cambio no la traen. */
+const thumbOf = (m: ChatMessage): string | undefined => ((m.meta ?? {}) as { thumb?: string }).thumb;
+
 function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH: number) {
   const meta = (m.meta ?? {}) as { w?: number; h?: number };
   if (meta.w && meta.h && meta.w > 0 && meta.h > 0) {
@@ -201,22 +215,32 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   const [loaded, setLoaded] = useState(false);
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
+  const thumb = thumbOf(m);
+  // Pesada Y con miniatura → en el hilo solo va la miniatura. Sin miniatura hay que cargar el
+  // original aunque pese, porque no hay nada más que mostrar (los mensajes viejos no la traen).
+  const heavy = !!thumb && (m.media_size ?? 0) > HEAVY_IMAGE_BYTES;
   // Solo para pintar. El href y el arrastre siguen con la URL firmada: un blob local no sirve
   // fuera de esta pestaña, y es lo que hace que "Guardar imagen como…" y arrastrar a otra app
   // sigan funcionando.
-  const src = useCachedMedia(m.media_path, url);
+  const cached = useCachedMedia(heavy ? null : m.media_path, heavy ? null : url);
+  const src = heavy ? thumb : cached;
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
     // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
     <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={{ ...box, cursor: "zoom-in" }}
       onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
       {...dragOutProps(url, m.media_mime, m.media_name)}>
-      {!loaded && <span className="media-skeleton" />}
+      {/* La miniatura como fondo mientras carga: en vez del rectángulo gris ya se ve DE QUÉ es la
+          foto, y al llegar la buena el cambio es imperceptible en vez de un salto. */}
+      {!loaded && (thumb
+        ? <img src={thumb} alt="" aria-hidden className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", filter: "blur(6px)", transform: "scale(1.06)" }} />
+        : <span className="media-skeleton" />)}
       {/* decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB decodificada
           en el hilo principal congela la interfaz entera mientras se abre. Así el navegador la
           decodifica aparte y solo cuando está cerca de verse. */}
       <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
         decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+      {heavy && <span className="media-heavy">{fmtBytes(m.media_size ?? 0)}</span>}
     </a>
   );
 }
@@ -234,8 +258,28 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
   }, [prev, next, onClose]);
   const m = items[Math.min(i, items.length - 1)];
   const url = m?.media_url ?? "";
-  // La foto grande sale del caché si ya se vio en el hilo: abrir el visor no la vuelve a bajar.
-  const src = useCachedMedia(m?.media_path, url);
+  const thumb = thumbOf(m);
+
+  // El visor pide el archivo él mismo en lugar de dejárselo al <img>, por una sola razón: es la
+  // única forma de saber cuánto lleva bajado. El navegador no expone el avance de una imagen.
+  // Mientras llega se muestra la miniatura ampliada, así que nunca hay pantalla negra.
+  const [full, setFull] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!url) return;
+    let alive = true;
+    let objectUrl: string | null = null;
+    setFull(null); setPct(null); setFailed(false);
+    fetchWithProgress(m?.media_path, url, (p) => { if (alive) setPct(p); }).then((u) => {
+      if (!alive) { if (u) URL.revokeObjectURL(u); return; }
+      if (u) { objectUrl = u; setFull(u); } else setFailed(true);
+    });
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [url, m?.media_path]);
+  // Si falla la descarga se cae a la URL firmada: que el <img> lo intente a su manera es mejor
+  // que dejar a alguien mirando un error por un problema de red pasajero.
+  const src = full ?? (failed ? url : thumb ?? url);
   // Unificado con el resto: Storage responde a ?download=<nombre>, así que no hace falta traer el
   // archivo entero a memoria. El fallback a blob sigue dentro de downloadMedia.
   const download = () => {
@@ -250,7 +294,14 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
         <button onClick={onClose} title={lang === "es" ? "Cerrar" : "Close"}><Icon name="x" size={20} /></button>
       </div>
       {items.length > 1 && <button className="lb-nav lb-prev" onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="prev"><span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="chevd" size={26} /></span></button>}
-      <img src={src} alt="" className="lb-img" onClick={(e) => e.stopPropagation()} />
+      <img src={src} alt="" className="lb-img" onClick={(e) => e.stopPropagation()}
+        style={!full && thumb ? { filter: "blur(10px)" } : undefined} />
+      {!full && !failed && (
+        <div className="lb-progress" onClick={(e) => e.stopPropagation()}>
+          <div className="lb-progress-bar"><i style={{ width: (pct ?? 8) + "%" }} /></div>
+          <span>{pct == null ? (lang === "es" ? "Cargando…" : "Loading…") : `${pct}%`}</span>
+        </div>
+      )}
       {items.length > 1 && <button className="lb-nav lb-next" onClick={(e) => { e.stopPropagation(); next(); }} aria-label="next"><span style={{ display: "inline-flex", transform: "rotate(-90deg)" }}><Icon name="chevd" size={26} /></span></button>}
       {items.length > 1 && <div className="lb-count">{i + 1} / {items.length}</div>}
     </div>

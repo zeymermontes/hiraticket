@@ -161,6 +161,43 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
   return cached ?? url ?? undefined;
 }
 
+/**
+ * Baja un archivo informando el avance, y lo guarda si cabe.
+ *
+ * El progreso solo se puede medir aquí, no en un `<img>`: el navegador no expone cuánto lleva
+ * bajado de una imagen. Por eso el visor pide el archivo él mismo en vez de dejárselo al `<img>`.
+ *
+ * `onProgress` recibe null cuando el servidor no manda Content-Length —- ahí no hay porcentaje
+ * posible y a quien mira le toca ver "cargando" en vez de un número inventado.
+ */
+export async function fetchWithProgress(path: string | null | undefined, url: string, onProgress: (pct: number | null) => void): Promise<string | null> {
+  if (path) {
+    const hit = await readBlob(path);
+    if (hit) return URL.createObjectURL(hit);
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) return null;
+    const total = Number(res.headers.get("content-length") ?? 0);
+    onProgress(total > 0 ? 0 : null);
+    const reader = res.body.getReader();
+    const chunks: BlobPart[] = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value as BlobPart);
+      got += value.byteLength;
+      if (total > 0) onProgress(Math.min(99, Math.round((got / total) * 100)));
+    }
+    const blob = new Blob(chunks, { type: res.headers.get("content-type") ?? "application/octet-stream" });
+    if (path) await writeBlob(path, blob); // writeBlob descarta por tamaño si no vale la pena
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
 /** Vacía el caché — al cerrar sesión, para no dejar archivos de un negocio en un equipo compartido. */
 export async function clearMediaCache() {
   const db = await openDb();

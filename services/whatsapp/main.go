@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -957,6 +958,26 @@ func partnerPhone(info types.MessageInfo) string {
 	return "+" + info.Chat.User
 }
 
+// maxThumbBytes: tope para la miniatura que viene dentro del mensaje. Las de WhatsApp pesan unos
+// pocos kilobytes; el tope solo evita que una rara infle la fila.
+const maxThumbBytes = 24 * 1024
+
+// withThumb guarda la miniatura JPEG que WhatsApp ya manda dentro del mensaje.
+//
+// Sin ella el chat no puede pintar NADA hasta bajar el archivo completo, así que una foto de 16 MB
+// congelaba la interfaz entera al abrir la conversación. Con ella se pinta al instante y el original
+// se baja solo cuando alguien lo abre.
+//
+// Va como data URI dentro de `meta` (que ya es jsonb y ya se usa para w/h, así que no hace falta
+// migración) en vez de como archivo en storage: así viaja junto con el mensaje y no cuesta una
+// petición extra por foto —- que es justo el costo que se está tratando de evitar.
+func withThumb(m map[string]interface{}, thumb []byte) map[string]interface{} {
+	if n := len(thumb); n > 0 && n <= maxThumbBytes {
+		m["thumb"] = "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(thumb)
+	}
+	return m
+}
+
 func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsmeow.Client, v *events.Message) {
 	// status@broadcast / newsletters are never handled.
 	if v.Info.Chat.Server == "broadcast" || v.Info.Chat.Server == "newsletter" {
@@ -1019,7 +1040,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	case msg.GetImageMessage() != nil:
 		im := msg.GetImageMessage()
 		mtype, mmime, text = "image", im.GetMimetype(), firstNonEmpty(im.GetCaption(), text)
-		meta = jsonStr(map[string]interface{}{"w": im.GetWidth(), "h": im.GetHeight()})
+		meta = jsonStr(withThumb(map[string]interface{}{"w": im.GetWidth(), "h": im.GetHeight()}, im.GetJPEGThumbnail()))
 	case msg.GetStickerMessage() != nil:
 		st := msg.GetStickerMessage()
 		mtype, mmime = "sticker", st.GetMimetype()
@@ -1029,7 +1050,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	case msg.GetVideoMessage() != nil:
 		vm := msg.GetVideoMessage()
 		mtype, mmime, text = "video", vm.GetMimetype(), firstNonEmpty(vm.GetCaption(), text)
-		meta = jsonStr(map[string]interface{}{"w": vm.GetWidth(), "h": vm.GetHeight()})
+		meta = jsonStr(withThumb(map[string]interface{}{"w": vm.GetWidth(), "h": vm.GetHeight()}, vm.GetJPEGThumbnail()))
 	case msg.GetDocumentMessage() != nil:
 		mtype, mmime, mname = "document", msg.GetDocumentMessage().GetMimetype(), msg.GetDocumentMessage().GetFileName()
 		text = firstNonEmpty(msg.GetDocumentMessage().GetCaption(), text)
@@ -1087,8 +1108,8 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 
 	var contactID, convID, partner string
 	var unread int
-	var muted bool          // when the conversation is muted ("stop listening"), drop the message
-	var priorStatus string  // the conversation's status before this message — used to reopen a resolved chat
+	var muted bool         // when the conversation is muted ("stop listening"), drop the message
+	var priorStatus string // the conversation's status before this message — used to reopen a resolved chat
 	// Sender identity — only set for group messages, so the UI can show a color-coded name per
 	// participant above each bubble. Empty for 1:1 chats (the conversation header already names them).
 	senderName, senderJID := "", ""
@@ -1249,7 +1270,6 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
 }
-
 
 // ---------------------------------------------------------------- media bajo demanda
 
