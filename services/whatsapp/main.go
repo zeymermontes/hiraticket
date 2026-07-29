@@ -719,13 +719,13 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 	case *events.Receipt:
 		m.handleReceipt(ctx, v)
 	case *events.CallOffer:
-		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "ringing")
+		m.handleCall(ctx, s, client, v.BasicCallMeta, "ringing")
 	case *events.CallOfferNotice:
-		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "ringing")
+		m.handleCall(ctx, s, client, v.BasicCallMeta, "ringing")
 	case *events.CallTerminate:
-		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "missed")
+		m.handleCall(ctx, s, client, v.BasicCallMeta, "missed")
 	case *events.CallReject:
-		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "missed")
+		m.handleCall(ctx, s, client, v.BasicCallMeta, "missed")
 	}
 }
 
@@ -738,11 +738,40 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 // works for messages — realtime, toasts, sound, the conversation preview, the unread badge. The
 // state column carries 'ringing' → 'missed' so the UI can swap the label in place; the call id
 // goes in wa_id so the terminate event can find the row it has to update.
-func (m *Manager) handleCall(ctx context.Context, s session, from types.JID, callID string, ts time.Time, state string) {
-	if from.Server != types.DefaultUserServer || from.User == "" {
-		return // group calls / non-user JIDs: no conversation to attach to
+func (m *Manager) handleCall(ctx context.Context, s session, client *whatsmeow.Client, meta types.BasicCallMeta, state string) {
+	callID, ts := meta.CallID, meta.Timestamp
+	if !meta.GroupJID.IsEmpty() {
+		return // llamada de grupo: no hay conversación 1:1 a la que colgarla
 	}
-	phone := "+" + from.User
+	// El teléfono puede no venir en From: WhatsApp está migrando a JIDs @lid (HiddenUserServer) y
+	// ahí From llega como "1234@lid", que no es un número. Se prueban los candidatos igual que en
+	// los mensajes (que usan SenderAlt), y si solo hay LID se resuelve contra el store.
+	phone := ""
+	for _, j := range []types.JID{meta.CallCreatorAlt, meta.From, meta.CallCreator} {
+		if j.Server == types.DefaultUserServer && j.User != "" {
+			phone = "+" + j.User
+			break
+		}
+	}
+	if phone == "" {
+		for _, j := range []types.JID{meta.From, meta.CallCreator} {
+			if j.Server != types.HiddenUserServer || j.User == "" {
+				continue
+			}
+			if pn, err := client.Store.LIDs.GetPNForLID(ctx, j.ToNonAD()); err == nil && pn.User != "" {
+				phone = "+" + pn.User
+				break
+			}
+		}
+	}
+	if phone == "" {
+		// Antes esto era un return silencioso y por eso una llamada podía no aparecer sin dejar
+		// rastro. Con el log se puede ver qué JID llegó.
+		m.log.Warnf("call %s (%s): no pude resolver el teléfono — from=%s creator=%s alt=%s",
+			callID, state, meta.From, meta.CallCreator, meta.CallCreatorAlt)
+		return
+	}
+	m.log.Infof("call event %s from %s (%s)", state, phone, callID)
 
 	var contactID, convID string
 	var unread int
