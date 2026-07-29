@@ -94,7 +94,7 @@ function Bell({ notifications }: { notifications: Notif[] }) {
             <div className="menu-label">{lang === "es" ? "Notificaciones" : "Notifications"}</div>
             {items.length === 0 && <div className="muted t-sm" style={{ padding: "8px 10px" }}>{lang === "es" ? "Sin novedades" : "Nothing new"}</div>}
             {items.map((no) => (
-              <Link key={no.id} href={no.href} className="menu-item" style={{ alignItems: "flex-start" }} onClick={() => setOpen(false)}>
+              <Link key={no.id} href={no.href} prefetch={false} className="menu-item" style={{ alignItems: "flex-start" }} onClick={() => setOpen(false)}>
                 {notifIcon(no.kind)}
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontWeight: 600, whiteSpace: "normal" }}>{no.text ?? ((lang === "es" ? "Nuevo mensaje de " : "New message from ") + no.name)}</span>
@@ -104,7 +104,7 @@ function Bell({ notifications }: { notifications: Notif[] }) {
             ))}
             {loading && <div className="muted t-xs" style={{ padding: "6px 10px" }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>}
             <div className="menu-sep" />
-            <Link href="/notifications" className="menu-item" style={{ justifyContent: "center", fontWeight: 600 }} onClick={() => setOpen(false)}>{lang === "es" ? "Ver todas" : "See all"}</Link>
+            <Link href="/notifications" prefetch={false} className="menu-item" style={{ justifyContent: "center", fontWeight: 600 }} onClick={() => setOpen(false)}>{lang === "es" ? "Ver todas" : "See all"}</Link>
           </div>
         </>
       )}
@@ -160,12 +160,34 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin }: { 
   const [profRect, setProfRect] = useState<DOMRect | null>(null);
   const toggleProf = () => { if (!profOpen && profBtn.current) setProfRect(profBtn.current.getBoundingClientRect()); setProfOpen((o) => !o); };
 
+  // Prefetch solo con intención, y una vez por sección.
+  //
+  // El rail está siempre visible y TODAS las páginas son force-dynamic, así que el prefetch
+  // automático de <Link> hacía que el servidor renderizara Pedidos, Reportes, Catálogo, Plugins,
+  // Flujos, Ajustes y Negocio completos —- con todas sus consultas —- nomás por pintar la barra.
+  // Encima se repetía: Next caduca el prefetch de rutas dinámicas a los 30 s, así que se pedían
+  // otra vez, y otra, para siempre. Eso es lo que llenaba la pestaña de peticiones pendientes y
+  // dejaba al servidor sin CPU justo cuando querías cambiar de sección.
+  //
+  // Un `onMouseEnter` pelado no arreglaba nada: cruzar el mouse por la barra para llegar a la
+  // lista de chats disparaba el prefetch de cada icono que tocaba de paso. De ahí los 150 ms de
+  // espera —- el tiempo en que pasar de largo se distingue de querer entrar —- y el Set.
+  const prefetched = useRef<Set<string>>(new Set());
+  const hoverTO = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const armPrefetch = (href: string) => {
+    if (prefetched.current.has(href)) return;
+    clearTimeout(hoverTO.current);
+    hoverTO.current = setTimeout(() => { prefetched.current.add(href); router.prefetch(href); }, 150);
+  };
+  const cancelPrefetch = () => clearTimeout(hoverTO.current);
+
   const renderItem = (it: NavItem) => {
     const on = pathname === it.href || pathname.startsWith(it.href + "/");
     const badge = badges[it.id] ?? it.badge ?? null;
     const secondary = secondaryBadges[it.id] ?? null;
     return (
-      <Link key={it.id} href={it.href} onMouseEnter={() => router.prefetch(it.href)} className={"rail-item" + (on ? " on" : "")}>
+      <Link key={it.id} href={it.href} prefetch={false} className={"rail-item" + (on ? " on" : "")}
+        onMouseEnter={() => armPrefetch(it.href)} onMouseLeave={cancelPrefetch}>
         <Icon name={it.icon} />
         <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : it.id === "contacts" && personal ? (lang === "es" ? "Contactos" : "Contacts") : t(it.labelKey)}</span>
         <span className="rail-badges">
@@ -197,7 +219,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin }: { 
             <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - profRect.top + 6, left: profRect.left, width: 220, zIndex: 201 }}>
               <div style={{ padding: "8px 12px" }}><div style={{ fontWeight: 700 }} className="truncate">{user.name}</div><div className="t-xs muted truncate">{user.email}</div></div>
               <div className="menu-sep" />
-              <Link className="menu-item" href="/profile" onClick={() => setProfOpen(false)}><Icon name="user" size={15} />{lang === "es" ? "Perfil" : "Profile"}</Link>
+              <Link className="menu-item" href="/profile" prefetch={false} onClick={() => setProfOpen(false)}><Icon name="user" size={15} />{lang === "es" ? "Perfil" : "Profile"}</Link>
               <div className="menu-sep" />
               {/* Wipe the local message cache (plaintext on this device) before the session ends. */}
               <form action="/auth/signout" method="post" onSubmit={() => { clearCache().catch(() => {}); }}><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
@@ -218,7 +240,7 @@ function TopBar({ notifications, connected, businessId }: { notifications: Notif
       </div>
       <span className="grow" />
 
-      <Link className={"conn-chip " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings">
+      <Link className={"conn-chip " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings" prefetch={false}>
         <span className="conn-dot" />
         <Icon name={connected ? "whatsapp" : "wifioff"} size={15} />
         <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
@@ -239,7 +261,7 @@ function TopBar({ notifications, connected, businessId }: { notifications: Notif
 
       <Bell notifications={notifications} />
 
-      <Link className="btn btn-primary" href="/orders?new=1">
+      <Link className="btn btn-primary" href="/orders?new=1" prefetch={false}>
         <Icon name="plus" /> <span className="hide-narrow">{personal ? (lang === "es" ? "Nueva tarea" : "New task") : t("new_order")}</span>
       </Link>
     </header>

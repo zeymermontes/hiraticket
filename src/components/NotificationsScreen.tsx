@@ -77,7 +77,7 @@ export function NotificationsScreen({ initial }: { initial: Notif[] }) {
         ) : (
           <div className="nf-list">
             {items.map((n) => (
-              <Link key={n.id} href={n.href} className="nf-row">
+              <Link key={n.id} href={n.href} prefetch={false} className="nf-row">
                 <NotifIcon kind={n.kind} />
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontWeight: 600 }} className="truncate">{n.text ?? ((lang === "es" ? "Nuevo mensaje de " : "New message from ") + n.name)}</div>

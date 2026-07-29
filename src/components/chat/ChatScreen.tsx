@@ -212,7 +212,11 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
       onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
       {...dragOutProps(url, m.media_mime, m.media_name)}>
       {!loaded && <span className="media-skeleton" />}
-      <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false} style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+      {/* decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB decodificada
+          en el hilo principal congela la interfaz entera mientras se abre. Así el navegador la
+          decodifica aparte y solo cuando está cerca de verse. */}
+      <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
+        decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
     </a>
   );
 }

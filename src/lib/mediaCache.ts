@@ -25,8 +25,12 @@ const USED_INDEX = "usedAt";
 
 /** Tope del caché. Al pasarse se borran los menos usados recientemente. */
 const MAX_BYTES = 300 * 1024 * 1024;
-/** Arriba de esto no se guarda: un archivo así se comería el caché entero él solo. */
-const MAX_ITEM_BYTES = 25 * 1024 * 1024;
+/**
+ * Arriba de esto no se guarda: un archivo así se comería una parte desproporcionada del caché, y
+ * guardarlo implica leer todos los bytes a memoria mientras la interfaz intenta responder. Para uno
+ * de estos vale más volver a pedirlo que congelar la pestaña por adelantarse.
+ */
+const MAX_ITEM_BYTES = 8 * 1024 * 1024;
 
 interface Entry { path: string; blob: Blob; bytes: number; usedAt: number }
 
@@ -107,7 +111,13 @@ async function warm(path: string, url: string) {
   try {
     // Misma URL que ya pidió el <img>, así que normalmente sale del caché HTTP del navegador.
     const res = await fetch(url);
-    if (res.ok) await writeBlob(path, await res.blob());
+    if (!res.ok) return;
+    // El tamaño se mira ANTES de leer el cuerpo: `.blob()` de un archivo enorme trae todos los
+    // bytes a memoria, y eso es parte de lo que trababa la interfaz al abrir un chat con una foto
+    // pesada. Si no viene Content-Length, `writeBlob` lo descarta después por tamaño.
+    const len = Number(res.headers.get("content-length") ?? 0);
+    if (len > MAX_ITEM_BYTES) return;
+    await writeBlob(path, await res.blob());
   } catch {
     // Sin red o URL vencida: no pasa nada, se reintenta la próxima vez que se monte.
   } finally {
