@@ -213,19 +213,24 @@ function usePopover() {
 
 /** Reserve the exact display box (from stored w/h, or a default) so media never reflows the
  *  thread when it finishes loading — no "pop", and the scroll-to-bottom stays accurate. */
-/**
- * Arriba de esto no se carga el original en el hilo: se muestra la miniatura y el archivo completo
- * espera a que alguien abra el visor.
- *
- * Es lo que hace WhatsApp Web, y por una razón concreta: una foto de 16 MB no solo tarda en bajar,
- * decodificarla congela la interfaz. Y en un chat con veinte fotos así, abrir la conversación
- * significaba bajar cientos de megas que probablemente nadie va a mirar de cerca.
- */
-const HEAVY_IMAGE_BYTES = 1.5 * 1024 * 1024;
-
-/** La miniatura JPEG que WhatsApp manda dentro del mensaje (data URI, unos KB). La guarda el worker
- *  en `meta.thumb`. Los mensajes de antes de ese cambio no la traen. */
+/** La miniatura JPEG (data URI, unos KB): la que manda WhatsApp dentro del mensaje o la que genera
+ *  el worker. Vive en `meta.thumb`. Los mensajes anteriores a esa función no la traen. */
 const thumbOf = (m: ChatMessage): string | undefined => ((m.meta ?? {}) as { thumb?: string }).thumb;
+
+/**
+ * Desde cuándo existen las miniaturas. Marca el corte de comportamiento en el hilo:
+ *
+ *   - Antes de esta fecha: no hay nada que pintar sin bajar el original, y bajarlo es justo lo que
+ *     trababa la pestaña (una foto de 16 MB no solo tarda: decodificarla congela la interfaz). Así
+ *     que se pide un clic —- el visor la baja con barra de progreso.
+ *   - Después: si trae miniatura se pinta y el original espera al visor. Si no la trae —- las que
+ *     sube el equipo desde el navegador nunca pasan por WhatsApp ni por el worker —- se carga como
+ *     siempre, porque son capturas y fotos normales, no el historial pesado.
+ *
+ * El rescate del historial (THUMB_BACKFILL en el worker) le pone miniatura a las de antes, y en
+ * cuanto la tienen dejan de necesitar el clic.
+ */
+const THUMBS_SINCE = new Date("2026-07-29T00:00:00Z");
 
 function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH: number) {
   const meta = (m.meta ?? {}) as { w?: number; h?: number };
@@ -242,24 +247,18 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
   const thumb = thumbOf(m);
-  // Pesada → el original NO se carga en el hilo, se abre bajo demanda en el visor. Esto vale
-  // AUNQUE no haya miniatura: la regla anterior solo lo aplicaba con miniatura, y por eso una foto
-  // de 16 MB de un mensaje viejo seguía intentando cargarse entera en la burbuja. No se lograba
-  // nada con eso: tardaba una eternidad y de paso trababa la pestaña.
-  // El tamaño puede venir de la fila (media_size) o de lo que aprendió el worker al mirar la
-  // cabecera. Hacen falta los dos: media_size es NULL en todos los mensajes anteriores a la
-  // migración 0067 —- justamente los viejos, que son los que más duelen.
+  // El original se pone en un <img> solo cuando corresponde. Decidirlo por PESO no podía funcionar:
+  // cuando el worker aprende del Content-Length que la foto son 16 MB, el <img> ya lleva rato
+  // bajándolos —- el worker cancela su propia petición, no la del <img>. La única forma de no bajar
+  // algo es no ponerlo en un <img>. Así que se decide por fecha (ver THUMBS_SINCE).
   //
-  // `learned` se guarda aparte y nunca se borra. Si dependiera del hook, al volverse pesada le
-  // pasaríamos `null`, el hook olvidaría el dato, y `heavy` oscilaría entre true y false sin parar.
-  const [learned, setLearned] = useState(0);
-  const heavy = Math.max(m.media_size ?? 0, learned) > HEAVY_IMAGE_BYTES;
-  // Solo para pintar. El href y el arrastre siguen con la URL firmada: un blob local no sirve
-  // fuera de esta pestaña, y es lo que hace que "Guardar imagen como…" y arrastrar a otra app
-  // sigan funcionando.
-  const { src: cached, tooBigBytes } = useCachedMedia(heavy ? null : m.media_path, heavy ? null : url);
-  useEffect(() => { if (tooBigBytes) setLearned(tooBigBytes); }, [tooBigBytes]);
-  const src = heavy ? thumb : cached;
+  // Los stickers van siempre enteros: pesan unos KB y son el contenido mismo del mensaje. Un
+  // sticker detrás de un "Ver" no sería un mensaje, sería un acertijo.
+  const preThumbs = !isSticker && !thumb && new Date(m.created_at) < THUMBS_SINCE;
+  const loadFull = isSticker || (!thumb && !preThumbs);
+  const { src: fullSrc } = useCachedMedia(loadFull ? m.media_path : null, loadFull ? url : null);
+  const src = loadFull ? fullSrc : thumb;
+  const size = Math.max(m.media_size ?? 0, 0);
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
     // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
@@ -282,11 +281,12 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
             decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
         </>
       ) : (
-        // Pesada y sin miniatura: no hay nada que pintar, y cargar el original en la burbuja sería
-        // peor que no mostrar nada. Se ofrece abrirla, que es donde sí hay barra de progreso.
+        // Sin miniatura (mensajes anteriores a que se guardaran, o formatos que no sabemos leer):
+        // se ofrece abrirla, que es donde sí hay barra de progreso. El rescate del historial
+        // (THUMB_BACKFILL) le pone miniatura a estas y dejan de necesitar el clic.
         <span className="media-tap"><Icon name="download" size={18} />{lang === "es" ? "Ver foto" : "View photo"}</span>
       )}
-      {heavy && <span className="media-heavy">{fmtBytes(Math.max(m.media_size ?? 0, learned))}</span>}
+      {!src && size > 0 && <span className="media-heavy">{fmtBytes(size)}</span>}
     </a>
   );
 }
