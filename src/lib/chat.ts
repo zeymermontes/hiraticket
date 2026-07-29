@@ -175,37 +175,53 @@ export const getAgents = cache(_getAgents);
  *  que sigues usando reaparece solo y el que no, estorba. Los favoritos no tienen tope. */
 const RECENT_STICKERS = 20;
 
-export interface StickerItem { id: string; url: string; fav: boolean; name?: string | null; tags?: string[] } // id = a message to re-send from
+/** `path` = la ruta del archivo en storage. Es la identidad del sticker: la misma da igual si salió
+ *  de un chat de WhatsApp o de uno interno, y es lo que se manda para reenviarlo (ver 0070). */
+export interface StickerItem { path: string; url: string; fav: boolean; name?: string | null; tags?: string[] }
 
 /** The send-sticker tray: favorites (pinned, with name/tags) + recent distinct stickers used.
- *  Each item carries a message id to re-send the stored WebP from + a signed preview URL. */
+ *  Recents come from BOTH surfaces — WhatsApp and internal chats — because a sticker you sent to a
+ *  teammate is just as much part of your library as one you sent to a customer. */
 export async function getStickerTray(businessId: string): Promise<{ favorites: StickerItem[]; recent: StickerItem[] }> {
   const supabase = await createClient();
   const user = await getSessionUser();
   // Favoritos: los míos, más los antiguos sin dueño (0069), que se siguen viendo para no
   // desaparecerle a nadie lo que ya tenía. SIN límite: son una lista curada, no un historial.
-  const favCols = (meta: string) => supabase.from("sticker_favorites").select(`message_id, media_url${meta}`)
+  const favCols = (meta: string) => supabase.from("sticker_favorites").select(`media_url${meta}`)
     .eq("business_id", businessId)
     .or(`created_by.eq.${user?.id ?? "00000000-0000-0000-0000-000000000000"},created_by.is.null`)
     .order("created_at", { ascending: false });
-  const [recentRes, favRes0] = await Promise.all([
-    supabase.from("messages").select("id, media_url").eq("business_id", businessId).eq("type", "sticker").not("media_url", "is", null).order("created_at", { ascending: false }).limit(200),
+  const recentFrom = (table: string) => supabase.from(table)
+    .select("media_url, created_at").eq("business_id", businessId).eq("type", "sticker")
+    .not("media_url", "is", null).order("created_at", { ascending: false }).limit(200);
+  const [waRes, inRes, favRes0] = await Promise.all([
+    recentFrom("messages"),
+    recentFrom("internal_messages"),
     favCols(", name, tags"),
   ]);
   // name/tags (0034) may not be applied yet → retry without them.
   const favRes = favRes0.error ? await favCols("") : favRes0;
-  const favRows = (favRes.error ? [] : (favRes.data ?? [])) as unknown as { message_id: string; media_url: string; name?: string | null; tags?: string[] }[];
+  const favRows = (favRes.error ? [] : (favRes.data ?? [])) as unknown as { media_url: string; name?: string | null; tags?: string[] }[];
   const favPaths = new Set(favRows.map((f) => f.media_url));
 
-  // Dedupe recent by stored path (same sticker resent many times → show once).
+  // Las dos fuentes se mezclan por fecha y se deduplican por ruta: el mismo sticker reenviado mil
+  // veces, o mandado en los dos lados, aparece una sola vez y en el lugar que le toca por reciente.
+  type Row = { media_url: string; created_at: string };
   const seen = new Set<string>();
-  const uniqRecent = ((recentRes.data ?? []) as { id: string; media_url: string }[]).filter((r) => r.media_url && !seen.has(r.media_url) && (seen.add(r.media_url), true)).slice(0, RECENT_STICKERS);
+  const uniqRecent = [...((waRes.data ?? []) as Row[]), ...((inRes.data ?? []) as Row[])]
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    .filter((r) => r.media_url && !seen.has(r.media_url) && (seen.add(r.media_url), true))
+    .slice(0, RECENT_STICKERS);
 
   // Sign favorites + recent together (one signing batch), then split back.
-  const favStubs = favRows.map((f) => ({ id: f.message_id, media_url: f.media_url }));
-  const signed = await signMedia([...favStubs, ...uniqRecent] as unknown as ChatMessage[]);
-  const favorites = signed.slice(0, favStubs.length).map((s, i) => ({ id: s.id, url: s.media_url!, fav: true, name: favRows[i].name ?? null, tags: favRows[i].tags ?? [] })).filter((s) => !!s.url);
-  const recent = signed.slice(favStubs.length).map((s, i) => ({ id: s.id, url: s.media_url!, fav: favPaths.has(uniqRecent[i].media_url) })).filter((s) => !!s.url);
+  const stubs = [...favRows, ...uniqRecent].map((r) => ({ media_url: r.media_url }));
+  const signed = await signMedia(stubs as unknown as ChatMessage[]);
+  const favorites = signed.slice(0, favRows.length)
+    .map((s, i) => ({ path: favRows[i].media_url, url: s.media_url!, fav: true, name: favRows[i].name ?? null, tags: favRows[i].tags ?? [] }))
+    .filter((s) => !!s.url);
+  const recent = signed.slice(favRows.length)
+    .map((s, i) => ({ path: uniqRecent[i].media_url, url: s.media_url!, fav: favPaths.has(uniqRecent[i].media_url) }))
+    .filter((s) => !!s.url);
   return { favorites, recent };
 }
 

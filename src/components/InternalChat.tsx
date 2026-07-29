@@ -21,6 +21,8 @@ import {
   markInternalRead, editInternalMessage, deleteInternalMessage, reactInternalMessage,
 } from "@/app/(app)/internal/actions";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
+import { saveStickerFavorite, removeStickerFavorite } from "@/app/(app)/chat/actions";
+import { StickerCell } from "@/components/chat/StickerCell";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus } from "@/lib/composerFocus";
 
@@ -283,7 +285,22 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
   const openStickers = () => { setEmojiRect(null); if (stickerRect) { setStickerRect(null); return; } setStickerRect(stickerBtn.current?.getBoundingClientRect() ?? null); loadStickerTray(businessId).then(setStickerTray).catch(() => {}); };
-  const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + extra.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setExtra((e) => [...e, opt]); start(async () => { await sendInternalSticker(ch, s.id); refreshMsgs(selRef.current); refreshThreads(); }); };
+  const pickSticker = (s: StickerItem) => { const ch = sel; setStickerRect(null); const opt: InternalMsg = { id: "tmp" + extra.length, channel: ch, author_id: meId, body: "", mentions: [], created_at: new Date().toISOString(), reply_to: null, edited: false, deleted: false, reactions: [], type: "sticker", media_url: s.url, media_mime: "image/webp", media_name: null, forwarded: false }; setExtra((e) => [...e, opt]); start(async () => { await sendInternalSticker(ch, s.path); refreshMsgs(selRef.current); refreshThreads(); }); };
+  // La estrella aquí es un interruptor, sin el editor de nombre/tags del chat de WhatsApp: este
+  // popover es chico y lo que hacía falta era poder guardarlos, no volver a curarlos.
+  const toggleFav = (s: StickerItem) => {
+    const fav = !s.fav;
+    const mark = (x: StickerItem) => (x.path === s.path ? { ...x, fav } : x);
+    setStickerTray((t) => ({
+      recent: t.recent.map(mark),
+      favorites: fav ? [{ ...s, fav: true }, ...t.favorites] : t.favorites.filter((f) => f.path !== s.path),
+    }));
+    start(async () => {
+      if (fav) await saveStickerFavorite(s.path, "", []);
+      else await removeStickerFavorite(s.path);
+      loadStickerTray(businessId).then(setStickerTray).catch(() => {});
+    });
+  };
 
   const selThread = threads.find((t) => t.key === sel);
 
@@ -470,9 +487,9 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
                         ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Aún no hay stickers." : "No stickers yet."}</div>
                         : (
                           <>
-                            {stickerTray.favorites.length > 0 && <><div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div><div className="sticker-grid">{stickerTray.favorites.map((s) => <button key={"f" + s.id} className="sticker-pick" onClick={() => pickSticker(s)}><img src={s.url} alt="" loading="lazy" /></button>)}</div></>}
+                            {stickerTray.favorites.length > 0 && <><div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div><div className="sticker-grid">{stickerTray.favorites.map((s) => <StickerCell key={"f" + s.path} s={s} onSend={() => pickSticker(s)} onFav={() => toggleFav(s)} lang={lang} />)}</div></>}
                             <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
-                            <div className="sticker-grid">{stickerTray.recent.map((s) => <button key={"r" + s.id} className="sticker-pick" onClick={() => pickSticker(s)}><img src={s.url} alt="" loading="lazy" /></button>)}</div>
+                            <div className="sticker-grid">{stickerTray.recent.map((s) => <StickerCell key={"r" + s.path} s={s} onSend={() => pickSticker(s)} onFav={() => toggleFav(s)} lang={lang} />)}</div>
                           </>
                         )}
                     </div>

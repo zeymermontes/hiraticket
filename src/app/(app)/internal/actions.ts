@@ -4,6 +4,7 @@ import { getMyBusiness } from "@/lib/queries";
 import { getInternalThreads, getInternalMessages, type InternalThread, type InternalMsg } from "@/lib/internal";
 import type { Agent } from "@/lib/chat";
 import { encryptBody } from "@/lib/msgcrypto";
+import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
 
 async function ctx() {
   const supabase = await createClient();
@@ -49,14 +50,14 @@ export async function sendInternalMedia(channel: string, input: { type: string; 
 }
 
 /** Send a sticker (picked from the tray) into an internal channel — reuses the stored WebP. */
-export async function sendInternalSticker(channel: string, sourceMessageId: string): Promise<void> {
+export async function sendInternalSticker(channel: string, path: string): Promise<void> {
   const { supabase, userId, businessId } = await ctx();
-  if (!userId || !businessId) return;
-  const { data: m } = await supabase.from("messages").select("media_url, media_mime").eq("id", sourceMessageId).eq("type", "sticker").maybeSingle();
-  if (!m?.media_url) return;
+  if (!userId || !businessId || !ownsMediaPath(businessId, path)) return;
+  // Antes se buscaba el origen en `messages`, la tabla de WhatsApp: un sticker que solo había
+  // existido entre el equipo no se podía reenviar. Ahora la ruta del archivo basta (0070).
   await supabase.from("internal_messages").insert({
     business_id: businessId, channel, author_id: userId, body: "", type: "sticker",
-    media_url: m.media_url, media_mime: (m.media_mime as string) || "image/webp",
+    media_url: path, media_mime: STICKER_MIME,
   });
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
 }

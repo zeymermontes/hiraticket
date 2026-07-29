@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getMyBusiness } from "@/lib/queries";
 import { getConversationDetail, type ConvDetail } from "@/lib/chat";
 import { encryptBody, decryptBody } from "@/lib/msgcrypto";
+import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -169,47 +170,47 @@ export async function forwardMessage(messageId: string, targetConvId: string): P
 }
 
 /** Send a sticker the business already has (picked from the tray): reuse the stored WebP path so the
- *  worker re-sends it as a real sticker — no re-upload needed. */
-export async function sendSticker(convId: string, sourceMessageId: string): Promise<void> {
+ *  worker re-sends it as a real sticker — no re-upload needed. `path` identifies it (0070), so a
+ *  sticker that only ever existed in an internal chat can be sent to a customer too. */
+export async function sendSticker(convId: string, path: string): Promise<void> {
   const { supabase, userId } = await ctx();
-  const { data: m } = await supabase.from("messages").select("media_url, media_mime").eq("id", sourceMessageId).eq("type", "sticker").maybeSingle();
-  if (!m?.media_url) return;
   const businessId = await businessOf(convId);
-  if (!businessId) return;
+  if (!businessId || !ownsMediaPath(businessId, path)) return;
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: convId, direction: "out",
     type: "sticker", author_id: userId, state: "queued",
-    media_url: m.media_url, media_mime: m.media_mime || "image/webp",
+    media_url: path, media_mime: STICKER_MIME,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
 }
 
-/** Save a sticker to favorites with an optional name + tags (or update those if already saved). */
-export async function saveStickerFavorite(messageId: string, name: string, tags: string[]): Promise<void> {
+/** Save a sticker to favorites with an optional name + tags (or update those if already saved).
+ *  Keyed by the stored file (0070) so stickers from internal chats también se pueden guardar. */
+export async function saveStickerFavorite(path: string, name: string, tags: string[]): Promise<void> {
   const { supabase, userId } = await ctx();
-  const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
-  if (!m?.media_url) return;
+  const business = await getMyBusiness();
+  if (!business || !ownsMediaPath(business.id, path)) return;
   const meta = { name: name.trim() || null, tags: tags.map((t) => t.trim().toLowerCase()).filter(Boolean) };
   // Por usuario (0069): antes la unicidad era (negocio, sticker) y el favorito de uno era el de
   // todos — marcarlo o quitarlo se lo cambiaba al resto del equipo.
-  const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", m.business_id).eq("media_url", m.media_url).eq("created_by", userId ?? "").maybeSingle();
+  const { data: existing } = await supabase.from("sticker_favorites").select("id").eq("business_id", business.id).eq("media_url", path).eq("created_by", userId ?? "").maybeSingle();
   if (existing) {
     const { error } = await supabase.from("sticker_favorites").update(meta).eq("id", existing.id);
     if (error) await supabase.from("sticker_favorites").update({}).eq("id", existing.id); // name/tags (0034) not applied
   } else {
-    const base = { business_id: m.business_id, message_id: messageId, media_url: m.media_url, created_by: userId };
+    const base = { business_id: business.id, media_url: path, created_by: userId };
     const { error } = await supabase.from("sticker_favorites").insert({ ...base, ...meta });
     if (error) await supabase.from("sticker_favorites").insert(base); // name/tags (0034) not applied
   }
 }
 
 /** Remove a sticker from favorites (keyed by its stored WebP). */
-export async function removeStickerFavorite(messageId: string): Promise<void> {
+export async function removeStickerFavorite(path: string): Promise<void> {
   const { supabase, userId } = await ctx();
-  const { data: m } = await supabase.from("messages").select("business_id, media_url").eq("id", messageId).eq("type", "sticker").maybeSingle();
-  if (!m?.media_url) return;
+  const business = await getMyBusiness();
+  if (!business || !ownsMediaPath(business.id, path)) return;
   // Solo el mío: quitarlo de mi bandeja no debe borrarlo de la de mis compañeros.
-  await supabase.from("sticker_favorites").delete().eq("business_id", m.business_id).eq("media_url", m.media_url).eq("created_by", userId ?? "");
+  await supabase.from("sticker_favorites").delete().eq("business_id", business.id).eq("media_url", path).eq("created_by", userId ?? "");
 }
 
 /** Queue an outbound media message (file already uploaded to storage). */

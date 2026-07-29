@@ -37,6 +37,7 @@ import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
+import { StickerCell } from "@/components/chat/StickerCell";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
@@ -328,16 +329,6 @@ function AudioPlayer({ url }: { url: string }) {
 }
 
 /** One sticker in the send tray: click to send, star toggles favorite, name shown under favorites. */
-function StickerCell({ s, onSend, onFav, lang }: { s: StickerItem; onSend: () => void; onFav: () => void; lang: "es" | "en" }) {
-  return (
-    <div className="sticker-cell">
-      <button className="sticker-pick" onClick={onSend} title={[s.name, (s.tags ?? []).map((t) => "#" + t).join(" ")].filter(Boolean).join(" · ") || (lang === "es" ? "Enviar sticker" : "Send sticker")}><img src={s.url} alt="" loading="lazy" /></button>
-      <button className={"sticker-fav" + (s.fav ? " on" : "")} onClick={(e) => { e.stopPropagation(); onFav(); }} title={s.fav ? (lang === "es" ? "Editar favorito / tags" : "Edit favorite / tags") : (lang === "es" ? "Agregar a favoritos" : "Add to favorites")}>{s.fav ? "★" : "☆"}</button>
-      {s.name && <div className="sticker-name" title={s.name}>{s.name}</div>}
-    </div>
-  );
-}
-
 /** Favorite editor shown in the tray: name + tag chips (add/remove), and remove-from-favorites. */
 function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerItem; lang: "es" | "en"; onSave: (name: string, tags: string[]) => void; onRemove?: () => void; onCancel: () => void }) {
   const [name, setName] = useState(s.name ?? "");
@@ -1362,24 +1353,24 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     try { setStickerTray(await loadStickerTray(businessId)); } catch {}
     if (showSpinner) setStickerLoading(false);
   }
-  // Send a sticker the business already has (re-sends the stored WebP by message reference).
+  // Send a sticker the business already has (re-sends the stored WebP by its path).
   function pickSticker(s: StickerItem) {
     setStickerOpen(false); setConfirmSticker(null);
     setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "sticker", body: null, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: s.url, media_mime: "image/webp", media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
-    start(async () => { await sendSticker(detail.id, s.id); });
+    start(async () => { await sendSticker(detail.id, s.path); });
   }
   // Persist the favorite with a name + tags (called from the save form), then reconcile.
   function commitFavorite(s: StickerItem, name: string, tags: string[]) {
     setSavingSticker(null);
     setStickerTray((t) => ({
-      recent: t.recent.map((x) => (x.id === s.id ? { ...x, fav: true } : x)),
-      favorites: t.favorites.some((f) => f.url === s.url) ? t.favorites.map((f) => (f.url === s.url ? { ...f, name, tags } : f)) : [{ ...s, fav: true, name, tags }, ...t.favorites],
+      recent: t.recent.map((x) => (x.path === s.path ? { ...x, fav: true } : x)),
+      favorites: t.favorites.some((f) => f.path === s.path) ? t.favorites.map((f) => (f.path === s.path ? { ...f, name, tags } : f)) : [{ ...s, fav: true, name, tags }, ...t.favorites],
     }));
-    start(async () => { await saveStickerFavorite(s.id, name, tags); await loadStickers(false); });
+    start(async () => { await saveStickerFavorite(s.path, name, tags); await loadStickers(false); });
   }
   function removeFavorite(s: StickerItem) {
-    setStickerTray((t) => ({ recent: t.recent.map((x) => (x.id === s.id ? { ...x, fav: false } : x)), favorites: t.favorites.filter((f) => f.url !== s.url) }));
-    start(async () => { await removeStickerFavorite(s.id); await loadStickers(false); });
+    setStickerTray((t) => ({ recent: t.recent.map((x) => (x.path === s.path ? { ...x, fav: false } : x)), favorites: t.favorites.filter((f) => f.path !== s.path) }));
+    start(async () => { await removeStickerFavorite(s.path); await loadStickers(false); });
   }
   // Star clicked → open the favorite editor (add for new, view/edit name+tags for existing).
   function favSticker(s: StickerItem) { setSavingSticker(s); }
@@ -1873,11 +1864,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                                 <>
                                   {favs.length > 0 && <>
                                     <div className="menu-label">{lang === "es" ? "★ Favoritos" : "★ Favorites"}</div>
-                                    <div className="sticker-grid">{favs.map((s) => <StickerCell key={"f" + s.id} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                    <div className="sticker-grid">{favs.map((s) => <StickerCell key={"f" + s.path} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
                                   </>}
                                   {recents.length > 0 && <>
                                     <div className="menu-label">{lang === "es" ? "Recientes" : "Recent"}</div>
-                                    <div className="sticker-grid">{recents.map((s) => <StickerCell key={"r" + s.id} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
+                                    <div className="sticker-grid">{recents.map((s) => <StickerCell key={"r" + s.path} s={s} onSend={() => setConfirmSticker(s)} onFav={() => favSticker(s)} lang={lang} />)}</div>
                                   </>}
                                 </>
                               );
