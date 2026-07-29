@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { getToastPreview } from "@/app/(app)/chat/actions";
-import { alertIncoming, requestNotifyPermissionOnce } from "@/lib/notify";
+import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } from "@/lib/notify";
 import { keepSubscribed } from "@/lib/realtime";
 
 // Realtime payloads carry the STORED body — encrypted at rest (encm:v1:) for new messages. Use the
@@ -34,10 +34,33 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
     // keepSubscribed en vez de .subscribe(): el canal se reconecta solo con backoff y re-autentica
     // el socket. Antes, si se caía, los avisos se apagaban en silencio hasta recargar la página.
     const stop = keepSubscribed(supabase, `notify-${businessId}`, (ch) => ch
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, async (payload) => {
-        const m = payload.new as { id?: string; direction?: string; body?: string | null; conversation_id?: string; type?: string };
+      // Las llamadas entran por INSERT (suena) y por UPDATE (al colgar pasa a perdida), por eso
+      // este handler escucha los dos eventos y no solo INSERT como antes.
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, async (payload) => {
+        const m = payload.new as { id?: string; direction?: string; body?: string | null; conversation_id?: string; type?: string; state?: string; wa_id?: string };
         notify();
         if (m.direction !== "in" || !m.conversation_id) return;
+
+        if (m.type === "call") {
+          const ringing = m.state === "ringing";
+          let name = "";
+          try {
+            const { data } = await supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", m.conversation_id).maybeSingle();
+            const c = (data as { contact?: unknown } | null)?.contact;
+            const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
+            name = (cc?.name || cc?.phone || "").trim();
+          } catch {}
+          if (!name) name = "Número desconocido";
+          const title = ringing ? `📞 Llamada de ${name}` : `📞 Llamada perdida de ${name}`;
+          const href = `/chat?c=${m.conversation_id}`;
+          // key estable = misma llamada: el toast de "entrante" se convierte en "perdida" en su
+          // sitio en vez de dejar los dos. sticky en ambos casos, como se pidió.
+          push({ kind: ringing ? "warn" : "mention", title, message: ringing ? "Llamada entrante de WhatsApp" : "No se contestó", href, sticky: true, key: `call-${m.wa_id ?? m.id}` });
+          vibrate(CALL_VIBRATION);
+          alertIncoming({ title, body: ringing ? "Llamada entrante" : "Llamada perdida", href, tag: `call-${m.wa_id ?? m.id}` });
+          return;
+        }
+        if (payload.eventType !== "INSERT") return; // el resto solo avisa al llegar, no al actualizarse
         // Look up who it's from so the toast leads with the contact's name. The embedded resource
         // can come back as an object OR a single-element array depending on relationship inference.
         let name = "";

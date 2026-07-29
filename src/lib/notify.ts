@@ -105,6 +105,16 @@ export function desktopNotify(opts: { title: string; body: string; href?: string
   } catch { /* algunos navegadores exigen service worker (Android) — se ignora */ }
 }
 
+/** Vibra, donde el dispositivo pueda.
+ *  Solo Android (Chrome/Firefox): iOS no expone la API y un escritorio no tiene con qué vibrar,
+ *  así que ahí el aviso se queda en sonido + notificación. */
+export function vibrate(pattern: number | number[]) {
+  try { navigator.vibrate?.(pattern); } catch {}
+}
+
+/** Patrón de llamada: pulsos largos separados, distinto de un mensaje. */
+export const CALL_VIBRATION = [400, 200, 400, 200, 400];
+
 /** Sonido + notificación del sistema para un mensaje entrante. */
 export function alertIncoming(opts: { title: string; body: string; href?: string; tag?: string }) {
   playPing();

@@ -380,6 +380,16 @@ function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerI
 }
 
 export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => void }) {
+  // Llamada: no hay archivo, es un aviso. Amarillo mientras suena, rojo si quedó perdida.
+  if (m.type === "call") {
+    const ringing = m.state === "ringing";
+    return (
+      <span className="row gap-2" style={{ alignItems: "center", padding: "4px 2px", color: ringing ? "var(--amber)" : "var(--red)", fontWeight: 600, fontSize: 13 }}>
+        <span style={{ fontSize: 15 }}>📞</span>
+        {ringing ? "Llamada entrante" : "Llamada perdida"}
+      </span>
+    );
+  }
   const url = m.media_url ?? undefined;
   if (!url) return null;
   if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;
@@ -411,6 +421,7 @@ function msgPreview(c: ConvListItem, lang: "es" | "en"): string {
   switch (c.lastType) {
     case "image": return L("📷 Foto", "📷 Photo");
     case "sticker": return L("🩷 Sticker", "🩷 Sticker");
+    case "call": return L("📞 Llamada perdida", "📞 Missed call");
     case "audio": return L("🎤 Audio", "🎤 Audio");
     case "video": return L("🎥 Video", "🎥 Video");
     case "document": return L("📄 Documento", "📄 Document");
@@ -1650,7 +1661,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   : m.type === "contact" ? <ContactBlock m={m} />
                     : (
                       <>
-                        {m.media_url && <MediaBlock m={m} onImage={openLightbox} />}
+                        {(m.media_url || m.type === "call") && <MediaBlock m={m} onImage={openLightbox} />}
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>

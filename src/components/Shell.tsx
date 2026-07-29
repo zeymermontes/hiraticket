@@ -279,6 +279,21 @@ export function Shell({
       setNotifs(r.notifications);
     }).catch(() => {});
   }, [businessId]);
+  // Pendientes en el título de la pestaña: "(3) Hiraticket". Es lo único que se ve sin cambiar de
+  // pestaña, así que suma lo que de verdad requiere tu atención — chats tuyos sin leer, sin asignar
+  // y mensajes del equipo. setAppBadge además lo pinta en el icono de la barra de tareas cuando la
+  // app está instalada como PWA (Chrome/Edge de escritorio); donde no exista, se ignora.
+  const pending = (b.chat ?? 0) + (sb.chat ?? 0) + (b.internal ?? 0);
+  useEffect(() => {
+    const base = "Hiraticket";
+    document.title = pending > 0 ? `(${pending}) ${base}` : base;
+    try {
+      const nav = navigator as Navigator & { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+      if (pending > 0) nav.setAppBadge?.(pending).catch(() => {});
+      else nav.clearAppBadge?.().catch(() => {});
+    } catch {}
+  }, [pending]);
+
   // Let pages signal "badges may have changed" (e.g. the team chat after marking a channel read).
   useEffect(() => {
     const h = () => refreshBadges();

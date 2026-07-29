@@ -717,7 +717,85 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 		m.handleUnavailable(ctx, s, client, v)
 	case *events.Receipt:
 		m.handleReceipt(ctx, v)
+	case *events.CallOffer:
+		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "ringing")
+	case *events.CallOfferNotice:
+		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "ringing")
+	case *events.CallTerminate:
+		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "missed")
+	case *events.CallReject:
+		m.handleCall(ctx, s, v.From, v.CallID, v.Timestamp, "missed")
 	}
+}
+
+// handleCall records an incoming WhatsApp call as a message in the conversation.
+//
+// whatsmeow only relays call SIGNALLING — there is no audio here, so a call can be shown and
+// notified but never answered from Hiraticket.
+//
+// It lands as a normal `messages` row (type='call') on purpose: everything downstream already
+// works for messages — realtime, toasts, sound, the conversation preview, the unread badge. The
+// state column carries 'ringing' → 'missed' so the UI can swap the label in place; the call id
+// goes in wa_id so the terminate event can find the row it has to update.
+func (m *Manager) handleCall(ctx context.Context, s session, from types.JID, callID string, ts time.Time, state string) {
+	if from.Server != types.DefaultUserServer || from.User == "" {
+		return // group calls / non-user JIDs: no conversation to attach to
+	}
+	phone := "+" + from.User
+
+	var contactID, convID string
+	var unread int
+	err := m.db.QueryRowContext(ctx, `SELECT id FROM contacts WHERE business_id=$1 AND phone=$2`, s.BusinessID, phone).Scan(&contactID)
+	if err == sql.ErrNoRows {
+		if err = m.db.QueryRowContext(ctx,
+			`INSERT INTO contacts (business_id, name, phone) VALUES ($1,$2,$3) RETURNING id`,
+			s.BusinessID, phone, phone).Scan(&contactID); err != nil {
+			m.log.Errorf("call contact insert: %v", err)
+			return
+		}
+	} else if err != nil {
+		return
+	}
+	err = m.db.QueryRowContext(ctx,
+		`SELECT id, unread FROM conversations WHERE business_id=$1 AND contact_id=$2
+		  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread)
+	if err == sql.ErrNoRows {
+		if err = m.db.QueryRowContext(ctx,
+			`INSERT INTO conversations (business_id, contact_id, status, unread) VALUES ($1,$2,'open',0) RETURNING id`,
+			s.BusinessID, contactID).Scan(&convID); err != nil {
+			m.log.Errorf("call conv insert: %v", err)
+			return
+		}
+		unread = 0
+	} else if err != nil {
+		return
+	}
+
+	label := "📞 Llamada entrante"
+	if state == "missed" {
+		label = "📞 Llamada perdida"
+	}
+
+	// El terminate llega después del offer: si ya hay fila para esta llamada, se actualiza en vez
+	// de crear una segunda. Sin esto el chat quedaría con dos renglones por llamada.
+	res, uerr := m.db.ExecContext(ctx,
+		`UPDATE messages SET state=$1, body=$2 WHERE business_id=$3 AND wa_id=$4 AND type='call'`,
+		state, encryptBody(s.BusinessID, label), s.BusinessID, callID)
+	if uerr == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			m.exec(ctx, `UPDATE conversations SET last_message_at=now() WHERE id=$1`, convID)
+			m.log.Infof("call %s from %s (updated)", state, phone)
+			return
+		}
+	}
+
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, created_at)
+		VALUES ($1,$2,'in','call',$3,$4,$5,$6)`,
+		s.BusinessID, convID, encryptBody(s.BusinessID, label), state, callID, ts)
+	// Una llamada perdida cuenta como pendiente igual que un mensaje: reabre y sube el chat.
+	m.exec(ctx, `UPDATE conversations SET unread=$1, last_message_at=now(), snoozed_until=NULL, hidden=false,
+		status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$2`, unread+1, convID)
+	m.log.Infof("call %s from %s", state, phone)
 }
 
 // handleUnavailable records a placeholder for messages WhatsApp won't deliver to a linked device —

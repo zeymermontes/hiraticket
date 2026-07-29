@@ -9,6 +9,10 @@ export interface ToastInput {
   /** No se cierra solo: espera clic o la X. Las menciones lo usan por defecto — perderse que te
    *  nombraron por mirar a otro lado seis segundos es justo lo que hay que evitar. */
   sticky?: boolean;
+  /** Identidad estable: al empujar otro toast con la misma key, REEMPLAZA al anterior en su sitio
+   *  en vez de apilarse. Es lo que permite que "Llamada entrante" se convierta en "Llamada
+   *  perdida" sin que queden los dos en pantalla. */
+  key?: string;
 }
 interface Toast extends ToastInput { id: number }
 
@@ -37,7 +41,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     seq.current += 1;
     const id = seq.current;
     const sticky = t.sticky ?? t.kind === "mention";
-    setToasts((ts) => [...ts.slice(-(MAX_TOASTS - 1)), { ...t, id, sticky }]);
+    setToasts((ts) => {
+      // Con key, se actualiza el existente conservando su posición; sin ella, se apila.
+      if (t.key) {
+        const at = ts.findIndex((x) => x.key === t.key);
+        if (at >= 0) { const next = [...ts]; next[at] = { ...t, id, sticky }; return next; }
+      }
+      return [...ts.slice(-(MAX_TOASTS - 1)), { ...t, id, sticky }];
+    });
     if (!sticky) setTimeout(() => remove(id), AUTO_DISMISS_MS);
   }, [remove]);
 
