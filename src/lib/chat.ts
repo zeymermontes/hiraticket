@@ -15,24 +15,43 @@ function mediaPath(u: string | null): string | null {
   return null; // external URL — leave untouched
 }
 
+/**
+ * Arriba de esto la miniatura viaja al cliente; abajo se quita.
+ *
+ * Una miniatura pesa ~10 KB en base64, y en un chat con cincuenta fotos serían 500 KB en CADA carga
+ * del detalle —- que se recarga con cada mensaje nuevo. Para una foto liviana la miniatura solo
+ * ahorra un rectángulo gris de medio segundo, y no vale ese precio. Para una pesada es lo único que
+ * se muestra, así que ahí es imprescindible. Debe coincidir con HEAVY_IMAGE_BYTES de ChatScreen.
+ */
+const THUMB_SEND_OVER_BYTES = 1.5 * 1024 * 1024;
+
+/** Quita `meta.thumb` cuando la foto es lo bastante liviana para cargarse entera. */
+function trimThumb(m: ChatMessage): ChatMessage {
+  const meta = m.meta as { thumb?: string } | null;
+  if (!meta?.thumb || (m.media_size ?? 0) > THUMB_SEND_OVER_BYTES) return m;
+  const { thumb: _drop, ...rest } = meta;
+  return { ...m, meta: rest as ChatMessage["meta"] };
+}
+
 /** Replace media_url paths with short-lived signed URLs (private 'media' bucket). */
 async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
-  const paths = [...new Set(messages.map((m) => mediaPath(m.media_url)).filter((p): p is string => !!p))];
-  if (paths.length === 0) return messages;
+  const trimmed = messages.map(trimThumb);
+  const paths = [...new Set(trimmed.map((m) => mediaPath(m.media_url)).filter((p): p is string => !!p))];
+  if (paths.length === 0) return trimmed;
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   try {
     const admin = createAdminClient();
     const { data } = await admin.storage.from("media").createSignedUrls(paths, 60 * 60 * 24 * 7);
     const signed = new Map<string, string>();
     (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
-    return messages.map((m) => {
+    return trimmed.map((m) => {
       const p = mediaPath(m.media_url);
       // media_path viaja junto con la URL firmada: es la identidad estable del archivo y es lo que
       // el navegador usa como llave de caché, porque el token de la firma cambia en cada llamada.
       return p && signed.has(p) ? { ...m, media_url: signed.get(p)!, media_path: p } : m;
     });
   } catch {
-    return messages; // admin/storage not configured — leave as-is
+    return trimmed; // admin/storage not configured — leave as-is
   }
 }
 

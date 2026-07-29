@@ -4,136 +4,88 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Caché de archivos en el navegador, indexado por la RUTA en storage.
  *
- * El problema: `createSignedUrls` genera un token nuevo en cada llamada, y el token va en el query
- * string. Como el detalle del chat se vuelve a pedir seguido —- cada mensaje nuevo por realtime,
- * cada acción, y cada 4 segundos mientras el realtime está caído —- el `src` de cada imagen cambia
- * de cadena aunque el archivo sea el mismo. Para el navegador una URL distinta es un archivo
- * distinto, así que **re-descargaba todas las fotos de la conversación cada vez**.
+ * Dos problemas se resuelven aquí.
  *
- * La ruta sí es estable, así que es la llave correcta. Es lo mismo que hace WhatsApp Web guardando
- * los bytes por hash del archivo: una vez que los tiene, no los vuelve a pedir.
+ * Uno: `createSignedUrls` genera un token nuevo en cada llamada y el token va en el query string.
+ * El detalle del chat se vuelve a pedir seguido, así que el `src` de cada imagen cambiaba de cadena
+ * aunque el archivo fuera el mismo —- y para el navegador una URL distinta es un archivo distinto,
+ * o sea que re-descargaba todas las fotos cada vez. La ruta sí es estable, así que es la llave.
  *
- * En un fallo de caché NO se cambia el `src`: se pinta con la URL firmada (que el <img> ya está
- * bajando de todos modos) y los bytes se guardan de fondo. Cambiar el src a un blob a medio camino
- * solo provocaría un parpadeo para ahorrar una descarga que ya ocurrió.
+ * Dos: bajar, armar y guardar los bytes son operaciones que compiten con el render. Por eso todo
+ * eso vive en un Web Worker (`/public/media-worker.js`), IndexedDB incluido. Es la diferencia entre
+ * "no debería trabar" y "no puede trabar", y es lo que hace WhatsApp Web.
+ *
+ * Este módulo es solo el cliente: manda mensajes, recibe blobs y los convierte en object URLs, que
+ * es lo único que tiene que pasar en el hilo principal.
  */
 
-const DB_NAME = "ht_media";
-const DB_VERSION = 1;
-const STORE = "blobs";
-const USED_INDEX = "usedAt";
+/** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
+const WORKER_URL = "/media-worker.js?v=1";
 
-/** Tope del caché. Al pasarse se borran los menos usados recientemente. */
-const MAX_BYTES = 300 * 1024 * 1024;
-/**
- * Arriba de esto no se guarda: un archivo así se comería una parte desproporcionada del caché, y
- * guardarlo implica leer todos los bytes a memoria mientras la interfaz intenta responder. Para uno
- * de estos vale más volver a pedirlo que congelar la pestaña por adelantarse.
- */
-const MAX_ITEM_BYTES = 8 * 1024 * 1024;
+type Reply =
+  | { id: number; type: "blob"; blob: Blob }
+  | { id: number; type: "progress"; pct: number | null }
+  | { id: number; type: "done" }
+  | { id: number; type: "miss" }
+  | { id: number; type: "error" };
 
-interface Entry { path: string; blob: Blob; bytes: number; usedAt: number }
-
-let dbPromise: Promise<IDBDatabase | null> | null = null;
-
-function openDb(): Promise<IDBDatabase | null> {
-  if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve) => {
-    if (typeof indexedDB === "undefined") return resolve(null);
-    let req: IDBOpenDBRequest;
-    try { req = indexedDB.open(DB_NAME, DB_VERSION); } catch { return resolve(null); }
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE, { keyPath: "path" }).createIndex(USED_INDEX, "usedAt");
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    // Modo privado, cuota llena o IndexedDB deshabilitado: se sigue sin caché, no se rompe nada.
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
-  });
-  return dbPromise;
+interface Pending {
+  resolve: (b: Blob | null) => void;
+  onProgress?: (pct: number | null) => void;
 }
 
-function tx(db: IDBDatabase, mode: IDBTransactionMode) {
-  return db.transaction(STORE, mode).objectStore(STORE);
-}
+let worker: Worker | null | undefined; // undefined = sin intentar, null = no disponible
+let seq = 0;
+const pending = new Map<number, Pending>();
 
-/** Los bytes guardados para esta ruta, o null. Marca el uso para que la limpieza respete lo vivo. */
-async function readBlob(path: string): Promise<Blob | null> {
-  const db = await openDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    let req: IDBRequest<Entry | undefined>;
-    try { req = tx(db, "readonly").get(path) as IDBRequest<Entry | undefined>; } catch { return resolve(null); }
-    req.onerror = () => resolve(null);
-    req.onsuccess = () => {
-      const hit = req.result;
-      if (!hit?.blob) return resolve(null);
-      // El toque de usedAt va en su propia transacción: si falla, el hit sigue siendo válido.
-      try { tx(db, "readwrite").put({ ...hit, usedAt: Date.now() }); } catch {}
-      resolve(hit.blob);
-    };
-  });
-}
-
-/** Borra los menos usados recientemente hasta volver bajo el tope. */
-async function evict(db: IDBDatabase) {
-  const store = tx(db, "readwrite");
-  const all: Entry[] = await new Promise((resolve) => {
-    const req = store.index(USED_INDEX).getAll() as IDBRequest<Entry[]>;
-    req.onerror = () => resolve([]);
-    req.onsuccess = () => resolve(req.result ?? []);
-  });
-  let total = all.reduce((n, e) => n + (e.bytes || 0), 0);
-  if (total <= MAX_BYTES) return;
-  // getAll por el índice ya viene ordenado por usedAt ascendente: los primeros son los más viejos.
-  for (const e of all) {
-    if (total <= MAX_BYTES) break;
-    try { tx(db, "readwrite").delete(e.path); total -= e.bytes || 0; } catch { break; }
-  }
-}
-
-async function writeBlob(path: string, blob: Blob) {
-  if (!blob.size || blob.size > MAX_ITEM_BYTES) return;
-  const db = await openDb();
-  if (!db) return;
-  try { tx(db, "readwrite").put({ path, blob, bytes: blob.size, usedAt: Date.now() } satisfies Entry); } catch { return; }
-  await evict(db);
-}
-
-/** Guarda los bytes de una ruta que no estaba en caché. Se llama una vez por ruta por sesión. */
-const inFlight = new Set<string>();
-async function warm(path: string, url: string) {
-  if (inFlight.has(path)) return;
-  inFlight.add(path);
+function getWorker(): Worker | null {
+  if (worker !== undefined) return worker;
   try {
-    // Misma URL que ya pidió el <img>, así que normalmente sale del caché HTTP del navegador.
-    const res = await fetch(url);
-    if (!res.ok) return;
-    // El tamaño se mira ANTES de leer el cuerpo: `.blob()` de un archivo enorme trae todos los
-    // bytes a memoria, y eso es parte de lo que trababa la interfaz al abrir un chat con una foto
-    // pesada. Si no viene Content-Length, `writeBlob` lo descarta después por tamaño.
-    const len = Number(res.headers.get("content-length") ?? 0);
-    if (len > MAX_ITEM_BYTES) return;
-    await writeBlob(path, await res.blob());
+    worker = new Worker(WORKER_URL);
+    worker.onmessage = (e: MessageEvent<Reply>) => {
+      const msg = e.data;
+      const p = pending.get(msg.id);
+      if (!p) return;
+      if (msg.type === "progress") return p.onProgress?.(msg.pct);
+      pending.delete(msg.id);
+      p.resolve(msg.type === "blob" ? msg.blob : null);
+    };
+    // Si el worker muere, se responde a todo lo pendiente y se marca como no disponible para caer
+    // al camino sin caché en vez de dejar promesas colgadas para siempre.
+    worker.onerror = () => {
+      for (const [, p] of pending) p.resolve(null);
+      pending.clear();
+      worker = null;
+    };
   } catch {
-    // Sin red o URL vencida: no pasa nada, se reintenta la próxima vez que se monte.
-  } finally {
-    inFlight.delete(path);
+    worker = null;
   }
+  return worker;
+}
+
+function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string | null, onProgress?: (pct: number | null) => void): Promise<Blob | null> {
+  const w = getWorker();
+  if (!w) return Promise.resolve(null);
+  const id = ++seq;
+  return new Promise((resolve) => {
+    pending.set(id, { resolve, onProgress });
+    w.postMessage({ id, type, path, url });
+  });
 }
 
 /**
  * Devuelve el `src` a usar para un archivo. `path` es la ruta en storage (estable) y `url` la URL
  * firmada del momento. Solo para pintar: el `href` y el arrastrar-a-otra-app deben seguir usando la
  * URL firmada, porque un blob local no sirve fuera de esta pestaña.
+ *
+ * En un fallo de caché NO se cambia el `src`: se pinta con la URL firmada, que el <img> ya está
+ * bajando de todos modos, y los bytes se guardan de fondo. Cambiarlo a un blob a medio camino solo
+ * daría un parpadeo para ahorrar una descarga que ya ocurrió.
  */
 export function useCachedMedia(path: string | null | undefined, url: string | null | undefined): string | undefined {
   const [cached, setCached] = useState<string | null>(null);
-  // La URL firmada cambia en cada refetch. Se guarda en un ref para que eso NO reinicie el efecto:
-  // una vez que tenemos los bytes, un token nuevo es irrelevante.
+  // La URL firmada cambia en cada refetch. Va en un ref para que eso NO reinicie el efecto: una vez
+  // que tenemos los bytes, un token nuevo es irrelevante.
   const urlRef = useRef(url);
   urlRef.current = url;
 
@@ -141,17 +93,13 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
     if (!path) { setCached(null); return; }
     let alive = true;
     let objectUrl: string | null = null;
-    (async () => {
-      const blob = await readBlob(path);
-      if (!alive) return;
-      if (blob) {
-        objectUrl = URL.createObjectURL(blob);
-        setCached(objectUrl);
-      } else if (urlRef.current) {
-        // Se pinta con la URL firmada y los bytes quedan guardados para la próxima vez.
-        void warm(path, urlRef.current);
-      }
-    })();
+    // "warm" devuelve el blob si YA estaba guardado, y null si hubo que bajarlo —- en ese caso los
+    // bytes quedan en el caché para la próxima y aquí no se toca el src, que ya está pintando.
+    ask("warm", path, urlRef.current).then((blob) => {
+      if (!alive || !blob) return;
+      objectUrl = URL.createObjectURL(blob);
+      setCached(objectUrl);
+    });
     return () => {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -164,43 +112,20 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
 /**
  * Baja un archivo informando el avance, y lo guarda si cabe.
  *
- * El progreso solo se puede medir aquí, no en un `<img>`: el navegador no expone cuánto lleva
- * bajado de una imagen. Por eso el visor pide el archivo él mismo en vez de dejárselo al `<img>`.
+ * El progreso solo se puede medir así, no en un `<img>`: el navegador no expone cuánto lleva bajado
+ * de una imagen. Por eso el visor pide el archivo él mismo.
  *
  * `onProgress` recibe null cuando el servidor no manda Content-Length —- ahí no hay porcentaje
- * posible y a quien mira le toca ver "cargando" en vez de un número inventado.
+ * posible y vale más mostrar "cargando" que un número inventado.
  */
 export async function fetchWithProgress(path: string | null | undefined, url: string, onProgress: (pct: number | null) => void): Promise<string | null> {
-  if (path) {
-    const hit = await readBlob(path);
-    if (hit) return URL.createObjectURL(hit);
-  }
-  try {
-    const res = await fetch(url);
-    if (!res.ok || !res.body) return null;
-    const total = Number(res.headers.get("content-length") ?? 0);
-    onProgress(total > 0 ? 0 : null);
-    const reader = res.body.getReader();
-    const chunks: BlobPart[] = [];
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value as BlobPart);
-      got += value.byteLength;
-      if (total > 0) onProgress(Math.min(99, Math.round((got / total) * 100)));
-    }
-    const blob = new Blob(chunks, { type: res.headers.get("content-type") ?? "application/octet-stream" });
-    if (path) await writeBlob(path, blob); // writeBlob descarta por tamaño si no vale la pena
-    return URL.createObjectURL(blob);
-  } catch {
-    return null;
-  }
+  const blob = await ask("get", path, url, onProgress);
+  if (blob) return URL.createObjectURL(blob);
+  // Sin worker (o si falló): que el <img> lo intente con la URL firmada es mejor que no mostrar nada.
+  return null;
 }
 
 /** Vacía el caché — al cerrar sesión, para no dejar archivos de un negocio en un equipo compartido. */
 export async function clearMediaCache() {
-  const db = await openDb();
-  if (!db) return;
-  try { tx(db, "readwrite").clear(); } catch {}
+  await ask("clear");
 }

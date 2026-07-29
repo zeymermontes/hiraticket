@@ -211,6 +211,8 @@ end $$;`); err != nil {
 	go m.pollContacts(ctx)
 	go m.pollOps(ctx)
 	go m.pollHeartbeat(ctx)
+	// Apagado salvo THUMB_BACKFILL=1, y termina solo al no quedar fotos sin miniatura.
+	go m.backfillThumbs(ctx)
 
 	// Graceful shutdown: on SIGTERM (Render redeploy) disconnect all WhatsApp clients so this
 	// instance RELEASES the session immediately instead of fighting the new one for it.
@@ -1219,6 +1221,13 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				mediaURL = u
 			} else {
 				m.log.Errorf("media upload: %v", uerr)
+			}
+			// Miniatura propia si WhatsApp no mandó la suya. Tenemos los bytes en claro justo aquí,
+			// así que es el único momento en que sale gratis —- después habría que volver a bajarlos.
+			if mtype == "image" && !hasThumb(meta) {
+				if t := makeThumb(data); t != "" {
+					meta = withThumbJSON(meta, t)
+				}
 			}
 		} else if derr != nil {
 			m.log.Errorf("media download: %v", derr)
