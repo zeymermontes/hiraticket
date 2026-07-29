@@ -7,6 +7,7 @@ import { Icon } from "@/components/Icon";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled } from "@/lib/notify";
 import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
 import { loadNotifPrefs, saveNotifPrefs } from "@/app/(app)/settings/notif-actions";
+import { NOTIF_PREFS_EVENT } from "@/components/RealtimeNotifier";
 import { useConfirm } from "@/components/Confirm";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -328,6 +329,9 @@ function NotifPrefsRows({ lang }: { lang: "es" | "en" }) {
   const set = (patch: Partial<NotifPrefs>) => {
     const next = { ...prefs, ...patch };
     setPrefs(next);           // optimista: el interruptor responde al instante
+    // Avisar al notificador en vivo: vive en el layout, que Next no re-ejecuta al navegar, así que
+    // sin esto seguiría con las preferencias viejas hasta recargar la página.
+    try { window.dispatchEvent(new CustomEvent(NOTIF_PREFS_EVENT, { detail: next })); } catch {}
     saveNotifPrefs(next).catch(() => {});
   };
 

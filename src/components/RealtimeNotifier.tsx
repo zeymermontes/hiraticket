@@ -6,6 +6,8 @@ import { getToastPreview } from "@/app/(app)/chat/actions";
 import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } from "@/lib/notify";
 import { keepSubscribed } from "@/lib/realtime";
 import { DEFAULT_NOTIF_PREFS, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
+import { loadNotifPrefs } from "@/app/(app)/settings/notif-actions";
+export const NOTIF_PREFS_EVENT = "ht:notifprefs";
 
 // Realtime payloads carry the STORED body — encrypted at rest (encm:v1:) for new messages. Use the
 // payload text only when it's legacy plaintext; otherwise fetch the decrypted preview server-side.
@@ -26,6 +28,21 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
   // En un ref: cambiar una preferencia no debe recrear el canal de realtime.
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+
+  // El prop viene del layout, y Next CONSERVA el layout entre navegaciones: no se re-ejecuta al
+  // volver de Ajustes, así que ese prop se queda con las preferencias del primer render y los
+  // cambios no surtían efecto hasta recargar. Por eso el notificador las relee él mismo al montar
+  // y escucha el aviso que emite Ajustes al guardar.
+  useEffect(() => {
+    let alive = true;
+    loadNotifPrefs().then((p) => { if (alive && p) prefsRef.current = p; }).catch(() => {});
+    const onPrefs = (e: Event) => {
+      const next = (e as CustomEvent<NotifPrefs>).detail;
+      if (next) prefsRef.current = next;
+    };
+    window.addEventListener(NOTIF_PREFS_EVENT, onPrefs);
+    return () => { alive = false; window.removeEventListener(NOTIF_PREFS_EVENT, onPrefs); };
+  }, []);
 
   // El permiso se pide al primer clic/tecla, no al montar: los navegadores ignoran o penalizan
   // la petición sin gesto previo.
