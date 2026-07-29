@@ -24,7 +24,7 @@ import { tagColor } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
-  deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
+  requestMediaFetch, deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
 } from "@/app/(app)/chat/actions";
 import { menuStyle } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
@@ -400,6 +400,9 @@ export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: stri
       </span>
     );
   }
+  // Pesado y aún sin bajar: se muestra el archivo con su tamaño y un botón. Se materializa la
+  // primera vez que alguien lo pide; el que nadie abre nunca ocupa storage.
+  if (m.media_pending || m.media_fetch_error) return <PendingMedia m={m} />;
   const url = m.media_url ?? undefined;
   if (!url) return null;
   if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;
@@ -1671,7 +1674,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   : m.type === "contact" ? <ContactBlock m={m} />
                     : (
                       <>
-                        {(m.media_url || m.type === "call" || m.media_purged_at) && <MediaBlock m={m} onImage={openLightbox} />}
+                        {(m.media_url || m.type === "call" || m.media_purged_at || m.media_pending || m.media_fetch_error) && <MediaBlock m={m} onImage={openLightbox} />}
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
@@ -2372,4 +2375,47 @@ export function dayLabel(iso: string, lang: "es" | "en"): string {
   if (d.toDateString() === today.toDateString()) return lang === "es" ? "Hoy" : "Today";
   if (d.toDateString() === yest.toDateString()) return lang === "es" ? "Ayer" : "Yesterday";
   return d.toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { weekday: "long", day: "2-digit", month: "long" });
+}
+
+const fmtBytes = (n?: number | null) => {
+  if (!n) return "";
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+};
+
+/** Adjunto pesado que aún no se ha bajado (0067).
+ *
+ *  Al pedirlo se marca pending_op y el worker lo baja; el UPDATE vuelve por realtime, así que no
+ *  hace falta sondear — cuando llegue media_url este bloque desaparece solo.
+ *
+ *  El caso "expired" es esperable, no un bug: WhatsApp purga su CDN a los pocos días y ahí el
+ *  archivo ya no existe en ningún lado. Por eso se dice explícito qué hacer. */
+function PendingMedia({ m }: { m: ChatMessage }) {
+  const { lang } = useApp();
+  const es = lang === "es";
+  const [asked, setAsked] = useState(false);
+  const expired = m.media_fetch_error === "expired";
+  const failed = !!m.media_fetch_error && !expired;
+
+  if (expired) {
+    return (
+      <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px", color: "var(--text-faint)", fontSize: 12.5 }}>
+        <Icon name="file" size={15} />
+        <span>{m.media_name || (es ? "Archivo" : "File")} · {es ? "caducó en WhatsApp, pídelo de nuevo" : "expired on WhatsApp, ask for it again"}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px" }}>
+      <span className="doc-ic" style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(0,0,0,.06)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={17} /></span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ fontWeight: 600, fontSize: 12.5, display: "block" }} className="truncate">{m.media_name || (es ? "Archivo" : "File")}</span>
+        <span className="t-xs muted">{fmtBytes(m.media_size)}{failed ? (es ? " · no se pudo bajar" : " · couldn't download") : ""}</span>
+      </span>
+      <button className="btn btn-sm btn-outline" disabled={asked}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAsked(true); requestMediaFetch(m.id); }}>
+        {asked ? (es ? "Bajando…" : "Downloading…") : <><Icon name="download" size={14} />{es ? "Descargar" : "Download"}</>}
+      </button>
+    </span>
+  );
 }

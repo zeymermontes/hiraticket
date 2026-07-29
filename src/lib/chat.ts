@@ -73,6 +73,9 @@ export interface ChatMessage {
   media_mime: string | null;
   media_name: string | null;
   media_purged_at?: string | null; // 0066 — el archivo se purgó por peso+antigüedad
+  media_size?: number | null;        // 0067 — tamaño, para mostrarlo antes de bajar
+  media_pending?: boolean;           // 0067 — pesado: hay puntero pero aún no se baja
+  media_fetch_error?: string | null; // 0067 — "expired" si WhatsApp ya lo purgó
   reply_to: string | null;
   deleted: boolean;
   forwarded: boolean;
@@ -385,7 +388,7 @@ export async function getConversationMessages(
   };
   // media_purged_at (0066) va en su propio nivel: metiéndolo en MSG_FULL, un despliegue sin la
   // migración caería hasta MSG_BASE y se perderían reacciones, forwarded y edited.
-  let res = await q(MSG_FULL + ", media_purged_at, sender_name, sender_jid");
+  let res = await q(MSG_FULL + ", media_purged_at, media_size, media_fetch_error, media_ptr, sender_name, sender_jid");
   if (res.error) res = await q(MSG_FULL + ", sender_name, sender_jid");
   let messages: ChatMessage[];
   if (res.error) {
@@ -398,7 +401,8 @@ export async function getConversationMessages(
       messages = ((full.data ?? []) as unknown as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [], sender_name: null, sender_jid: null }));
     }
   } else {
-    messages = ((res.data ?? []) as unknown as ChatMessage[]).map((m) => ({ ...m, reactions: Array.isArray(m.reactions) ? m.reactions : [] }));
+    // media_ptr NO se manda al navegador (lleva la mediaKey del archivo): solo si está pendiente.
+    messages = ((res.data ?? []) as unknown as (ChatMessage & { media_ptr?: unknown })[]).map(({ media_ptr, ...m }) => ({ ...m, media_pending: !!media_ptr, reactions: Array.isArray(m.reactions) ? m.reactions : [] })) as ChatMessage[];
   }
   // Decrypt at-rest bodies (legacy plaintext passes through untouched).
   messages = messages.map((m) => ({ ...m, body: m.body ? decryptBody((m as unknown as { business_id?: string }).business_id ?? "", m.body) : m.body }));

@@ -501,3 +501,16 @@ export async function transferConv(
     text: label,
   });
 }
+
+/** Pide al worker que baje un adjunto que se dejó pendiente por pesado.
+ *
+ *  El worker es un background worker sin puerto HTTP, así que la petición viaja por la base con el
+ *  mismo mecanismo que editar/borrar: pending_op. El worker lo recoge en pollOps, baja el archivo y
+ *  rellena media_url — y el UPDATE llega al chat por realtime, sin que la UI tenga que sondear. */
+export async function requestMediaFetch(messageId: string): Promise<{ ok: boolean }> {
+  const { supabase } = await ctx();
+  const { error } = await supabase.from("messages")
+    .update({ pending_op: "fetch_media", media_fetch_error: null })
+    .eq("id", messageId).is("media_url", null);
+  return { ok: !error };
+}

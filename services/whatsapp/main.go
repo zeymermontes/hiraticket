@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1143,10 +1144,26 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		return
 	}
 
-	// Download + store media (if any).
+	// Media: los pesados NO se bajan. Se guarda el puntero y se materializan cuando alguien los
+	// abra; los que nadie abre nunca ocupan storage.
 	mediaURL := ""
+	var mediaPtr interface{}
+	var mediaSize interface{}
 	if mtype != "text" {
-		if data, derr := client.DownloadAny(ctx, msg); derr == nil && len(data) > 0 {
+		dl, kind, size := downloadableOf(msg)
+		if size > 0 {
+			mediaSize = int64(size)
+		}
+		if dl != nil && size >= bigMediaBytes {
+			mediaPtr = jsonStr(map[string]interface{}{
+				"direct_path":  dl.GetDirectPath(),
+				"media_key":    dl.GetMediaKey(),
+				"file_sha":     dl.GetFileSHA256(),
+				"file_enc_sha": dl.GetFileEncSHA256(),
+				"kind":         kind,
+			})
+			m.log.Infof("media %s deferred (%d bytes) — se bajará bajo demanda", waID, size)
+		} else if data, derr := client.DownloadAny(ctx, msg); derr == nil && len(data) > 0 {
 			path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, waID, extFromMime(mmime))
 			if u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream")); uerr == nil {
 				mediaURL = u
@@ -1172,9 +1189,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		}
 	}
 
-	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		s.BusinessID, convID, dir, mtype, encryptBody(s.BusinessID, body), state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID))
+	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid, media_ptr, media_size)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		s.BusinessID, convID, dir, mtype, encryptBody(s.BusinessID, body), state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID), mediaPtr, mediaSize)
 	// A resolved chat that gets a new message (either side) is reopened so it leaves the resolved
 	// bucket and the agent sees it — with the full prior history intact.
 	reopened := priorStatus == "resolved"
@@ -1202,6 +1219,103 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
+}
+
+
+// ---------------------------------------------------------------- media bajo demanda
+
+// bigMediaBytes: por encima de esto NO se bajan los bytes; se guarda solo el puntero de WhatsApp y
+// el archivo se materializa la primera vez que alguien lo abre. Los pesados que nadie abre nunca
+// llegan a ocupar storage.
+const bigMediaBytes = 20 * 1024 * 1024
+
+// mediaPointer son los datos mínimos para volver a bajar el archivo más tarde. Ocupa unos cientos
+// de bytes frente a decenas de MB.
+//
+// Vive con fecha de caducidad: WhatsApp purga su CDN (entrante ~7 días, saliente ~30) y después
+// esto devuelve 404 sin remedio. Es el precio de no guardar el archivo.
+type mediaPointer struct {
+	DirectPath  string `json:"direct_path"`
+	MediaKey    []byte `json:"media_key"`
+	FileSHA     []byte `json:"file_sha"`
+	FileEncSHA2 []byte `json:"file_enc_sha"`
+	Kind        string `json:"kind"` // image | video | audio | document | sticker
+}
+
+// downloadableOf devuelve la parte descargable del mensaje junto a su tamaño declarado.
+func downloadableOf(msg *waE2E.Message) (whatsmeow.DownloadableMessage, string, uint64) {
+	switch {
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage(), "image", msg.GetImageMessage().GetFileLength()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage(), "video", msg.GetVideoMessage().GetFileLength()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage(), "audio", msg.GetAudioMessage().GetFileLength()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage(), "document", msg.GetDocumentMessage().GetFileLength()
+	case msg.GetStickerMessage() != nil:
+		return msg.GetStickerMessage(), "sticker", msg.GetStickerMessage().GetFileLength()
+	}
+	return nil, "", 0
+}
+
+func mediaTypeOf(kind string) whatsmeow.MediaType {
+	switch kind {
+	case "image", "sticker":
+		return whatsmeow.MediaImage
+	case "video":
+		return whatsmeow.MediaVideo
+	case "audio":
+		return whatsmeow.MediaAudio
+	default:
+		return whatsmeow.MediaDocument
+	}
+}
+
+func mmsTypeOf(kind string) string {
+	switch kind {
+	case "image", "sticker":
+		return "image"
+	case "video":
+		return "video"
+	case "audio":
+		return "audio"
+	default:
+		return "document"
+	}
+}
+
+// fetchDeferredMedia baja un adjunto que se dejó pendiente y lo guarda. Lo dispara la app poniendo
+// pending_op='fetch_media'.
+func (m *Manager) fetchDeferredMedia(ctx context.Context, client *whatsmeow.Client, id, biz, waID string, ptrJSON string) {
+	var p mediaPointer
+	if err := json.Unmarshal([]byte(ptrJSON), &p); err != nil || p.DirectPath == "" {
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='bad-pointer' WHERE id=$1`, id)
+		return
+	}
+	data, err := client.DownloadMediaWithPath(ctx, p.DirectPath, p.FileEncSHA2, p.FileSHA, p.MediaKey, mediaTypeOf(p.Kind), mmsTypeOf(p.Kind), true)
+	if err != nil || len(data) == 0 {
+		// El caso frecuente es que WhatsApp ya lo purgó. Se distingue para que la UI pueda decir
+		// "caducó, pídelo de nuevo" en vez de un error genérico.
+		reason := "failed"
+		if err != nil && (strings.Contains(err.Error(), "404") || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410)) {
+			reason = "expired"
+		}
+		m.log.Errorf("deferred media %s: %v", id, err)
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error=$2 WHERE id=$1`, id, reason)
+		return
+	}
+	var mmime string
+	_ = m.db.QueryRowContext(ctx, `SELECT COALESCE(media_mime,'') FROM messages WHERE id=$1`, id).Scan(&mmime)
+	path := fmt.Sprintf("%s/in/%s.%s", biz, waID, extFromMime(mmime))
+	u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream"))
+	if uerr != nil {
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='upload' WHERE id=$1`, id)
+		return
+	}
+	// media_ptr se limpia: ya no hace falta y deja claro que el archivo está guardado.
+	m.exec(ctx, `UPDATE messages SET media_url=$2, media_ptr=NULL, media_fetch_error=NULL, pending_op=NULL WHERE id=$1`, id, u)
+	m.log.Infof("deferred media %s downloaded (%d bytes)", id, len(data))
 }
 
 // dayCfg is one weekday's business hours (message_hours, per-day schedule).
@@ -1688,15 +1802,15 @@ func attachContext(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 func (m *Manager) pollOps(ctx context.Context) {
 	for {
 		rows, err := m.db.QueryContext(ctx,
-			`SELECT id, business_id, conversation_id, body, wa_id, pending_op, COALESCE(react_emoji,''), direction
+			`SELECT id, business_id, conversation_id, body, wa_id, pending_op, COALESCE(react_emoji,''), direction, COALESCE(media_ptr::text,'')
 			   FROM messages WHERE pending_op IS NOT NULL AND wa_id IS NOT NULL LIMIT 30`)
 		if err == nil {
-			type op struct{ id, biz, conv, body, waID, op, react, dir string }
+			type op struct{ id, biz, conv, body, waID, op, react, dir, ptr string }
 			var ops []op
 			for rows.Next() {
 				var o op
 				var body sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op, &o.react, &o.dir) == nil {
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.waID, &o.op, &o.react, &o.dir, &o.ptr) == nil {
 					o.body = decryptBody(o.biz, body.String) // edits re-send the body to WhatsApp → plaintext
 					if o.op == "edit" && isEncryptedBody(body.String) && o.body == "" {
 						m.log.Errorf("cannot decrypt edit %s — MESSAGE_SECRET_KEY missing/mismatched; dropping the op", o.id)
@@ -1708,19 +1822,25 @@ func (m *Manager) pollOps(ctx context.Context) {
 			}
 			rows.Close()
 			for _, o := range ops {
-				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op, o.react, o.dir)
+				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op, o.react, o.dir, o.ptr)
 			}
 		}
 		time.Sleep(2 * time.Second)
 	}
 }
 
-func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op, react, dir string) {
+func (m *Manager) processOp(ctx context.Context, id, biz, conv, body, waID, op, react, dir, ptr string) {
 	m.mu.Lock()
 	client := m.byBiz[biz]
 	m.mu.Unlock()
 	if client == nil {
 		return // not connected — retry later
+	}
+	// Bajar un adjunto diferido no toca a WhatsApp como mensaje: no necesita el teléfono del
+	// contacto que sí exigen editar/borrar/reaccionar, así que se atiende antes de esa validación.
+	if op == "fetch_media" {
+		m.fetchDeferredMedia(ctx, client, id, biz, waID, ptr)
+		return
 	}
 	var phone sql.NullString
 	if err := m.db.QueryRowContext(ctx,
