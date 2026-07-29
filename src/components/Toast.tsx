@@ -15,6 +15,8 @@ export interface ToastInput {
   key?: string;
   /** Miniatura a la izquierda (sticker o foto): un "🩷 Sticker" no dice cuál te mandaron. */
   imageUrl?: string;
+  /** Acción al hacer clic, para lo que no es navegar (recargar, reintentar). Gana sobre `href`. */
+  onClick?: () => void;
 }
 interface Toast extends ToastInput { id: number }
 
@@ -75,9 +77,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastCard({ t, onClose }: { t: Toast; onClose: () => void }) {
   const router = useRouter();
   const kind = t.kind ?? "info";
-  const go = () => { if (t.href) { router.push(t.href); onClose(); } };
+  const go = t.onClick
+    ? () => { t.onClick!(); onClose(); }
+    : t.href ? () => { router.push(t.href!); onClose(); } : undefined;
   return (
-    <div className={"toast toast-" + kind + (t.href ? " toast-click" : "")} onClick={t.href ? go : undefined} role={t.href ? "button" : undefined}>
+    <div className={"toast toast-" + kind + (go ? " toast-click" : "")} onClick={go} role={go ? "button" : undefined}>
       {t.imageUrl
         ? <img src={t.imageUrl} alt="" className="toast-ic" style={{ objectFit: "contain", background: "var(--surface-2)" }} />
         : <span className="toast-ic"><Icon name={ICON[kind]} size={16} /></span>}

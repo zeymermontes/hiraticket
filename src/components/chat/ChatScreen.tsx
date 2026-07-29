@@ -36,6 +36,7 @@ const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending:
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
+import { isBuildStale } from "@/lib/buildSkew";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
@@ -770,6 +771,9 @@ export function ChatScreen({
     resyncRef.current = resync;
     const tick = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      // Con el build viejo las actions ya no existen: seguir sondeando solo gasta servidor y los
+      // errores acabarían en un catch vacío. BuildSkewGuard se encarga de recargar.
+      if (isBuildStale()) return;
       if (!realtimeHealthyRef.current || Date.now() - last >= 30000) resync(); // poll only while down; 30s backstop
     };
     const i = setInterval(tick, 4000);

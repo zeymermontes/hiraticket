@@ -6,6 +6,7 @@ import { Icon } from "@/components/Icon";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
+import { BuildSkewGuard } from "@/components/BuildSkewGuard";
 import { ConfirmProvider } from "@/components/Confirm";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import type { NotifPrefs } from "@/lib/notifPrefs";
@@ -309,6 +310,7 @@ export function Shell({
       <ToastProvider>
         <ConfirmProvider>
           <NavProgress />
+          <BuildSkewGuard />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} />
