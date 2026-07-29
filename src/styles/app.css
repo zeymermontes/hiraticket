@@ -152,6 +152,14 @@
   pointer-events: none;
 }
 
+/* Foto pesada y sin miniatura: no hay nada que pintar, así que se ofrece abrirla. */
+.media-tap {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  background: var(--surface-2); color: var(--text-muted);
+  font-size: 12px; font-weight: 600;
+}
+
 /* Progreso al abrir el original en el visor. Solo se ve cuando el archivo tarda de verdad. */
 .lb-progress {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);

@@ -84,10 +84,23 @@ function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string 
  */
 export function useCachedMedia(path: string | null | undefined, url: string | null | undefined): string | undefined {
   const [cached, setCached] = useState<string | null>(null);
-  // La URL firmada cambia en cada refetch. Va en un ref para que eso NO reinicie el efecto: una vez
-  // que tenemos los bytes, un token nuevo es irrelevante.
-  const urlRef = useRef(url);
-  urlRef.current = url;
+
+  // La URL firmada cambia en cada refetch, y devolverla tal cual era un error grave: el `src` del
+  // <img> cambiaba de cadena a media descarga, y ante un src nuevo el navegador CANCELA lo que iba
+  // bajando y empieza de cero. Con una foto de 16 MB y un detalle que se refresca cada pocos
+  // segundos, eso es un bucle donde la foto nunca termina —- se veía como la pestaña trabada, con
+  // decenas de peticiones canceladas y megas tirados a la basura.
+  //
+  // Se fija la primera URL vista para este archivo y no se suelta. El token sigue siendo válido
+  // (duran 7 días), así que no hay nada que ganar cambiándolo.
+  const pin = useRef<{ path?: string | null; url?: string }>({});
+  if (pin.current.path !== path || !pin.current.url) {
+    pin.current = { path, url: url ?? undefined };
+  }
+  const stableUrl = pin.current.url;
+
+  const urlRef = useRef(stableUrl);
+  urlRef.current = stableUrl;
 
   useEffect(() => {
     if (!path) { setCached(null); return; }
@@ -106,7 +119,7 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
     };
   }, [path]);
 
-  return cached ?? url ?? undefined;
+  return cached ?? stableUrl;
 }
 
 /**

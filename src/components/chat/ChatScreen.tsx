@@ -217,13 +217,16 @@ function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH
 }
 
 function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?: (id: string) => void }) {
+  const { lang } = useApp();
   const [loaded, setLoaded] = useState(false);
   const isSticker = m.type === "sticker";
   const box = isSticker ? mediaBox(m, 130, 130, 130, 130) : mediaBox(m, 240, 300, 220, 165);
   const thumb = thumbOf(m);
-  // Pesada Y con miniatura → en el hilo solo va la miniatura. Sin miniatura hay que cargar el
-  // original aunque pese, porque no hay nada más que mostrar (los mensajes viejos no la traen).
-  const heavy = !!thumb && (m.media_size ?? 0) > HEAVY_IMAGE_BYTES;
+  // Pesada → el original NO se carga en el hilo, se abre bajo demanda en el visor. Esto vale
+  // AUNQUE no haya miniatura: la regla anterior solo lo aplicaba con miniatura, y por eso una foto
+  // de 16 MB de un mensaje viejo seguía intentando cargarse entera en la burbuja. No se lograba
+  // nada con eso: tardaba una eternidad y de paso trababa la pestaña.
+  const heavy = (m.media_size ?? 0) > HEAVY_IMAGE_BYTES;
   // Solo para pintar. El href y el arrastre siguen con la URL firmada: un blob local no sirve
   // fuera de esta pestaña, y es lo que hace que "Guardar imagen como…" y arrastrar a otra app
   // sigan funcionando.
@@ -237,14 +240,19 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
       {...dragOutProps(url, m.media_mime, m.media_name)}>
       {/* La miniatura como fondo mientras carga: en vez del rectángulo gris ya se ve DE QUÉ es la
           foto, y al llegar la buena el cambio es imperceptible en vez de un salto. */}
-      {!loaded && (thumb
+      {!loaded && !src && (thumb
         ? <img src={thumb} alt="" aria-hidden className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", filter: "blur(6px)", transform: "scale(1.06)" }} />
         : <span className="media-skeleton" />)}
-      {/* decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB decodificada
-          en el hilo principal congela la interfaz entera mientras se abre. Así el navegador la
-          decodifica aparte y solo cuando está cerca de verse. */}
-      <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
-        decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+      {src
+        // decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB decodificada
+        // en el hilo principal congela la interfaz entera. Así el navegador la decodifica aparte y
+        // solo cuando está cerca de verse.
+        ? <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
+            decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+        // Pesada y sin miniatura (mensajes anteriores al cambio): no hay nada que mostrar y cargar
+        // el original en la burbuja sería peor que no mostrar nada. Se ofrece abrirla, que es donde
+        // sí hay barra de progreso.
+        : <span className="media-tap"><Icon name="download" size={18} />{lang === "es" ? "Ver foto" : "View photo"}</span>}
       {heavy && <span className="media-heavy">{fmtBytes(m.media_size ?? 0)}</span>}
     </a>
   );
