@@ -972,6 +972,14 @@ export function ChatScreen({
   // The open chat belongs to the current tab only if its (live) assignment matches it. This keeps
   // a leftover/default-open chat from another tab (e.g. an unassigned one while on "Míos") from
   // showing — we surface the "pick a conversation" indicator instead.
+  // Un chat que pasa a ser mío: la lista salta a "Míos" y el hilo abierto se queda donde está.
+  // Lo usan Aceptar y los dos Transferir (encabezado y panel), para que se comporten igual.
+  const acceptedToMine = useCallback((id: string) => {
+    setTab("mine");
+    setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d));
+    setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c)));
+  }, [meId]);
+
   const detailInView = useMemo(() => {
     if (!detail) return false;
     const assignee = (list.find((c) => c.id === detail.id)?.assignee_id) ?? detail.assignee_id;
@@ -1150,9 +1158,9 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} />}
-          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId}
-            onAccepted={(id) => { setTab("mine"); setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d)); setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c))); }} />
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} />}
+          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} meId={meId}
+            onAccepted={acceptedToMine} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
         </>
       ) : (
@@ -1223,7 +1231,7 @@ function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en";
 }
 
 /* ---------- Thread (right column) ---------- */
-export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean; onAccepted?: (convId: string) => void }) {
+export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating, meId, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean; meId?: string; onAccepted?: (convId: string) => void }) {
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const refresh = useChatRefresh();
@@ -1599,7 +1607,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
-        <TransferControl detail={detail} agents={agents} areas={areas} />
+        <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" disabled={pending} onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
@@ -1971,7 +1979,7 @@ export function MediaThumb({ file, onRemove }: { file: File; onRemove: () => voi
 }
 
 /* ---------- Transfer popover ---------- */
-function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents: Agent[]; areas: Area[] }) {
+function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; meId?: string; onAssignedToMe?: (convId: string) => void }) {
   const { lang } = useApp();
   const refresh = useChatRefresh();
   const patch = useChatPatch();
@@ -1987,7 +1995,13 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
       if (!(await ask(lockConfirmOpts(name, lang)))) return;
     }
     if (mode === "unassign") patch({ assignee_id: null, locked_to: null });
-    else if (mode === "agent") patch({ assignee_id: id, locked_to: null });
+    else if (mode === "agent") {
+      patch({ assignee_id: id, locked_to: null });
+      // Transferirte un chat a ti mismo lo saca de la pestaña donde estabas ("Sin asignar") y el
+      // hilo se quedaba huérfano en pantalla. Mismo trato que el botón Aceptar: la lista salta a
+      // "Míos" y el chat abierto se queda abierto, que es donde sigues trabajando.
+      if (meId && id === meId) onAssignedToMe?.(detail.id);
+    }
     else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
     start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
@@ -2031,7 +2045,7 @@ function TransferControl({ detail, agents, areas }: { detail: ConvDetail; agents
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -2230,7 +2244,10 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               if (!(await ask(lockConfirmOpts(name, lang)))) return false; // cancelled → keep the transfer modal open
             }
             if (dest.type === "unassign") patch({ assignee_id: null, locked_to: null });
-            else if (dest.type === "agent") patch({ assignee_id: dest.id, locked_to: null });
+            else if (dest.type === "agent") {
+              patch({ assignee_id: dest.id, locked_to: null });
+              if (dest.id === meId) onAssignedToMe?.(detail.id); // misma regla que el Transferir del encabezado
+            }
             else { const ar = areas.find((a) => a.id === dest.id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
             await transferConv(detail.id, dest.type, dest.id); refresh();
           }} />
