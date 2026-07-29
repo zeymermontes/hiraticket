@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useConfirm } from "@/components/Confirm";
+import { getMediaUsage, purgeOldLargeMedia, type MediaUsage } from "@/app/(app)/platform/media-actions";
 import type { PillColor } from "@/lib/types";
 import type { PlatformConsoleData, TenantDetail } from "@/lib/platform";
 import { updatePlan, extendSubscription, setBusinessPlan, setPluginStatus, setPluginAddonPrice } from "@/app/platform/actions";
@@ -87,6 +89,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
                   <Kpi icon="clock" label={lang === "es" ? "Pruebas" : "Trials"} value={t.trials} />
                   <Kpi icon="whatsapp" label={lang === "es" ? "WhatsApp" : "Connected"} value={t.connected} />
                 </div>
+                <StorageBlock lang={lang} />
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
                   <section className="ws-block">
                     <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Altas recientes" : "Recent signups"}</h4></div>
@@ -317,5 +320,89 @@ function TenantDrawer({ t, planName, plans, onClose }: { t: TenantDetail; planNa
         </div>
       </aside>
     </>
+  );
+}
+
+
+const MB = 1024 * 1024;
+const fmtSize = (b: number) => (b >= 1024 * MB ? `${(b / (1024 * MB)).toFixed(2)} GB` : `${Math.round(b / MB)} MB`);
+
+/** Uso de storage + purga de adjuntos pesados y viejos.
+ *
+ *  Se mide antes de ofrecer borrar: sin el número, "liberar espacio" es a ciegas. Y la purga pide
+ *  confirmación con la cifra exacta porque borra archivos de verdad, sin papelera. */
+function StorageBlock({ lang }: { lang: "es" | "en" }) {
+  const es = lang === "es";
+  const ask = useConfirm();
+  const [usage, setUsage] = useState<MediaUsage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+
+  const measure = async () => { setBusy(true); setDone(null); setUsage(await getMediaUsage()); setBusy(false); };
+
+  const purge = async () => {
+    if (!usage || usage.purgeFiles === 0) return;
+    const ok = await ask({
+      icon: "trash", danger: true,
+      title: es ? "Liberar espacio" : "Free up space",
+      message: es
+        ? `Se borran ${usage.purgeFiles} archivos (${fmtSize(usage.purgeBytes)}) de más de ${usage.minAgeDays} días y más de ${Math.round(usage.minBytes / MB)} MB. Los mensajes se conservan marcados como "ya no disponible". No se puede deshacer.`
+        : `${usage.purgeFiles} files (${fmtSize(usage.purgeBytes)}) older than ${usage.minAgeDays} days and over ${Math.round(usage.minBytes / MB)} MB will be deleted. Messages are kept, marked as unavailable. This can't be undone.`,
+      confirmLabel: es ? "Borrar" : "Delete",
+      cancelLabel: es ? "Volver" : "Back",
+    });
+    if (!ok) return;
+    setBusy(true);
+    const r = await purgeOldLargeMedia();
+    setBusy(false);
+    setDone(r.ok
+      ? (es ? `Listo: ${r.deleted} archivos, ${fmtSize(r.freedBytes)} liberados.` : `Done: ${r.deleted} files, ${fmtSize(r.freedBytes)} freed.`)
+      : (es ? `Error: ${r.error}` : `Error: ${r.error}`));
+    await measure();
+  };
+
+  return (
+    <section className="ws-block" style={{ marginBottom: 16 }}>
+      <div className="ws-block-head"><Icon name="layers" size={16} /><h4>{es ? "Almacenamiento" : "Storage"}</h4></div>
+      <div className="ws-block-body col gap-3">
+        {!usage ? (
+          <div className="row gap-2" style={{ alignItems: "center" }}>
+            <span className="muted t-sm grow">{es ? "Mide cuánto ocupan los adjuntos antes de borrar nada." : "Measure attachment usage before deleting anything."}</span>
+            <button className="btn btn-sm btn-outline" disabled={busy} onClick={measure}>{busy ? (es ? "Midiendo…" : "Measuring…") : (es ? "Medir" : "Measure")}</button>
+          </div>
+        ) : (
+          <>
+            <div className="row gap-4" style={{ flexWrap: "wrap" }}>
+              <div>
+                <div className="t-xs muted">{es ? "Archivos" : "Files"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{usage.totalFiles}</div>
+              </div>
+              <div>
+                <div className="t-xs muted">{es ? "Espacio usado" : "Used"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{fmtSize(usage.totalBytes)}</div>
+              </div>
+              <div>
+                <div className="t-xs muted">{es ? `Purgables (>${Math.round(usage.minBytes / MB)} MB y >${usage.minAgeDays} días)` : `Purgeable (>${Math.round(usage.minBytes / MB)} MB, >${usage.minAgeDays} days)`}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: usage.purgeFiles ? "var(--amber)" : "var(--text)" }}>
+                  {usage.purgeFiles} · {fmtSize(usage.purgeBytes)}
+                </div>
+              </div>
+            </div>
+            {done && <div className="t-sm" style={{ color: "var(--green)" }}>{done}</div>}
+            <div className="row gap-2">
+              <button className="btn btn-sm btn-outline" disabled={busy} onClick={measure}>{es ? "Volver a medir" : "Re-measure"}</button>
+              <button className="btn btn-sm btn-danger" disabled={busy || usage.purgeFiles === 0} onClick={purge}>
+                <Icon name="trash" size={14} />{es ? "Liberar espacio" : "Free up space"}
+              </button>
+            </div>
+            <p className="t-xs muted" style={{ margin: 0 }}>
+              {es
+                ? "Solo se borran adjuntos pesados y antiguos: son pocos archivos y casi todo el espacio. El mensaje se conserva marcado como “ya no disponible” para no perder el rastro."
+                : "Only large, old attachments are removed: few files, most of the space. The message is kept, marked unavailable."}
+            </p>
+          </>
+        )}
+      </div>
+    </section>
   );
 }

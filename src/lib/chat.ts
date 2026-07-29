@@ -72,6 +72,7 @@ export interface ChatMessage {
   media_url: string | null;
   media_mime: string | null;
   media_name: string | null;
+  media_purged_at?: string | null; // 0066 — el archivo se purgó por peso+antigüedad
   reply_to: string | null;
   deleted: boolean;
   forwarded: boolean;
@@ -382,7 +383,10 @@ export async function getConversationMessages(
     if (opts?.before) b = b.lt("created_at", opts.before);
     return b;
   };
-  const res = await q(MSG_FULL + ", sender_name, sender_jid");
+  // media_purged_at (0066) va en su propio nivel: metiéndolo en MSG_FULL, un despliegue sin la
+  // migración caería hasta MSG_BASE y se perderían reacciones, forwarded y edited.
+  let res = await q(MSG_FULL + ", media_purged_at, sender_name, sender_jid");
+  if (res.error) res = await q(MSG_FULL + ", sender_name, sender_jid");
   let messages: ChatMessage[];
   if (res.error) {
     // sender_name/sender_jid (0032) absent → retry full without them, then the base columns.

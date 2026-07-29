@@ -390,6 +390,16 @@ export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: stri
       </span>
     );
   }
+  // Purgado por antigüedad: el mensaje se conserva para no perder el rastro de que hubo un
+  // archivo, pero el archivo ya no está. Se dice explícito en vez de dejar un hueco.
+  if ((m as unknown as { media_purged_at?: string | null }).media_purged_at) {
+    return (
+      <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px", color: "var(--text-faint)", fontSize: 12.5 }}>
+        <Icon name="file" size={15} />
+        <span>{m.media_name || "Archivo"} · ya no disponible, pídelo de nuevo</span>
+      </span>
+    );
+  }
   const url = m.media_url ?? undefined;
   if (!url) return null;
   if (m.type === "image" || m.type === "sticker") return <MediaImage m={m} url={url} onImage={onImage} />;
@@ -1661,7 +1671,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   : m.type === "contact" ? <ContactBlock m={m} />
                     : (
                       <>
-                        {(m.media_url || m.type === "call") && <MediaBlock m={m} onImage={openLightbox} />}
+                        {(m.media_url || m.type === "call" || m.media_purged_at) && <MediaBlock m={m} onImage={openLightbox} />}
                         {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
