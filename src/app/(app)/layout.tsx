@@ -10,6 +10,7 @@ import { AppProvider } from "@/components/AppContext";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { InvitePopup } from "@/components/InvitePopup";
 import { getMyPendingInvite } from "@/app/(app)/invites/actions";
+import { parseNotifPrefs } from "@/lib/notifPrefs";
 
 export default async function AppLayout({
   children,
@@ -45,7 +46,7 @@ export default async function AppLayout({
 
   // Display name + avatar from the profile (matches @mention tokens + agent list), with fallbacks.
   let prof: Record<string, unknown> | null = null;
-  const pr = await supabase.from("profiles").select("full_name, avatar_color, avatar_url").eq("id", user.id).maybeSingle();
+  const pr = await supabase.from("profiles").select("full_name, avatar_color, avatar_url, notif_prefs").eq("id", user.id).maybeSingle();
   prof = pr.error
     ? ((await supabase.from("profiles").select("full_name, avatar_color").eq("id", user.id).maybeSingle()).data as Record<string, unknown> | null)
     : (pr.data as Record<string, unknown> | null);
@@ -79,6 +80,7 @@ export default async function AppLayout({
       objectName={objectName}
       personal={business.mode === "personal"}
       isAdmin={mem?.role === "admin"}
+      notifPrefs={parseNotifPrefs(prof?.notif_prefs)}
     >
       {children}
     </Shell>

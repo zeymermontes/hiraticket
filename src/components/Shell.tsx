@@ -8,6 +8,7 @@ import { AppProvider, useApp } from "@/components/AppContext";
 import { ToastProvider } from "@/components/Toast";
 import { ConfirmProvider } from "@/components/Confirm";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
+import type { NotifPrefs } from "@/lib/notifPrefs";
 import { NavProgress } from "@/components/NavProgress";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { clearCache } from "@/lib/localCache";
@@ -247,6 +248,7 @@ function TopBar({ notifications, connected, businessId }: { notifications: Notif
 export function Shell({
   user,
   businessId,
+  notifPrefs,
   badges = {},
   secondaryBadges = {},
   notifications = [],
@@ -258,6 +260,7 @@ export function Shell({
 }: {
   user: ShellUser;
   businessId: string;
+  notifPrefs?: NotifPrefs;
   badges?: Record<string, number | null>;
   secondaryBadges?: Record<string, number | null>;
   notifications?: Notif[];
@@ -306,7 +309,7 @@ export function Shell({
       <ToastProvider>
         <ConfirmProvider>
           <NavProgress />
-          <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} onChange={refreshBadges} />
+          <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} />
             <div className="main">

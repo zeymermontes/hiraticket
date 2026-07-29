@@ -5,6 +5,7 @@ import { useToast } from "@/components/Toast";
 import { getToastPreview } from "@/app/(app)/chat/actions";
 import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } from "@/lib/notify";
 import { keepSubscribed } from "@/lib/realtime";
+import { DEFAULT_NOTIF_PREFS, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
 
 // Realtime payloads carry the STORED body — encrypted at rest (encm:v1:) for new messages. Use the
 // payload text only when it's legacy plaintext; otherwise fetch the decrypted preview server-side.
@@ -17,11 +18,14 @@ async function previewOf(kind: "wa" | "internal", id: string | undefined, raw: s
 
 /** Global realtime watcher: shows toasts for new inbound messages and @mentions, and tells the
  *  Shell to refresh nav badges / the bell (debounced) — without a full route refresh. */
-export function RealtimeNotifier({ businessId, userId, myName, onChange }: { businessId: string; userId: string; myName: string; onChange?: () => void }) {
+export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_NOTIF_PREFS, onChange }: { businessId: string; userId: string; myName: string; prefs?: NotifPrefs; onChange?: () => void }) {
   const { push } = useToast();
   const tRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // En un ref: cambiar una preferencia no debe recrear el canal de realtime.
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
 
   // El permiso se pide al primer clic/tecla, no al montar: los navegadores ignoran o penalizan
   // la petición sin gesto previo.
@@ -42,6 +46,7 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         if (m.direction !== "in" || !m.conversation_id) return;
 
         if (m.type === "call") {
+          if (!notifOn(prefsRef.current, "calls")) return;
           const ringing = m.state === "ringing";
           let name = "";
           try {
@@ -64,12 +69,19 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         // Look up who it's from so the toast leads with the contact's name. The embedded resource
         // can come back as an object OR a single-element array depending on relationship inference.
         let name = "";
+        let assignee: string | null = null;
         try {
-          const { data } = await supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", m.conversation_id).maybeSingle();
-          const c = (data as { contact?: unknown } | null)?.contact;
+          const { data } = await supabase.from("conversations").select("assignee_id, contact:contacts(name, phone)").eq("id", m.conversation_id).maybeSingle();
+          const row = data as { assignee_id?: string | null; contact?: unknown } | null;
+          assignee = row?.assignee_id ?? null;
+          const c = row?.contact;
           const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
           name = (cc?.name || cc?.phone || "").trim();
         } catch {}
+        // Las preferencias solo contemplan "míos" y "sin asignar": un chat que ya lleva otro agente
+        // no entra en ninguna de las dos, así que no interrumpe.
+        const bucket = assignee === userId ? "mine" : assignee === null ? "unassigned" : null;
+        if (!bucket || !notifOn(prefsRef.current, bucket)) return;
         if (!name) name = "Nuevo mensaje";
         const typeLabel: Record<string, string> = { image: "📷 Foto", sticker: "🩷 Sticker", audio: "🎤 Audio", video: "🎥 Video", document: "📄 Documento", location: "📍 Ubicación", contact: "👤 Contacto" };
         const body = await previewOf("wa", m.id, m.body);
@@ -85,6 +97,7 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         const m = payload.new as { id?: string; author_id?: string; body?: string; mentions?: string[]; channel?: string };
         if (m.author_id === userId) return; // not your own send
         const mentionedMe = Array.isArray(m.mentions) && m.mentions.includes(userId);
+        if (!notifOn(prefsRef.current, mentionedMe ? "mentions" : "internal")) return;
         const channel = m.channel ?? "team";
 
         // Quién escribe. Sin esto el toast decía solo "Mensaje interno" y no se sabía de quién era
@@ -114,9 +127,44 @@ export function RealtimeNotifier({ businessId, userId, myName, onChange }: { bus
         alertIncoming({ title, body: body.slice(0, 120), href, tag: `int-${channel}` });
         notify();
       })
+      // Transferencias hacia mí. Antes no avisaba nada: te enterabas al entrar al chat.
+      // Se escucha `events` (0068 lo metió a realtime y le añadió target_id) porque una
+      // actualización de `conversations` no dice QUIÉN te la pasó, y sin replica identity full
+      // tampoco deja ver el asignado anterior para saber si de verdad cambió.
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "events", filter: `business_id=eq.${businessId}` }, async (payload) => {
+        const e = payload.new as { kind?: string; target_id?: string | null; actor_id?: string | null; parent_type?: string; parent_id?: string };
+        if (e.kind !== "swap" || e.target_id !== userId || e.actor_id === userId) return;
+        if (!notifOn(prefsRef.current, "transfers")) return;
+        let who = "", client = "";
+        try {
+          const [{ data: prof }, { data: conv }] = await Promise.all([
+            supabase.from("profiles").select("full_name").eq("id", e.actor_id ?? "").maybeSingle(),
+            supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", e.parent_id ?? "").maybeSingle(),
+          ]);
+          who = ((prof as { full_name?: string } | null)?.full_name ?? "").trim();
+          const c = (conv as { contact?: unknown } | null)?.contact;
+          const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
+          client = (cc?.name || cc?.phone || "").trim();
+        } catch {}
+        if (!who) who = "Alguien";
+        if (!client) client = "un cliente";
+        // Fijo: una transferencia es trabajo que pasa a ser tuyo; perderla por mirar a otro lado
+        // seis segundos es justo lo que hay que evitar.
+        push({
+          kind: "mention",
+          title: `${who} te transfirió un chat`,
+          message: client,
+          href: `/chat?c=${e.parent_id}`,
+          sticky: true,
+          key: `xfer-${e.parent_id}`,
+        });
+        alertIncoming({ title: `${who} te transfirió un chat`, body: client, href: `/chat?c=${e.parent_id}`, tag: `xfer-${e.parent_id}` });
+        notify();
+      })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "notes", filter: `business_id=eq.${businessId}` }, (payload) => {
         const n = payload.new as { author_id?: string; body?: string; parent_type?: string; parent_id?: string };
         if (!n.body || n.author_id === userId || !myName) return;
+        if (!notifOn(prefsRef.current, "mentions")) return;
         if (n.body.includes("@" + myName)) {
           const href = n.parent_type === "order" ? `/orders?order=${n.parent_id}` : `/chat?c=${n.parent_id}`;
           push({ kind: "mention", title: "Te mencionaron", message: n.body.slice(0, 90), href });

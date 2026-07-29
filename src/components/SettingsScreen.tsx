@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { clearCache } from "@/lib/localCache";
 import { Icon } from "@/components/Icon";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled } from "@/lib/notify";
+import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
+import { loadNotifPrefs, saveNotifPrefs } from "@/app/(app)/settings/notif-actions";
 import { useConfirm } from "@/components/Confirm";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -238,6 +240,7 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
               </div>
             </div>
             <DesktopNotifRow lang={lang} />
+            <NotifPrefsRows lang={lang} />
           </div>
         </section>
 
@@ -304,5 +307,63 @@ function DesktopNotifRow({ lang }: { lang: "es" | "en" }) {
         </button>
       )}
     </div>
+  );
+}
+
+
+/** Qué avisa la app, por usuario (0068).
+ *
+ *  Separado del sonido y de las notificaciones del sistema porque son cosas distintas: aquello
+ *  depende del dispositivo (permiso, bocinas) y esto de la persona — se guarda en su perfil y la
+ *  sigue a cualquier navegador donde entre.
+ *
+ *  "Todas" es un maestro: en off nada avisa, y los demás se ven apagados sin perder su valor, para
+ *  que al volver a encender quede como estaba. */
+function NotifPrefsRows({ lang }: { lang: "es" | "en" }) {
+  const es = lang === "es";
+  const [prefs, setPrefs] = useState<NotifPrefs>(DEFAULT_NOTIF_PREFS);
+  const [ready, setReady] = useState(false);
+  useEffect(() => { loadNotifPrefs().then((p) => { if (p) setPrefs(p); setReady(true); }).catch(() => setReady(true)); }, []);
+
+  const set = (patch: Partial<NotifPrefs>) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next);           // optimista: el interruptor responde al instante
+    saveNotifPrefs(next).catch(() => {});
+  };
+
+  const ROWS: { k: Exclude<keyof NotifPrefs, "all">; es: string; en: string; hintEs: string; hintEn: string }[] = [
+    { k: "unassigned", es: "Sin asignar", en: "Unassigned", hintEs: "Mensajes en chats que nadie ha tomado", hintEn: "Messages in chats nobody picked up" },
+    { k: "mine", es: "Mis conversaciones", en: "My chats", hintEs: "Mensajes en chats asignados a ti", hintEn: "Messages in chats assigned to you" },
+    { k: "internal", es: "Mensajes internos", en: "Internal messages", hintEs: "Canal de equipo y directos", hintEn: "Team channel and DMs" },
+    { k: "mentions", es: "Menciones internas", en: "Internal mentions", hintEs: "Cuando te nombran con @", hintEn: "When someone @-mentions you" },
+    { k: "calls", es: "Llamadas", en: "Calls", hintEs: "Llamadas entrantes y perdidas de WhatsApp", hintEn: "Incoming and missed WhatsApp calls" },
+    { k: "transfers", es: "Transferencias a mí", en: "Transfers to me", hintEs: "Cuando alguien te pasa un chat", hintEn: "When someone hands you a chat" },
+  ];
+
+  return (
+    <>
+      <div className="row gap-2" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+        <span className="grow">
+          <strong>{es ? "Todas las notificaciones" : "All notifications"}</strong>
+          <span className="t-xs muted" style={{ display: "block" }}>{es ? "Apágalo para no recibir ninguna" : "Turn off to receive none"}</span>
+        </span>
+        <div className="seg">
+          <button className={prefs.all ? "on" : ""} disabled={!ready} onClick={() => set({ all: true })}>{es ? "Activadas" : "On"}</button>
+          <button className={!prefs.all ? "on" : ""} disabled={!ready} onClick={() => set({ all: false })}><Icon name="x" size={13} />{es ? "Apagadas" : "Off"}</button>
+        </div>
+      </div>
+      {ROWS.map((r) => (
+        <div key={r.k} className="row gap-2" style={{ opacity: prefs.all ? 1 : 0.45, paddingLeft: 10 }}>
+          <span className="grow">
+            {es ? r.es : r.en}
+            <span className="t-xs muted" style={{ display: "block" }}>{es ? r.hintEs : r.hintEn}</span>
+          </span>
+          <div className="seg seg-sm">
+            <button className={prefs[r.k] ? "on" : ""} disabled={!ready || !prefs.all} onClick={() => set({ [r.k]: true } as Partial<NotifPrefs>)}>{es ? "Sí" : "On"}</button>
+            <button className={!prefs[r.k] ? "on" : ""} disabled={!ready || !prefs.all} onClick={() => set({ [r.k]: false } as Partial<NotifPrefs>)}>{es ? "No" : "Off"}</button>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }

@@ -476,12 +476,16 @@ export async function transferConv(
   // A manual transfer is a deliberate reassignment, so it releases any "mantener conmigo" lock.
   // Build the activity label with the destination (agent name / area name) so the log shows who.
   let label = "Devuelto a sin asignar";
+  // A quién queda asignado. Se guarda el ID (no solo el nombre en el texto) para poder avisarle
+  // solo a esa persona: con el nombre suelto, nadie puede saber si el destinatario es él.
+  let targetId: string | null = null;
   if (mode === "unassign") {
     await supabase.from("conversations").update({ assignee_id: null, locked_to: null }).eq("id", convId);
   } else if (mode === "agent") {
     await supabase.from("conversations").update({ assignee_id: destId, locked_to: null }).eq("id", convId);
     const { data: p } = await supabase.from("profiles").select("full_name").eq("id", destId).maybeSingle();
     label = `Transferido a ${(p?.full_name as string) || "un agente"}`;
+    targetId = destId;
   } else {
     // Route to the area's default agent, if set.
     const { data: area } = await supabase
@@ -491,15 +495,12 @@ export async function transferConv(
       .update({ area_id: destId, assignee_id: (area?.route_to as string) ?? null, locked_to: null })
       .eq("id", convId);
     label = `Transferido al área ${(area?.name as string) ?? ""}`.trim();
+    targetId = (area?.route_to as string) ?? null; // el área puede enrutar a un agente concreto
   }
-  await supabase.from("events").insert({
-    business_id: businessId,
-    parent_type: "conversation",
-    parent_id: convId,
-    actor_id: userId,
-    kind: "swap",
-    text: label,
-  });
+  const row = { business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: label };
+  // target_id es 0068 — si aún no está aplicada, el evento se guarda igual sin él.
+  const { error } = await supabase.from("events").insert({ ...row, target_id: targetId });
+  if (error) await supabase.from("events").insert(row);
 }
 
 /** Pide al worker que baje un adjunto que se dejó pendiente por pesado.
