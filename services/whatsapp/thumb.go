@@ -184,7 +184,7 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 			 WHERE type = 'image'
 			   AND media_url IS NOT NULL
 			   AND media_purged_at IS NULL
-			   AND (meta IS NULL OR meta->>'thumb' IS NULL)
+			   AND ((meta IS NULL OR meta->>'thumb' IS NULL) OR media_size IS NULL)
 			 ORDER BY created_at DESC
 			 LIMIT $1`, backfillBatch)
 		if err != nil {
@@ -222,8 +222,13 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 			} else if cerr == nil {
 				m.log.Infof("thumb backfill: %s saltada, %dx%d es demasiado para decodificar aquí", j.id, cfg.Width, cfg.Height)
 			}
-			// Aunque salga "" se escribe: deja constancia de que ya se intentó.
-			m.exec(ctx, `UPDATE messages SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text) WHERE id = $1`, j.id, t)
+			// Aunque la miniatura salga "" se escribe: deja constancia de que ya se intentó. Y de paso
+			// se llena media_size, que en los mensajes viejos venía nulo (la columna llegó con 0067):
+			// sin el tamaño la interfaz no sabe que la foto es pesada y la carga entera en la burbuja.
+			m.exec(ctx, `UPDATE messages
+			                SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text),
+			                    media_size = COALESCE(media_size, $3)
+			              WHERE id = $1`, j.id, t, int64(len(data)))
 			if t != "" {
 				done++
 			} else {

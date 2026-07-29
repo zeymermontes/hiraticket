@@ -39,6 +39,7 @@ import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
+import { timedClick } from "@/lib/timing";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -238,21 +239,26 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
     <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={{ ...box, cursor: "zoom-in" }}
       onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
       {...dragOutProps(url, m.media_mime, m.media_name)}>
-      {/* La miniatura como fondo mientras carga: en vez del rectángulo gris ya se ve DE QUÉ es la
-          foto, y al llegar la buena el cambio es imperceptible en vez de un salto. */}
-      {!loaded && !src && (thumb
-        ? <img src={thumb} alt="" aria-hidden className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", filter: "blur(6px)", transform: "scale(1.06)" }} />
-        : <span className="media-skeleton" />)}
-      {src
-        // decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB decodificada
-        // en el hilo principal congela la interfaz entera. Así el navegador la decodifica aparte y
-        // solo cuando está cerca de verse.
-        ? <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
+      {src ? (
+        <>
+          {/* El relleno mientras carga. Con miniatura ya se ve DE QUÉ es la foto y el cambio a la
+              buena es imperceptible; sin ella, el rectángulo animado de siempre. Va SIEMPRE que
+              haya algo cargando: el <img> arranca en opacity 0, así que sin esto la burbuja se
+              queda completamente vacía mientras baja. */}
+          {!loaded && (thumb
+            ? <img src={thumb} alt="" aria-hidden className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", filter: "blur(6px)", transform: "scale(1.06)" }} />
+            : <span className="media-skeleton" />)}
+          {/* decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB
+              decodificada en el hilo principal congela la interfaz entera. Así el navegador la
+              decodifica aparte y solo cuando está cerca de verse. */}
+          <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
             decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
-        // Pesada y sin miniatura (mensajes anteriores al cambio): no hay nada que mostrar y cargar
-        // el original en la burbuja sería peor que no mostrar nada. Se ofrece abrirla, que es donde
-        // sí hay barra de progreso.
-        : <span className="media-tap"><Icon name="download" size={18} />{lang === "es" ? "Ver foto" : "View photo"}</span>}
+        </>
+      ) : (
+        // Pesada y sin miniatura: no hay nada que pintar, y cargar el original en la burbuja sería
+        // peor que no mostrar nada. Se ofrece abrirla, que es donde sí hay barra de progreso.
+        <span className="media-tap"><Icon name="download" size={18} />{lang === "es" ? "Ver foto" : "View photo"}</span>
+      )}
       {heavy && <span className="media-heavy">{fmtBytes(m.media_size ?? 0)}</span>}
     </a>
   );
@@ -1698,13 +1704,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         {detail.status !== "resolved" ? (
           <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
-            onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}>
+            onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" onClick={() => { onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); refresh(); }); }}>
+          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); t.done(); refresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
@@ -2098,7 +2104,8 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
       if (meId && id === meId) onAssignedToMe?.(detail.id);
     }
     else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
-    start(async () => { await transferConv(detail.id, mode, id); refresh(); });
+    const t = timedClick(`transferir(${mode})`);
+    start(async () => { await transferConv(detail.id, mode, id); t.done(); refresh(); t.settled(); });
   }
 
   return (
@@ -2377,8 +2384,8 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
                     <Icon name="lock" />{lang === "es" ? "Mantener conmigo" : "Keep with me"}
                   </button>}
               {detail.status === "resolved"
-                ? <button className="act full" onClick={() => { patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); refresh(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); refresh(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" onClick={() => { const t = timedClick("reabrir"); patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" onClick={() => { const t = timedClick("resolver(panel)"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); refresh(); t.settled(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>
