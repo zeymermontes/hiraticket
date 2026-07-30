@@ -2594,7 +2594,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
       {showNewTask && (
-        <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={products} contacts={[]}
+        <NewOrderModal embedded businessId={businessId} areas={areas} stages={stages} products={products} contacts={[]} doneFromStageId={doneFromStageId}
           // El id, no solo el nombre: el chat SABE de qué contacto se trata, y resolver por nombre
           // en el servidor puede caer en un homónimo (o crear uno nuevo sin conversación).
           defaultContact={detail.contact?.name ?? ""} defaultContactId={detail.contact?.id ?? null} invoice={invoice}

@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
-import { doneStageNames } from "@/lib/doneStage";
+import { doneStageNames, defaultDoneStageName } from "@/lib/doneStage";
 import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -306,6 +306,7 @@ export function OrdersTable({
           businessId={businessId}
           areas={areas}
           stages={stages}
+          doneFromStageId={doneFromStageId}
           defaultContact={defaultContact}
           products={products}
           contacts={contacts}
@@ -354,11 +355,12 @@ export function OrdersTable({
 }
 
 export function NewOrderModal({
-  businessId, areas, stages, onClose, defaultContact, defaultContactId, products, contacts, embedded, onCreated, invoice,
+  businessId, areas, stages, onClose, defaultContact, defaultContactId, products, contacts, embedded, onCreated, invoice, doneFromStageId = null,
 }: {
   businessId: string;
   areas: Area[];
   stages: Stage[];
+  doneFromStageId?: string | null; // default del negocio (0072) — solo para NOMBRARLO en el dropdown
   onClose: () => void;
   defaultContact?: string;
   defaultContactId?: string | null; // abierto desde un chat: el contacto ya se conoce por id
@@ -539,7 +541,7 @@ export function NewOrderModal({
           {dueAt && (
             <div className="grow"><label className="lbl">{lang === "es" ? "Sale de la agenda en" : "Leaves the agenda at"}</label>
               <select className="select" style={{ width: "100%" }} value={doneFrom} onChange={(e) => setDoneFrom(e.target.value)}>
-                <option value="">{lang === "es" ? "Por defecto del negocio" : "Business default"}</option>
+                <option value="">{(() => { const n = defaultDoneStageName(stages, doneFromStageId); return lang === "es" ? `Por defecto del negocio${n ? ` (${n})` : ""}` : `Business default${n ? ` (${n})` : ""}`; })()}</option>
                 {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
               </select>
             </div>
