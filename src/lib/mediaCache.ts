@@ -22,6 +22,14 @@ import { useEffect, useRef, useState } from "react";
 /** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
 const WORKER_URL = "/media-worker.js?v=3";
 
+/**
+ * Se dispara cuando el visor termina de guardar un archivo (detail = la ruta). Los peek del hilo lo
+ * escuchan para volver a mirar el caché: sin esto, la burbuja seguía en miniatura o en "Ver foto"
+ * hasta re-abrir la conversación, aunque los bytes ya estuvieran en el dispositivo —- que era
+ * exactamente lo que se pedía evitar.
+ */
+const CACHED_EVENT = "ht:mediacached";
+
 type Reply =
   | { id: number; type: "blob"; blob: Blob }
   | { id: number; type: "progress"; pct: number | null }
@@ -102,6 +110,8 @@ export function useCachedMedia(
 ): { src: string | undefined; tooBigBytes: number } {
   const [cached, setCached] = useState<string | null>(null);
   const [tooBigBytes, setTooBig] = useState(0);
+  // Sube cuando el visor guarda ESTE archivo: relanza el peek para pintar la versión nítida.
+  const [tick, setTick] = useState(0);
 
   // La URL firmada cambia en cada refetch, y devolverla tal cual era un error grave: el `src` del
   // <img> cambiaba de cadena a media descarga, y ante un src nuevo el navegador CANCELA lo que iba
@@ -121,6 +131,13 @@ export function useCachedMedia(
   urlRef.current = stableUrl;
 
   useEffect(() => {
+    if (!path || mode !== "peek") return;
+    const onCached = (e: Event) => { if ((e as CustomEvent).detail === path) setTick((t) => t + 1); };
+    window.addEventListener(CACHED_EVENT, onCached);
+    return () => window.removeEventListener(CACHED_EVENT, onCached);
+  }, [path, mode]);
+
+  useEffect(() => {
     if (!path) { setCached(null); return; }
     let alive = true;
     let objectUrl: string | null = null;
@@ -137,7 +154,7 @@ export function useCachedMedia(
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path, mode]);
+  }, [path, mode, tick]);
 
   // En peek, si no estaba en caché no hay nada que devolver: caer a la URL firmada la bajaría,
   // que es exactamente lo que peek existe para no hacer.
@@ -155,7 +172,10 @@ export function useCachedMedia(
  */
 export async function fetchWithProgress(path: string | null | undefined, url: string, onProgress: (pct: number | null) => void): Promise<string | null> {
   const { blob } = await ask("get", path, url, onProgress);
-  if (blob) return URL.createObjectURL(blob);
+  if (blob) {
+    if (path) window.dispatchEvent(new CustomEvent(CACHED_EVENT, { detail: path }));
+    return URL.createObjectURL(blob);
+  }
   // Sin worker (o si falló): que el <img> lo intente con la URL firmada es mejor que no mostrar nada.
   return null;
 }

@@ -1222,9 +1222,11 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			} else {
 				m.log.Errorf("media upload: %v", uerr)
 			}
-			// Miniatura propia si WhatsApp no mandó la suya. Tenemos los bytes en claro justo aquí,
-			// así que es el único momento en que sale gratis —- después habría que volver a bajarlos.
-			if mtype == "image" && !hasThumb(meta) {
+			// Miniatura propia SIEMPRE que tengamos los bytes, aunque WhatsApp haya mandado la suya:
+			// la de WhatsApp es una estampilla (~34x60 px) y en la burbuja se ve destrozada —- fue
+			// exactamente el "se ve muy muy mal". La suya queda solo de respaldo para los diferidos
+			// (>20MB), donde no hay bytes con qué generar la nuestra.
+			if mtype == "image" {
 				if t := makeThumb(data); t != "" {
 					meta = withThumbJSON(meta, t)
 				}

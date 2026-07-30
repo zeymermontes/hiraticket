@@ -79,6 +79,10 @@ func withThumbJSON(metaJSON, thumb string) string {
 		_ = json.Unmarshal([]byte(metaJSON), &m)
 	}
 	m["thumb"] = thumb
+	// thumbv distingue nuestra miniatura (448px) de la estampilla de WhatsApp (~34x60), que se
+	// guarda igual como respaldo en los diferidos. El rescate re-procesa todo lo que no tenga
+	// thumbv: así las estampillas viejas se regeneran nítidas, y lo nuestro no se toca dos veces.
+	m["thumbv"] = 2
 	return jsonStr(m)
 }
 
@@ -185,7 +189,7 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 			 WHERE type = 'image'
 			   AND media_url IS NOT NULL
 			   AND media_purged_at IS NULL
-			   AND ((meta IS NULL OR meta->>'thumb' IS NULL) OR media_size IS NULL)
+			   AND (meta IS NULL OR meta->>'thumbv' IS NULL OR media_size IS NULL)
 			 ORDER BY created_at DESC
 			 LIMIT $1`, backfillBatch)
 		if err != nil {
@@ -213,7 +217,10 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 				// El archivo ya no está (purgado, borrado a mano). Se marca con thumb vacío para no
 				// volver a intentarlo cada ronda —- si no, la consulta lo devolvería para siempre y
 				// el rescate nunca avanzaría.
-				m.exec(ctx, `UPDATE messages SET meta = COALESCE(meta, '{}'::jsonb) || '{"thumb":""}'::jsonb WHERE id = $1`, j.id)
+				m.exec(ctx, `UPDATE messages
+				                SET meta = COALESCE(meta, '{}'::jsonb) || '{"thumb":"","thumbv":2}'::jsonb,
+				                    media_size = COALESCE(media_size, 0)
+				              WHERE id = $1`, j.id)
 				skipped++
 				continue
 			}
@@ -227,7 +234,7 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 			// se llena media_size, que en los mensajes viejos venía nulo (la columna llegó con 0067):
 			// sin el tamaño la interfaz no sabe que la foto es pesada y la carga entera en la burbuja.
 			m.exec(ctx, `UPDATE messages
-			                SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text),
+			                SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text, 'thumbv', 2),
 			                    media_size = COALESCE(media_size, $3)
 			              WHERE id = $1`, j.id, t, int64(len(data)))
 			if t != "" {

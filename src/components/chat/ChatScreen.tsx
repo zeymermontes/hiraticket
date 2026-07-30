@@ -259,7 +259,12 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   // Los stickers van siempre enteros: pesan unos KB y son el contenido mismo del mensaje. Un
   // sticker detrás de un "Ver" no sería un mensaje, sería un acertijo.
   const preThumbs = !isSticker && !thumb && new Date(m.created_at) < THUMBS_SINCE;
-  const loadFull = isSticker || (!thumb && !preThumbs);
+  const size = Math.max(m.media_size ?? 0, 0);
+  // Chica y de tamaño conocido → se carga completa y se ve nítida de entrada, con o sin miniatura.
+  // Es la auto-descarga de WhatsApp: reservar el clic del visor para 300 KB sería pura burocracia.
+  // También rescata fotos viejas chicas cuando el backfill les llena media_size.
+  const smallAuto = !isSticker && size > 0 && size < 300 * 1024;
+  const loadFull = isSticker || smallAuto || (!thumb && !preThumbs);
   // Cuando no toca bajar, se MIRA el caché igual: si esta foto ya se abrió una vez, sus bytes están
   // en el dispositivo y se muestra nítida en el hilo, sin pedir nada. Es lo que hace WhatsApp —- una
   // vez descargada, deja de verse la versión pobre.
@@ -268,7 +273,6 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   // La miniatura es el contenido definitivo (no hay nada mejor en camino): no se desenfoca ni se
   // difiere su carga.
   const thumbIsContent = !!thumb && src === thumb;
-  const size = Math.max(m.media_size ?? 0, 0);
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
     // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
@@ -337,9 +341,10 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
     });
     return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [url, m?.media_path]);
-  // Si falla la descarga se cae a la URL firmada: que el <img> lo intente a su manera es mejor
-  // que dejar a alguien mirando un error por un problema de red pasajero.
-  const src = full ?? (failed ? url : thumb ?? url);
+  // Mientras el worker baja, el <img> lleva la miniatura o NADA —- nunca la URL firmada: ponerla
+  // arrancaba una segunda descarga del archivo completo en paralelo con la del worker. La URL solo
+  // entra si la descarga falló: que el <img> lo intente a su manera es mejor que un error.
+  const src = full ?? (failed ? url : thumb);
   // Unificado con el resto: Storage responde a ?download=<nombre>, así que no hace falta traer el
   // archivo entero a memoria. El fallback a blob sigue dentro de downloadMedia.
   const download = () => {
