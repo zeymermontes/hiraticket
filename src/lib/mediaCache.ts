@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
  */
 
 /** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
-const WORKER_URL = "/media-worker.js?v=2";
+const WORKER_URL = "/media-worker.js?v=3";
 
 type Reply =
   | { id: number; type: "blob"; blob: Blob }
@@ -71,7 +71,7 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string | null, onProgress?: (pct: number | null) => void): Promise<Answer> {
+function ask(type: "get" | "warm" | "peek" | "clear", path?: string | null, url?: string | null, onProgress?: (pct: number | null) => void): Promise<Answer> {
   const w = getWorker();
   if (!w) return Promise.resolve({ blob: null });
   const id = ++seq;
@@ -90,7 +90,16 @@ function ask(type: "get" | "warm" | "clear", path?: string | null, url?: string 
  * bajando de todos modos, y los bytes se guardan de fondo. Cambiarlo a un blob a medio camino solo
  * daría un parpadeo para ahorrar una descarga que ya ocurrió.
  */
-export function useCachedMedia(path: string | null | undefined, url: string | null | undefined): { src: string | undefined; tooBigBytes: number } {
+export function useCachedMedia(
+  path: string | null | undefined,
+  url: string | null | undefined,
+  /**
+   * "warm": si no está en caché, lo baja y lo guarda. "peek": solo mira el caché y NUNCA la red —-
+   * devuelve `src` únicamente si los bytes ya estaban ahí. Peek es lo que permite que el hilo
+   * muestre la versión nítida de una foto que ya se abrió, sin volver a pedir nada.
+   */
+  mode: "warm" | "peek" = "warm",
+): { src: string | undefined; tooBigBytes: number } {
   const [cached, setCached] = useState<string | null>(null);
   const [tooBigBytes, setTooBig] = useState(0);
 
@@ -117,7 +126,7 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
     let objectUrl: string | null = null;
     // "warm" devuelve el blob si YA estaba guardado, y null si hubo que bajarlo —- en ese caso los
     // bytes quedan en el caché para la próxima y aquí no se toca el src, que ya está pintando.
-    ask("warm", path, urlRef.current).then((a) => {
+    ask(mode, path, mode === "warm" ? urlRef.current : null).then((a) => {
       if (!alive) return;
       if (a.tooBig) return setTooBig(a.tooBig);
       if (!a.blob) return;
@@ -128,9 +137,11 @@ export function useCachedMedia(path: string | null | undefined, url: string | nu
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path]);
+  }, [path, mode]);
 
-  return { src: cached ?? stableUrl, tooBigBytes };
+  // En peek, si no estaba en caché no hay nada que devolver: caer a la URL firmada la bajaría,
+  // que es exactamente lo que peek existe para no hacer.
+  return { src: cached ?? (mode === "warm" ? stableUrl : undefined), tooBigBytes };
 }
 
 /**

@@ -15,12 +15,18 @@
  * Aquí sale gratis: el archivo ya está en memoria porque hay que subirlo de todos modos.
  */
 
-/** Lado mayor de la miniatura. Igual que el worker de Go, para que se vean igual de los dos lados. */
-const MAX_PX = 320;
-/** Calidad JPEG. Sale en unos pocos KB y se muestra en una caja de ~220 px. */
-const QUALITY = 0.62;
+/**
+ * Lado mayor de la miniatura. Igual que el worker de Go, para que se vean igual de los dos lados.
+ *
+ * 320 se veía suave: la burbuja mide hasta 240 px de CSS, y en un teléfono a 3x eso son 720 px
+ * reales. 448 no llega a cubrirlo del todo, pero cada paso cuesta payload en TODAS las fotos del
+ * hilo, y una vez que alguien abre la foto el hilo ya muestra la versión nítida desde el caché.
+ */
+const MAX_PX = 448;
+/** Calidad JPEG. A 448 px sale en unas decenas de KB. */
+const QUALITY = 0.7;
 /** Tope de seguridad: una miniatura que no quepa aquí no vale la pena guardarla en la fila. */
-const MAX_BYTES = 24 * 1024;
+const MAX_BYTES = 44 * 1024;
 
 /**
  * Devuelve un data URI JPEG con la miniatura, o undefined si no se pudo.

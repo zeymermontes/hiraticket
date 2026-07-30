@@ -26,12 +26,13 @@ import (
 //
 // Los webp (stickers) no se decodifican, pero tampoco hace falta: ya pesan unos pocos KB.
 
-// thumbMaxPx: lado mayor de la miniatura. 320 se ve bien en la burbuja y en el desenfoque de fondo
-// del visor, y sale en unos pocos KB.
-const thumbMaxPx = 320
+// thumbMaxPx: lado mayor de la miniatura. Debe coincidir con MAX_PX de src/lib/imageThumb.ts para
+// que las fotos que entran y las que salen se vean igual. 320 se veía suave: la burbuja mide hasta
+// 240 px de CSS, y en un teléfono a 3x eso son 720 px reales.
+const thumbMaxPx = 448
 
 // thumbQuality: 70 es el punto donde bajar más ya no ahorra bytes que importen y sí se nota.
-const thumbQuality = 62
+const thumbQuality = 70
 
 // makeThumb devuelve un data URI JPEG con la miniatura de una imagen, o "" si no se pudo.
 // Nunca devuelve error: una miniatura es una mejora, no un requisito —- si falla, el mensaje se

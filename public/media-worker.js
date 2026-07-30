@@ -22,8 +22,17 @@ const USED_INDEX = "usedAt";
 
 /** Tope del caché completo. Al pasarse se borran los menos usados recientemente. */
 const MAX_BYTES = 300 * 1024 * 1024;
-/** Tope por archivo: uno más grande se comería una parte desproporcionada del caché. */
+/**
+ * Tope por archivo al PRECARGAR: más grande que esto no se baja solo, porque se comería una parte
+ * desproporcionada del caché por algo que quizá nadie mire.
+ */
 const MAX_ITEM_BYTES = 8 * 1024 * 1024;
+/**
+ * Tope por archivo cuando alguien lo ABRIÓ. Ahí sí se guarda aunque sea grande: lo pidió a
+ * propósito, y volver a bajar 16 MB cada vez que expande la misma foto es justo lo que hay que
+ * evitar. El desalojo por menos-usado se encarga del presupuesto total.
+ */
+const MAX_OPENED_BYTES = 64 * 1024 * 1024;
 
 let dbPromise = null;
 
@@ -102,8 +111,8 @@ function evict(db) {
   });
 }
 
-async function writeBlob(path, blob) {
-  if (!blob.size || blob.size > MAX_ITEM_BYTES) return;
+async function writeBlob(path, blob, cap) {
+  if (!blob.size || blob.size > (cap || MAX_ITEM_BYTES)) return;
   const db = await openDb();
   if (!db) return;
   try { store(db, "readwrite").put({ path, blob, bytes: blob.size, usedAt: Date.now() }); } catch { return; }
@@ -147,17 +156,21 @@ self.onmessage = async (e) => {
     return post({ type: "done" });
   }
 
-  // "get" quiere los bytes ahora (el visor). "warm" solo los deja guardados para después (el hilo).
-  if (type !== "get" && type !== "warm") return;
+  // "get"  = los bytes ahora, bajándolos si hace falta (el visor: alguien abrió la foto).
+  // "warm" = dejarlos guardados para después, si vale la pena por tamaño (el hilo).
+  // "peek" = SOLO mirar el caché, nunca la red. Es lo que permite que el hilo muestre la versión
+  //          nítida de una foto que ya se abrió una vez, sin volver a pedir nada.
+  if (type !== "get" && type !== "warm" && type !== "peek") return;
 
   try {
     if (path) {
       const hit = await readEntry(path);
       // En "get" la marca se ignora: alguien abrió el visor a propósito y quiere ver el archivo,
       // pese lo que pese. En "warm" se respeta y no se toca la red.
-      if (hit && hit.tooBig && type === "warm") return post({ type: "toobig", bytes: hit.bytes });
+      if (hit && hit.tooBig && type !== "get") return post({ type: "toobig", bytes: hit.bytes });
       if (hit && hit.blob) return post({ type: "blob", blob: hit.blob });
     }
+    if (type === "peek") return post({ type: "miss" }); // no toca la red, por definición
     if (type === "warm" && path && inFlight.has(path)) return post({ type: "miss" });
     if (!url) return post({ type: "miss" });
 
@@ -173,7 +186,7 @@ self.onmessage = async (e) => {
       if (path) await markTooBig(path, out.tooBig);
       return post({ type: "toobig", bytes: out.tooBig });
     }
-    if (path) await writeBlob(path, out.blob);
+    if (path) await writeBlob(path, out.blob, type === "get" ? MAX_OPENED_BYTES : MAX_ITEM_BYTES);
     // En "warm" no se devuelve el blob: el <img> ya está pintando con la URL firmada y mandarlo
     // solo obligaría al hilo principal a cambiar el src para nada.
     post(type === "get" ? { type: "blob", blob: out.blob } : { type: "done" });

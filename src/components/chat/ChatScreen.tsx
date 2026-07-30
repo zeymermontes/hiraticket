@@ -260,29 +260,39 @@ function MediaImage({ m, url, onImage }: { m: ChatMessage; url: string; onImage?
   // sticker detrás de un "Ver" no sería un mensaje, sería un acertijo.
   const preThumbs = !isSticker && !thumb && new Date(m.created_at) < THUMBS_SINCE;
   const loadFull = isSticker || (!thumb && !preThumbs);
-  const { src: fullSrc } = useCachedMedia(loadFull ? m.media_path : null, loadFull ? url : null);
-  const src = loadFull ? fullSrc : thumb;
+  // Cuando no toca bajar, se MIRA el caché igual: si esta foto ya se abrió una vez, sus bytes están
+  // en el dispositivo y se muestra nítida en el hilo, sin pedir nada. Es lo que hace WhatsApp —- una
+  // vez descargada, deja de verse la versión pobre.
+  const { src: fullSrc } = useCachedMedia(m.media_path, loadFull ? url : null, loadFull ? "warm" : "peek");
+  const src = fullSrc ?? thumb;
+  // La miniatura es el contenido definitivo (no hay nada mejor en camino): no se desenfoca ni se
+  // difiere su carga.
+  const thumbIsContent = !!thumb && src === thumb;
   const size = Math.max(m.media_size ?? 0, 0);
   return (
     // El <a> conserva el menú nativo del navegador (Guardar imagen como…, Copiar imagen) y
     // dragOutProps permite arrastrar el archivo real a otra app o página sin descargarlo antes.
     <a href={url} target="_blank" rel="noreferrer" className="media-frame" style={{ ...box, cursor: "zoom-in" }}
-      onClick={(e) => { if (onImage) { e.preventDefault(); onImage(m.id); } }}
+            // Un sticker no entra a la galería (ver imageMsgs), así que tampoco abre el visor: sin él en
+      // la lista, el índice saldría -1 y se abriría en una foto que no tiene nada que ver.
+      onClick={(e) => { if (onImage && !isSticker) { e.preventDefault(); onImage(m.id); } }}
       {...dragOutProps(url, m.media_mime, m.media_name)}>
       {src ? (
         <>
-          {/* El relleno mientras carga. Con miniatura ya se ve DE QUÉ es la foto y el cambio a la
-              buena es imperceptible; sin ella, el rectángulo animado de siempre. Va SIEMPRE que
-              haya algo cargando: el <img> arranca en opacity 0, así que sin esto la burbuja se
-              queda completamente vacía mientras baja. */}
-          {!loaded && (thumb
+          {/* El relleno desenfocado solo tiene sentido cuando viene una imagen MEJOR en camino. Si la
+              miniatura ya es el contenido definitivo, desenfocarla es degradarla a propósito —- y era
+              justo lo que se veía: el <img> de contenido lleva loading="lazy", el navegador lo
+              diferÍa, onLoad nunca disparaba, se quedaba en opacity 0, y lo único visible era esta
+              copia borrosa. */}
+          {!loaded && !thumbIsContent && (thumb
             ? <img src={thumb} alt="" aria-hidden className="media-el" style={{ objectFit: isSticker ? "contain" : "cover", filter: "blur(6px)", transform: "scale(1.06)" }} />
             : <span className="media-skeleton" />)}
-          {/* decoding="async" + loading="lazy" importan de verdad aquí: una foto de 16 MB
-              decodificada en el hilo principal congela la interfaz entera. Así el navegador la
-              decodifica aparte y solo cuando está cerca de verse. */}
+          {/* decoding="async" mantiene la decodificación fuera del hilo principal. El lazy solo se
+              aplica a los archivos grandes: en una miniatura de unos KB no ahorra nada y sí puede
+              dejarla sin pintar. */}
           <img src={src} alt="" onLoad={() => setLoaded(true)} className="media-el" draggable={false}
-            decoding="async" loading="lazy" style={{ objectFit: isSticker ? "contain" : "cover", opacity: loaded ? 1 : 0 }} />
+            decoding="async" loading={thumbIsContent ? undefined : "lazy"}
+            style={{ objectFit: isSticker ? "contain" : "cover", opacity: thumbIsContent || loaded ? 1 : 0 }} />
         </>
       ) : (
         // Sin miniatura (mensajes anteriores a que se guardaran, o formatos que no sabemos leer):
@@ -1728,7 +1738,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const msgMap = useMemo(() => new Map(msgs.map((mm) => [mm.id, mm])), [msgs]);
   // Photo gallery (lightbox) over every image/sticker in the loaded thread.
   const [lightbox, setLightbox] = useState<number | null>(null);
-  const imageMsgs = useMemo(() => msgs.filter((mm) => (mm.type === "image" || mm.type === "sticker") && mm.media_url && !mm.deleted), [msgs]);
+  const imageMsgs = useMemo(() => msgs.filter((mm) => mm.type === "image" && mm.media_url && !mm.deleted), [msgs]);
   const openLightbox = useCallback((id: string) => { setLightbox((() => { const idx = imageMsgs.findIndex((m) => m.id === id); return idx >= 0 ? idx : 0; })()); }, [imageMsgs]);
 
   // Group consecutive plain images (same sender) into a WhatsApp-style album.

@@ -29,11 +29,14 @@ func TestMakeThumbDownscalesAndFits(t *testing.T) {
 	}
 	t.Logf("miniatura: %d bytes de data URI (origen: %d bytes)", len(got), in.Len())
 
-	// El lado mayor debe quedar en thumbMaxPx y la proporción conservarse (1200x800 -> 320x213).
+	// El lado mayor queda en thumbMaxPx y la proporción se conserva. Se calcula desde la constante,
+	// no con números escritos a mano: si alguien ajusta la resolución, el test debe seguir midiendo
+	// lo que importa (que reduzca y no deforme), no romperse por el cambio.
 	small := downscale(src, thumbMaxPx)
 	b := small.Bounds()
-	if b.Dx() != 320 || b.Dy() != 213 {
-		t.Fatalf("quedó en %dx%d, se esperaba 320x213", b.Dx(), b.Dy())
+	wantW, wantH := thumbMaxPx, 800*thumbMaxPx/1200
+	if b.Dx() != wantW || b.Dy() != wantH {
+		t.Fatalf("quedó en %dx%d, se esperaba %dx%d", b.Dx(), b.Dy(), wantW, wantH)
 	}
 }
 

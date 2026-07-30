@@ -109,7 +109,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const meId = initial.meId;
   const agentMap = useMemo(() => new Map(initial.agents.map((a) => [a.id, a])), [initial.agents]);
   const msgMap = useMemo(() => new Map(msgs.map((m) => [m.id, m])), [msgs]);
-  const imageMsgs = useMemo(() => msgs.filter((mm) => (mm.type === "image" || mm.type === "sticker") && mm.media_url && !mm.deleted), [msgs]);
+  const imageMsgs = useMemo(() => msgs.filter((mm) => mm.type === "image" && mm.media_url && !mm.deleted), [msgs]);
   const openLightbox = useCallback((id: string) => { const idx = imageMsgs.findIndex((mm) => mm.id === id); setLightbox(idx >= 0 ? idx : 0); }, [imageMsgs]);
   const selRef = useRef(sel); selRef.current = sel;
   // Bubbles already on screen — used to animate only *newly arrived* messages, never the whole history on open.
