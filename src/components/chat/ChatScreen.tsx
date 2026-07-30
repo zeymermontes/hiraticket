@@ -1832,13 +1832,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         {detail.status !== "resolved" ? (
           <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
             onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}>
-            {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
+            <Icon name="checks" size={14} />{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <HeaderStatusPill detail={detail} />}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
-            {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
+            <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
       </div>
@@ -2431,7 +2431,8 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       <div className="ws scroll">
         <div className="ws-contact">
           <div className="row gap-3">
-            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={52} />
+            <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={52}
+              badge={(() => { const wsA = detail.assignee_id ? agents.find((x) => x.id === detail.assignee_id) : null; return wsA ? { initials: deriveInitials(wsA.name), color: wsA.color, src: wsA.avatar_url, title: (lang === "es" ? "Atiende " : "Handled by ") + wsA.name } : null; })()} />
             <div className="grow" style={{ minWidth: 0 }}>
               {editingName ? (
                 <input className="inp-inline" style={{ width: "100%" }} value={nameVal} autoFocus
