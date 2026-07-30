@@ -33,6 +33,14 @@ const MAX_ITEM_BYTES = 8 * 1024 * 1024;
  * evitar. El desalojo por menos-usado se encarga del presupuesto total.
  */
 const MAX_OPENED_BYTES = 64 * 1024 * 1024;
+/**
+ * Tope para entregarle el archivo COMPLETO al hilo (peek). Medido con CPU 6x: pintar un blob de
+ * 70 megapíxeles en la burbuja congeló el compositor 4.9 segundos —- los clics no abrían nada.
+ * Arriba de esto, el hilo recibe una vista previa de 448px generada AQUÍ, fuera del hilo, donde
+ * decodificar el original no puede trabar la interfaz.
+ */
+const PEEK_FULL_MAX = 1 * 1024 * 1024;
+const PREVIEW_PX = 448;
 
 let dbPromise = null;
 
@@ -111,12 +119,42 @@ function evict(db) {
   });
 }
 
-async function writeBlob(path, blob, cap) {
+async function writeBlob(path, blob, cap, preview) {
   if (!blob.size || blob.size > (cap || MAX_ITEM_BYTES)) return;
   const db = await openDb();
   if (!db) return;
-  try { store(db, "readwrite").put({ path, blob, bytes: blob.size, usedAt: Date.now() }); } catch { return; }
+  try { store(db, "readwrite").put({ path, blob, bytes: blob.size, preview: preview || null, usedAt: Date.now() }); } catch { return; }
   await evict(db);
+}
+
+/** Le agrega la vista previa a una entrada ya guardada (regeneración perezosa de entradas viejas). */
+async function attachPreview(path, preview) {
+  const db = await openDb();
+  if (!db) return;
+  const hit = await new Promise((res) => {
+    let req; try { req = store(db, "readonly").get(path); } catch { return res(null); }
+    req.onerror = () => res(null); req.onsuccess = () => res(req.result ?? null);
+  });
+  if (!hit || !hit.blob) return;
+  try { store(db, "readwrite").put({ ...hit, preview }); } catch {}
+}
+
+/**
+ * Vista previa (JPEG ~448px) de un blob grande. createImageBitmap con resizeWidth decodifica y
+ * reescala en un solo paso, en ESTE hilo de worker. Devuelve null si el entorno no puede
+ * (formato raro, OffscreenCanvas ausente): el hilo se queda con la miniatura, sin drama.
+ */
+async function makePreview(blob) {
+  try {
+    if (typeof OffscreenCanvas === "undefined") return null;
+    const bmp = await createImageBitmap(blob, { resizeWidth: PREVIEW_PX, resizeQuality: "high" });
+    const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+    canvas.getContext("2d").drawImage(bmp, 0, 0);
+    bmp.close();
+    return await canvas.convertToBlob({ type: "image/jpeg", quality: 0.72 });
+  } catch {
+    return null;
+  }
 }
 
 /** Ya en curso, para no bajar dos veces el mismo archivo si dos burbujas lo piden a la vez. */
@@ -168,7 +206,19 @@ self.onmessage = async (e) => {
       // En "get" la marca se ignora: alguien abrió el visor a propósito y quiere ver el archivo,
       // pese lo que pese. En "warm" se respeta y no se toca la red.
       if (hit && hit.tooBig && type !== "get") return post({ type: "toobig", bytes: hit.bytes });
-      if (hit && hit.blob) return post({ type: "blob", blob: hit.blob });
+      if (hit && hit.blob) {
+        // El hilo (peek/warm) nunca recibe un blob enorme: la vista previa si existe, o nada.
+        if (type !== "get" && hit.blob.size > PEEK_FULL_MAX) {
+          return post(hit.preview ? { type: "blob", blob: hit.preview } : { type: "miss" });
+        }
+        post({ type: "blob", blob: hit.blob });
+        // Entradas guardadas antes de que existieran las vistas previas: se les genera una ahora,
+        // después de responder, para que la próxima consulta del hilo ya la encuentre.
+        if (type === "get" && !hit.preview && hit.blob.size > PEEK_FULL_MAX) {
+          makePreview(hit.blob).then((pv) => { if (pv) attachPreview(path, pv); });
+        }
+        return;
+      }
     }
     if (type === "peek") return post({ type: "miss" }); // no toca la red, por definición
     if (type === "warm" && path && inFlight.has(path)) return post({ type: "miss" });
@@ -186,7 +236,8 @@ self.onmessage = async (e) => {
       if (path) await markTooBig(path, out.tooBig);
       return post({ type: "toobig", bytes: out.tooBig });
     }
-    if (path) await writeBlob(path, out.blob, type === "get" ? MAX_OPENED_BYTES : MAX_ITEM_BYTES);
+    const preview = out.blob.size > PEEK_FULL_MAX ? await makePreview(out.blob) : null;
+    if (path) await writeBlob(path, out.blob, type === "get" ? MAX_OPENED_BYTES : MAX_ITEM_BYTES, preview);
     // En "warm" no se devuelve el blob: el <img> ya está pintando con la URL firmada y mandarlo
     // solo obligaría al hilo principal a cambiar el src para nada.
     post(type === "get" ? { type: "blob", blob: out.blob } : { type: "done" });

@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
  */
 
 /** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
-const WORKER_URL = "/media-worker.js?v=3";
+const WORKER_URL = "/media-worker.js?v=4";
 
 /**
  * Se dispara cuando el visor termina de guardar un archivo (detail = la ruta). Los peek del hilo lo
