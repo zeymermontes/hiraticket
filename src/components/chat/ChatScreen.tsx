@@ -39,7 +39,6 @@ import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
-import { timedClick } from "@/lib/timing";
 import { makeImageThumb } from "@/lib/imageThumb";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
@@ -1897,13 +1896,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
         {detail.status !== "resolved" ? (
           <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
-            onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}>
+            onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); headerRefresh(); }); }}>
             <Icon name="checks" size={14} />{lang === "es" ? "Resolver" : "Resolve"}
           </button>
         ) : <HeaderStatusPill detail={detail} />}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
+          <button className="btn btn-sm btn-primary" onClick={() => { onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); headerRefresh(); }); }}>
             <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
@@ -2297,8 +2296,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
       if (meId && id === meId) onAssignedToMe?.(detail.id);
     }
     else { const ar = areas.find((a) => a.id === id); patch({ area: ar ? { name: ar.name, color: ar.color } : detail.area, locked_to: null }); }
-    const t = timedClick(`transferir(${mode})`);
-    start(async () => { await transferConv(detail.id, mode, id); t.done(); refresh(); t.settled(); });
+    start(async () => { await transferConv(detail.id, mode, id); refresh(); });
   }
 
   return (
@@ -2579,8 +2577,8 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
                     <Icon name="lock" />{lang === "es" ? "Mantener conmigo" : "Keep with me"}
                   </button>}
               {detail.status === "resolved"
-                ? <button className="act full" onClick={() => { const t = timedClick("reabrir"); patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
-                : <button className="act good full" onClick={() => { const t = timedClick("resolver(panel)"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
+                ? <button className="act full" onClick={() => { patch({ status: "open" }); start(async () => { const r = await setConvStatus(detail.id, "open"); flowToast(r.flows, lang); headerRefresh(); }); }}><Icon name="dot" />{lang === "es" ? "Reabrir" : "Reopen"}</button>
+                : <button className="act good full" onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); headerRefresh(); }); }}><Icon name="checks" />{lang === "es" ? "Resolver" : "Resolve"}</button>}
             </div>
           </div>
         </>

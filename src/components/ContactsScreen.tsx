@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useConfirm } from "@/components/Confirm";
@@ -8,15 +8,59 @@ import { useApp } from "@/components/AppContext";
 import { tagColor } from "@/lib/types";
 import type { ContactRow } from "@/lib/queries";
 import { setConvMuted, deleteContact } from "@/app/(app)/chat/actions";
+import { loadContactsPage } from "@/app/(app)/contacts/actions";
 
-export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
+const PAGE = 60;
+
+export function ContactsScreen({ initial, total: totalProp }: { initial: ContactRow[]; total: number }) {
   const { lang, personal } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState(contacts);
-  useEffect(() => { setRows(contacts); }, [contacts]);
+  const [rows, setRows] = useState(initial);
+  const [total, setTotal] = useState(totalProp);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => { setRows(initial); setTotal(totalProp); }, [initial, totalProp]);
   const [, start] = useTransition();
+
+  // La búsqueda corre en el SERVIDOR, con rebote: el cliente solo tiene una ventana del directorio,
+  // así que filtrar localmente escondería a todos los que aún no se cargan. El rebote evita un viaje
+  // por tecla; la secuencia evita que una respuesta lenta y vieja pise a una nueva.
+  const searchSeq = useRef(0);
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    // La primera ventana ya vino del servidor: refetchear con q vacío al montar sería un viaje
+    // redundante en el momento más sensible.
+    if (!searchMounted.current) { searchMounted.current = true; return; }
+    const seq = ++searchSeq.current;
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const page = await loadContactsPage({ q: q.trim() || undefined, offset: 0 });
+        if (seq === searchSeq.current) { setRows(page.rows); setTotal(page.total); }
+      } finally { if (seq === searchSeq.current) setLoading(false); }
+    }, q ? 250 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  // Scroll infinito: al acercarse al final de la tabla se pide la siguiente ventana.
+  const loadMore = async () => {
+    if (loading || rows.length >= total) return;
+    setLoading(true);
+    try {
+      const page = await loadContactsPage({ q: q.trim() || undefined, offset: rows.length });
+      setRows((r) => {
+        const seen = new Set(r.map((x) => x.id));
+        return [...r, ...page.rows.filter((x) => !seen.has(x.id))];
+      });
+      setTotal(page.total);
+    } finally { setLoading(false); }
+  };
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) void loadMore();
+  };
 
   const title = personal ? (lang === "es" ? "Contactos" : "Contacts") : (lang === "es" ? "Clientes" : "Customers");
   const objLabel = personal ? (lang === "es" ? "Tareas" : "Tasks") : (lang === "es" ? "Pedidos" : "Orders");
@@ -32,14 +76,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
     start(async () => { await deleteContact(c.id); });
   };
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter((c) =>
-      c.name.toLowerCase().includes(s) ||
-      (c.phone ?? "").toLowerCase().includes(s) ||
-      c.tags.some((t) => t.toLowerCase().includes(s)));
-  }, [rows, q]);
+  const filtered = rows;
 
   const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "2-digit" }) : "—";
 
@@ -47,7 +84,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
     <div className="page">
       <div className="phead">
         <h1>{title}</h1>
-        <Pill color="slate" large>{rows.length}</Pill>
+        <Pill color="slate" large>{total}</Pill>
       </div>
 
       <div className="toolbar">
@@ -56,10 +93,10 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
           <input autoFocus placeholder={lang === "es" ? "Buscar por nombre, teléfono o etiqueta…" : "Search by name, phone or tag…"} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <span className="grow" />
-        <span className="t-sm muted">{filtered.length} {lang === "es" ? "resultados" : "results"}</span>
+        <span className="t-sm muted">{q ? `${total} ${lang === "es" ? "resultados" : "results"}` : `${rows.length} / ${total}`}</span>
       </div>
 
-      <div className="tablewrap scroll">
+      <div className="tablewrap scroll" onScroll={onScroll}>
         <table className="tbl" style={{ minWidth: 720 }}>
           <thead>
             <tr>
@@ -105,6 +142,7 @@ export function ContactsScreen({ contacts }: { contacts: ContactRow[] }) {
             ))}
           </tbody>
         </table>
+        {loading && <div className="muted t-sm" style={{ padding: 10, textAlign: "center" }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>}
       </div>
     </div>
   );

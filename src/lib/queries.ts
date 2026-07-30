@@ -226,6 +226,58 @@ export interface ContactRow {
 }
 
 /** All contacts for a business + their latest conversation and order/task count (for the Contacts page). */
+/**
+ * Una VENTANA de contactos, con la búsqueda en el servidor.
+ *
+ * `getContacts` traía el directorio completo con conversaciones y conteo de pedidos embebidos por
+ * contacto —- sin límite. Con cientos de clientes eso era gran parte del "Clientes tarda en abrir".
+ * La página siembra la primera ventana y el resto llega con scroll infinito.
+ *
+ * La búsqueda: nombre y teléfono por subcadena; etiquetas por coincidencia exacta (los arrays de
+ * Postgres no tienen ilike razonable vía PostgREST). Es el mismo alcance práctico que tenía la
+ * búsqueda local, ahora sobre TODOS los contactos y no solo los cargados.
+ */
+export async function getContactsPage(
+  businessId: string,
+  opts?: { q?: string; limit?: number; offset?: number },
+): Promise<{ rows: ContactRow[]; total: number }> {
+  const supabase = await createClient();
+  const limit = opts?.limit ?? 60;
+  const offset = opts?.offset ?? 0;
+  const full = "id, name, phone, tags, avatar_url, created_at, conversations(id, last_message_at, muted), orders(count)";
+  const build = (cols: string) => {
+    let q = supabase.from("contacts").select(cols, { count: "exact" }).eq("business_id", businessId);
+    const s0 = opts?.q?.trim();
+    if (s0) {
+      const term = s0.replace(/[%,()]/g, " ").trim();
+      if (term) q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%,tags.cs.{${term}}`);
+    }
+    return q.order("name").range(offset, offset + limit - 1);
+  };
+  let { data, count, error } = await build(full);
+  if (error) ({ data, count } = await build("id, name, phone, tags, avatar_url, created_at"));
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map(mapContactRow);
+  return { rows, total: count ?? rows.length };
+}
+
+function mapContactRow(c: Record<string, unknown>): ContactRow {
+  const convs = (c.conversations as { id: string; last_message_at: string | null; muted?: boolean }[] | undefined) ?? [];
+  const latest = convs.reduce<{ id: string; last_message_at: string | null; muted?: boolean } | null>((a, x) => (!a || (x.last_message_at ?? "") > (a.last_message_at ?? "") ? x : a), null);
+  const oc = c.orders as { count?: number }[] | undefined;
+  return {
+    id: c.id as string,
+    name: c.name as string,
+    phone: (c.phone as string | null) ?? null,
+    tags: (c.tags as string[]) ?? [],
+    avatar_url: (c.avatar_url as string | null) ?? null,
+    created_at: c.created_at as string,
+    conv_id: latest?.id ?? null,
+    last_active: latest?.last_message_at ?? null,
+    muted: latest?.muted ?? false,
+    orders_count: Array.isArray(oc) ? (oc[0]?.count ?? 0) : 0,
+  };
+}
+
 export async function getContacts(businessId: string): Promise<ContactRow[]> {
   const supabase = await createClient();
   const full = "id, name, phone, tags, avatar_url, created_at, conversations(id, last_message_at, muted), orders(count)";

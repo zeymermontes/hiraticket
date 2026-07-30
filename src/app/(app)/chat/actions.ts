@@ -6,7 +6,6 @@ import { getMyBusiness } from "@/lib/queries";
 import { getConversationDetail, type ConvDetail } from "@/lib/chat";
 import { encryptBody, decryptBody } from "@/lib/msgcrypto";
 import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
-import { timed } from "@/lib/timing";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -541,20 +540,14 @@ export async function getMediaPreviewUrl(messageId: string): Promise<string | nu
   return signed?.signedUrl ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Cronómetro temporal. Ver `@/lib/timing`: mide dónde se van los segundos que se sienten al
-// aceptar, resolver o transferir. Quitar el envoltorio cuando esté contestado —- los cuerpos
-// (…Impl) se quedan como están.
-// ---------------------------------------------------------------------------
-
 export async function acceptConv(convId: string): Promise<void> {
-  return timed("aceptar", () => acceptConvImpl(convId));
+  return acceptConvImpl(convId);
 }
 
 export async function setConvStatus(convId: string, status: "open" | "pending" | "resolved"): Promise<{ flows: string[] }> {
-  return timed(`estado→${status}`, () => setConvStatusImpl(convId, status));
+  return setConvStatusImpl(convId, status);
 }
 
 export async function transferConv(convId: string, mode: "agent" | "area" | "unassign", destId: string): Promise<void> {
-  return timed(`transferir(${mode})`, () => transferConvImpl(convId, mode, destId));
+  return transferConvImpl(convId, mode, destId);
 }
