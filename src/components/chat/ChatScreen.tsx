@@ -718,6 +718,8 @@ export function ChatScreen({
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detail?.id ?? null;
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
   // Refetches the list window with whatever filters are active. Held in a ref because the realtime
   // handlers below are defined before the window state exists.
   const refetchListRef = useRef<() => void>(() => {});
@@ -741,30 +743,36 @@ export function ChatScreen({
     const id = detailIdRef.current;
     if (!id) return;
     const row = listRef.current.find((r) => r.id === id);
-    if (!row) return;
-    const next = { ...row, ...(patch as Partial<ConvListItem>) };
+    // Sin fila NO se abandona: la fila se fue de la lista justo cuando el chat salió de la vista
+    // (p.ej. se resolvió mirando "Activos"), y REABRIRLO después es exactamente el caso que dolía
+    // —- el chip Activos se quedaba esperando al servidor 3+ segundos porque aquí nos rendíamos.
+    // El chat abierto conserva los valores anteriores, así que la resta/suma sale de él.
+    const d0 = detailRef.current;
+    const prev = row ?? (d0 && d0.id === id ? { status: d0.status, assignee_id: d0.assignee_id } : null);
+    if (!prev) return;
+    const next = { ...prev, ...(patch as Partial<ConvListItem>) };
 
-    // Los contadores se mueven por la DIFERENCIA respecto a lo que la fila tenía, no por el valor
-    // nuevo: sin comparar contra el estado anterior, dos clics seguidos descontarían dos veces.
+    // Los contadores se mueven por la DIFERENCIA respecto a lo que había, no por el valor nuevo:
+    // sin comparar contra el estado anterior, dos clics seguidos descontarían dos veces.
     // Va por ref y no por updater para poder guardar el resultado en el caché de la vista (con
     // strict mode los updaters corren dos veces y un efecto adentro descontaría doble).
     {
       const d = { ...countsRef.current };
-      if (patch.status !== undefined && patch.status !== row.status) {
+      if (patch.status !== undefined && patch.status !== prev.status) {
         const bucket = (st: string) => (st === "open" || st === "pending" || st === "resolved" ? (st as "open" | "pending" | "resolved") : null);
-        const from = bucket(row.status), to = bucket(next.status);
+        const from = bucket(prev.status), to = bucket(next.status);
         if (from) d[from] = Math.max(0, d[from] - 1);
         if (to) d[to] = d[to] + 1;
         // "Activos" = abierto + pendiente. Resolver saca de ahí; reabrir vuelve a meter.
-        const wasActive = row.status !== "resolved", isActive = next.status !== "resolved";
+        const wasActive = prev.status !== "resolved", isActive = next.status !== "resolved";
         if (wasActive && !isActive) d.active = Math.max(0, d.active - 1);
         if (!wasActive && isActive) d.active = d.active + 1;
       }
-      if (patch.assignee_id !== undefined && patch.assignee_id !== row.assignee_id) {
-        const wasMine = row.assignee_id === meId, isMine = next.assignee_id === meId;
+      if (patch.assignee_id !== undefined && patch.assignee_id !== prev.assignee_id) {
+        const wasMine = prev.assignee_id === meId, isMine = next.assignee_id === meId;
         if (wasMine && !isMine) d.mine = Math.max(0, d.mine - 1);
         if (!wasMine && isMine) d.mine = d.mine + 1;
-        const wasFree = !row.assignee_id, isFree = !next.assignee_id;
+        const wasFree = !prev.assignee_id, isFree = !next.assignee_id;
         if (wasFree && !isFree) d.unassigned = Math.max(0, d.unassigned - 1);
         if (!wasFree && isFree) d.unassigned = d.unassigned + 1;
       }
@@ -772,19 +780,22 @@ export function ChatScreen({
       countsCacheRef.current.set(countsKeyRef.current, d);
     }
 
+    // La cirugía de la lista solo aplica si la fila está en la ventana actual.
+    if (!row) return;
     // Si con el cambio la fila deja de pertenecer a la vista actual, se va ya: verla desaparecer dos
     // segundos después es peor que verla desaparecer al instante.
     const q = listQueryRef.current;
+    const rowNext = { ...row, ...(patch as Partial<ConvListItem>) };
     const gone =
-      (q.tab === "unassigned" && !!next.assignee_id) ||
-      (q.tab === "mine" && next.assignee_id !== meId) ||
-      (q.status === "active" && next.status === "resolved") ||
-      (!!q.status && q.status !== "active" && q.status !== "trash" && next.status !== q.status);
+      (q.tab === "unassigned" && !!rowNext.assignee_id) ||
+      (q.tab === "mine" && rowNext.assignee_id !== meId) ||
+      (q.status === "active" && rowNext.status === "resolved") ||
+      (!!q.status && q.status !== "active" && q.status !== "trash" && rowNext.status !== q.status);
     if (gone) {
       setListTotal((t) => Math.max(0, t - 1));
       setList((rows) => rows.filter((r) => r.id !== id));
     } else {
-      setList((rows) => rows.map((r) => (r.id === id ? next : r)));
+      setList((rows) => rows.map((r) => (r.id === id ? rowNext : r)));
     }
   }, [meId]);
 
