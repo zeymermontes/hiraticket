@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { doneStageNames } from "@/lib/doneStage";
 import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -27,7 +28,7 @@ function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
 }
 
 export function OrdersTable({
-  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing,
+  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing, doneFromStageId = null,
 }: {
   initial: OrdersPage; // first page, rendered on the server; the rest is fetched on demand
   objectName: string;
@@ -43,6 +44,7 @@ export function OrdersTable({
   products: Product[];
   contacts: { id: string; name: string }[];
   invoice?: { add: boolean; rate: number };
+  doneFromStageId?: string | null;
   shipping?: string | null; // active shipping plugin id (gates all shipping UI)
   invoicing?: boolean; // Facturapi active (gates the CFDI block)
 }) {
@@ -248,7 +250,7 @@ export function OrdersTable({
             {view.map((o) => {
               const ag = o.assignee_id ? agentMap.get(o.assignee_id) : null;
               const item0 = o.items?.[0]?.name;
-              const overdue = isOverdue(o.due_at, o.stage?.name === stages[stages.length - 1]?.name);
+              const overdue = isOverdue(o.due_at, !!o.stage && doneStageNames(stages, doneFromStageId).has(o.stage.name));
               return (
               <tr key={o.id} style={{ cursor: trashView ? "default" : "pointer", opacity: trashView ? 0.85 : 1 }} className={sel.has(o.id) ? "sel-row" : ""} onClick={() => { if (!trashView) router.push(`/orders?order=${o.id}`, { scroll: false }); }}>
                 <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggleSel(o.id)} /></td>

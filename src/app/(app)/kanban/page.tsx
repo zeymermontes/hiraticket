@@ -28,6 +28,7 @@ export default async function KanbanPage() {
 
   return (
     <KanbanBoard
+      doneFromStageId={business.done_from_stage_id ?? null}
       initial={initial}
       stages={stages}
       areas={areas}

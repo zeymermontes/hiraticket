@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { doneStageIds } from "@/lib/doneStage";
 import { getAgents } from "@/lib/chat";
 import { getStages, getAreas } from "@/lib/business";
 import type { PriceTier } from "@/lib/types";
@@ -77,10 +78,15 @@ export interface DueOrder {
 /**
  * Pedidos abiertos con fecha límite: vencidos (hasta 60 días atrás) y por vencer (próximos 7 días).
  *
- * "Abierto" = sin borrar, sin cancelar y fuera de la etapa final —- la misma definición que usa el
- * contador del rail. Un pedido entregado con fecha límite pasada no está "vencido": está terminado.
+ * "Terminado" ya no es solo la etapa final: el negocio elige su umbral en Ajustes y cada pedido
+ * puede sobreescribirlo (0072) —- por eso el filtro corre AQUÍ y no en SQL: el umbral efectivo
+ * varía por pedido. La ventana trae ≤200 filas, así que filtrar en memoria es gratis.
  */
-export async function getDueOrders(businessId: string, lastStageId: string | null): Promise<DueOrder[]> {
+export async function getDueOrders(
+  businessId: string,
+  stages: { id: string }[],
+  businessDoneFrom: string | null,
+): Promise<DueOrder[]> {
   const supabase = await createClient();
   const from = new Date(Date.now() - 60 * 86400000).toISOString();
   const to = new Date(Date.now() + 7 * 86400000).toISOString();
@@ -90,13 +96,24 @@ export async function getDueOrders(businessId: string, lastStageId: string | nul
       .gte("due_at", from).lte("due_at", to)
       .is("deleted_at", null);
     if (cancelled) q = q.is("cancelled_at", null);
-    if (lastStageId) q = q.neq("stage_id", lastStageId);
     return q.order("due_at", { ascending: true }).limit(200);
   };
-  // cancelled_at (0065) puede no existir aún — cascada.
-  let { data, error } = await build("id, code, due_at, total, priority, contact:contacts(name)", true);
-  if (error) ({ data } = await build("id, code, due_at, total, priority, contact:contacts(name)", false));
-  return (data ?? []) as unknown as DueOrder[];
+  const COLS = "id, code, due_at, total, priority, stage_id, contact:contacts(name)";
+  // done_from_stage_id (0072) / cancelled_at (0065) pueden no existir aún — cascada.
+  let { data, error } = await build(COLS + ", done_from_stage_id", true);
+  if (error) ({ data, error } = await build(COLS, true));
+  if (error) ({ data } = await build(COLS, false));
+  type Row = DueOrder & { stage_id: string | null; done_from_stage_id?: string | null };
+  const rows = (data ?? []) as unknown as Row[];
+  // El set de "terminado" depende del umbral; se memoiza por umbral para no rearmarlo por fila.
+  const setsByThreshold = new Map<string, Set<string>>();
+  const doneSet = (threshold: string | null) => {
+    const key = threshold ?? "";
+    let hit = setsByThreshold.get(key);
+    if (!hit) { hit = doneStageIds(stages, threshold); setsByThreshold.set(key, hit); }
+    return hit;
+  };
+  return rows.filter((r) => !r.stage_id || !doneSet(r.done_from_stage_id ?? businessDoneFrom).has(r.stage_id));
 }
 
 export async function getAppointments(businessId: string): Promise<Appointment[]> {
@@ -159,7 +176,7 @@ export interface ReportData {
     created_at: string | null; updated_at: string | null; due_at: string | null;
   }[];
 }
-export async function getReports(businessId: string, range: ReportRange, manualMarginPct = 50): Promise<ReportData> {
+export async function getReports(businessId: string, range: ReportRange, manualMarginPct = 50, doneFromStageId: string | null = null): Promise<ReportData> {
   const supabase = await createClient();
   const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
   const toISO = new Date(`${range.to}T23:59:59.999`).toISOString();
@@ -278,7 +295,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   }).filter((a) => a.count > 0).sort((a, b) => b.amount - a.amount);
 
   const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
-  const lastStage = stages.length ? stages[stages.length - 1] : null;
+  const doneIds = doneStageIds(stages, doneFromStageId);
   const stageName = new Map(stages.map((s) => [s.id, s.name]));
   const areaName = new Map(areas.map((a) => [a.id, a.name]));
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
@@ -288,7 +305,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     orderCount: rows.length,
     resolvedConvs: resolved ?? 0,
     avgTicket: rows.length ? Math.round(total / rows.length) : 0,
-    completedCount: lastStage ? rows.filter((o) => o.stage_id === lastStage.id).length : 0,
+    completedCount: rows.filter((o) => o.stage_id && doneIds.has(o.stage_id as string)).length,
     trendStepDays: step,
     salesTrend: trend,
     profitTrend: profit,

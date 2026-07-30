@@ -19,6 +19,7 @@ import { EmbeddedSignup } from "@/components/EmbeddedSignup";
 import { WaCloudTester } from "@/components/WaCloudTester";
 import { TemplateManager } from "@/components/TemplateManager";
 import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
+import { updateBusinessProfile } from "@/app/(app)/business/actions";
 
 const WA_STATUS: Record<string, { color: PillColor; es: string; en: string }> = {
   connected: { color: "green", es: "Conectado", en: "Connected" },
@@ -107,8 +108,10 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
-  const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand } = useApp();
+export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
+  const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand, personal } = useApp();
+  const [doneFrom, setDoneFrom] = useState<string | null>(doneFromStageId);
+  useEffect(() => { setDoneFrom(doneFromStageId); }, [doneFromStageId]);
   const router = useRouter();
   const [, start] = useTransition();
 
@@ -242,6 +245,27 @@ export function SettingsScreen({ businessId, sessions, isPlatformAdmin = false, 
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="calendar" size={16} /><h4>{lang === "es" ? "Agenda y entregas" : "Agenda & deliveries"}</h4></div>
+          <div className="ws-block-body col gap-3">
+            <div className="row gap-2">
+              <span className="grow">
+                {personal ? (lang === "es" ? "Una tarea sale de la agenda al llegar a" : "A task leaves the agenda at") : (lang === "es" ? "Un pedido sale de la agenda al llegar a" : "An order leaves the agenda at")}
+                <span className="t-xs muted" style={{ display: "block" }}>
+                  {lang === "es"
+                    ? "Esa etapa y las siguientes cuentan como terminado: fuera del calendario, las banderitas y el contador de abiertos. Cada " + (personal ? "tarea" : "pedido") + " puede cambiarlo en su detalle."
+                    : "That stage and later ones count as done: out of the calendar, the flags and the open counter. Each one can override it in its detail."}
+                </span>
+              </span>
+              <select className="inp-inline" style={{ width: 200 }} value={doneFrom ?? ""}
+                onChange={(e) => { const v = e.target.value || null; setDoneFrom(v); start(async () => { await updateBusinessProfile(businessId, { done_from_stage_id: v }); router.refresh(); }); }}>
+                <option value="">{lang === "es" ? "Última etapa (por defecto)" : "Last stage (default)"}</option>
+                {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              </select>
             </div>
           </div>
         </section>

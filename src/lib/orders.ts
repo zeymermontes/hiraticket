@@ -23,6 +23,8 @@ export interface OrderDetail {
   created_at: string;
   updated_at: string;
   due_at: string | null;
+  /** Umbral de terminado propio de este pedido (0072). null = el default del negocio. */
+  done_from_stage_id?: string | null;
   stage_id: string | null;
   area_id: string | null;
   assignee_id: string | null;
@@ -53,7 +55,9 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let order: any, orderErr: unknown;
   // discount (0058), requires_invoice/tax_rate (0050) and pay_token (0048) are optional — cascade the fallbacks.
-  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, discount, discount_pct, discount_note, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, done_from_stage_id, ")}, pay_token, requires_invoice, tax_rate, discount, discount_pct, discount_note, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
+  // done_from_stage_id (0072) puede no existir aún — el resto de la cascada sigue sin él.
+  if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, discount, discount_pct, discount_note, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, requires_invoice, tax_rate, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token, business:businesses(product_stages)`).eq("id", orderId).maybeSingle());
   if (orderErr) ({ data: order, error: orderErr } = await supabase.from("orders").select(`${base("due_at, ")}, pay_token`).eq("id", orderId).maybeSingle());
@@ -99,6 +103,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     requires_invoice: ((order as { requires_invoice?: boolean }).requires_invoice) ?? false,
     tax_rate: ((order as { tax_rate?: number | null }).tax_rate) ?? null,
     due_at: ((order as { due_at?: string | null }).due_at) ?? null,
+    done_from_stage_id: ((order as { done_from_stage_id?: string | null }).done_from_stage_id) ?? null,
     contact: order.contact as unknown as OrderDetail["contact"],
     stage: order.stage as unknown as OrderDetail["stage"],
     area: order.area as unknown as OrderDetail["area"],

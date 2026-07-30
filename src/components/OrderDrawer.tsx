@@ -17,7 +17,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
@@ -245,6 +245,19 @@ export function OrderDrawer({
               <input type="datetime-local" className="inp-inline" style={{ colorScheme: "light" }} value={toLocalInput(detail.due_at)}
                 onChange={(e) => { const v = e.target.value ? new Date(e.target.value).toISOString() : null; runOpt({ due_at: v }, () => setOrderDue(detail.id, v)); }} />
             </div>
+            {/* Solo con fecha límite: sin ella, el pedido no vive en la agenda y el umbral no
+                decide nada. "Por defecto" = el del negocio (Ajustes); elegir una etapa aquí
+                sobreescribe SOLO este pedido. */}
+            {detail.due_at && (
+              <div className="col gap-1" style={{ minWidth: 190 }}>
+                <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Sale de la agenda en" : "Leaves the agenda at"}</label>
+                <select className="inp-inline" value={detail.done_from_stage_id ?? ""}
+                  onChange={(e) => { const v = e.target.value || null; runOpt({ done_from_stage_id: v }, () => setOrderDoneFrom(detail.id, v)); }}>
+                  <option value="">{lang === "es" ? "Por defecto del negocio" : "Business default"}</option>
+                  {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* line items */}

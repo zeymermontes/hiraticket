@@ -36,6 +36,7 @@ export default async function OrdersPage({
 
   return (
     <OrdersTable
+      doneFromStageId={business.done_from_stage_id ?? null}
       initial={firstPage}
       objectName={(business.object_singular ?? "Pedido") + "s"}
       businessId={business.id}

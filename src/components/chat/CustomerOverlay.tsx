@@ -2,6 +2,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { doneStageIds } from "@/lib/doneStage";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { type PillColor, priorityColor, PRIORITY_LABEL, tagColor } from "@/lib/types";
 import type { ConvDetail, Agent } from "@/lib/chat";
@@ -15,7 +16,7 @@ import { useApp } from "@/components/AppContext";
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
-export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void }) {
+export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose, doneFromStageId = null }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void; doneFromStageId?: string | null }) {
   const router = useRouter();
   const { personal } = useApp();
   const ORDERS = personal ? "Tareas" : "Pedidos";
@@ -28,8 +29,8 @@ export function CustomerOverlay({ detail, agents, areas, stages, products = [], 
   const c = detail.contact;
   const orders = detail.orders;
   const lifetime = orders.reduce((s, o) => s + (o.total || 0), 0);
-  const lastStageId = stages.length ? stages[stages.length - 1].id : null;
-  const openCount = orders.filter((o) => o.stage_id !== lastStageId).length;
+  const doneIds = doneStageIds(stages, doneFromStageId);
+  const openCount = orders.filter((o) => !o.stage_id || !doneIds.has(o.stage_id)).length;
   const date = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—";
   const dateTime = (iso: string) => new Date(iso).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 

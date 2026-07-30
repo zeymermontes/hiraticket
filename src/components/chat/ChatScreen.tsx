@@ -681,10 +681,12 @@ function lockConfirmOpts(agentName: string, lang: "es" | "en"): ConfirmOpts {
 }
 
 export function ChatScreen({
-  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, initialCounts,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, initialCounts, doneFromStageId = null,
 }: {
   list: ConvListItem[];
   initialCounts?: ChatListCounts;
+  /** Umbral de "terminado" del negocio (0072) — para el conteo de abiertos del cliente 360. */
+  doneFromStageId?: string | null;
   detail: ConvDetail | null;
   selectedId: string | null;
   agents: Agent[];
@@ -1451,7 +1453,7 @@ export function ChatScreen({
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} meId={meId}
             onAccepted={acceptedToMine} />
-          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} onClose={() => setShow360(false)} />}
+          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} onClose={() => setShow360(false)} />}
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>

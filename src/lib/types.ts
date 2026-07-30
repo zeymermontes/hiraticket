@@ -43,6 +43,8 @@ export interface Business {
   invoice_add_tax: boolean; // checking "Requiere factura" adds tax to the order total
   invoice_tax_rate: number; // % applied when it does (default 16 — IVA MX)
   manual_margin_pct: number; // % of the sale that counts as profit for manually-typed items (default 50)
+  /** Desde qué etapa un pedido cuenta como terminado (0072). null = la última, como siempre. */
+  done_from_stage_id?: string | null;
 }
 
 export interface OrderRow {

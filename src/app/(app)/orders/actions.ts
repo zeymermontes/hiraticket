@@ -196,6 +196,13 @@ export async function setOrderPriority(orderId: string, priority: string): Promi
 }
 
 /** Set/clear an order's deadline (ISO string or null). */
+/** Umbral de "terminado" para UN pedido (0072): desde qué etapa sale de la agenda. null = el
+ *  default del negocio. Es la sobreescritura del dropdown en el detalle del pedido. */
+export async function setOrderDoneFrom(orderId: string, stageId: string | null): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("orders").update({ done_from_stage_id: stageId }).eq("id", orderId);
+}
+
 export async function setOrderDue(orderId: string, dueAt: string | null): Promise<void> {
   const supabase = await createClient();
   await supabase.from("orders").update({ due_at: dueAt }).eq("id", orderId);

@@ -7,6 +7,7 @@ import { getInternalUnread } from "@/lib/internal";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getStages } from "@/lib/business";
 import { getDueOrders } from "@/lib/extras";
+import { doneStageIds } from "@/lib/doneStage";
 import { Shell, type ShellUser } from "@/components/Shell";
 import { AppProvider } from "@/components/AppContext";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
@@ -63,15 +64,15 @@ export default async function AppLayout({
   ]);
 
   // Open orders = not yet in the terminal stage. Bounded head-count (no full table scan).
-  const lastStageId = stages.length ? stages[stages.length - 1].id : null;
+  const doneIds = [...doneStageIds(stages, business.done_from_stage_id)];
   let q = supabase.from("orders").select("id", { count: "exact", head: true }).eq("business_id", business.id).is("deleted_at", null);
-  if (lastStageId) q = q.neq("stage_id", lastStageId);
+  if (doneIds.length) q = q.not("stage_id", "in", `(${doneIds.join(",")})`);
   // Fechas para las banderitas del TopBar: pedidos abiertos con fecha límite y citas programadas.
   // Solo las fechas —- los cubos (hoy/mañana/vencido) se arman en el CLIENTE, porque "hoy" depende
   // del huso del navegador y el servidor vive en UTC.
   const [{ count: openOrders }, dueOrders, { data: dueAppts }] = await Promise.all([
     q,
-    getDueOrders(business.id, lastStageId),
+    getDueOrders(business.id, stages, business.done_from_stage_id ?? null),
     supabase.from("appointments").select("starts_at").eq("business_id", business.id).eq("status", "scheduled")
       .gte("starts_at", new Date(Date.now() - 60 * 86400000).toISOString())
       .lte("starts_at", new Date(Date.now() + 7 * 86400000).toISOString()),
