@@ -377,6 +377,7 @@ export function NewOrderModal({
   const [areaId, setAreaId] = useState(areas[0]?.id ?? "");
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [dueAt, setDueAt] = useState("");
+  const [doneFrom, setDoneFrom] = useState(""); // "" = default del negocio
   const [orderNote, setOrderNote] = useState("");
   const [needsInvoice, setNeedsInvoice] = useState(false);
   const [discKind, setDiscKind] = useState<"amount" | "pct">("amount");
@@ -425,6 +426,7 @@ export function NewOrderModal({
         items: lines.map((l) => ({ item: l.item, qty: Number(l.qty) || 1, price: Number(l.price) || 0, note: l.note })),
         areaId: areaId || null, stageId: stageId || null, priority,
         dueAt: dueAt ? new Date(dueAt).toISOString() : null,
+        doneFromStageId: dueAt && doneFrom ? doneFrom : null,
         note: orderNote,
         requiresInvoice: needsInvoice,
         discount: discRaw > 0 ? { kind: discKind, value: discRaw, note: discNote } : null,
@@ -531,6 +533,16 @@ export function NewOrderModal({
           <div className="grow"><label className="lbl">{lang === "es" ? "Fecha límite (opcional)" : "Deadline (optional)"}</label>
             <input type="datetime-local" className="inp-inline" style={{ width: "100%" }} value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
           </div>
+          {/* Igual que en el detalle: solo con fecha límite — sin ella no vive en la agenda y el
+              umbral no decide nada. */}
+          {dueAt && (
+            <div className="grow"><label className="lbl">{lang === "es" ? "Sale de la agenda en" : "Leaves the agenda at"}</label>
+              <select className="select" style={{ width: "100%" }} value={doneFrom} onChange={(e) => setDoneFrom(e.target.value)}>
+                <option value="">{lang === "es" ? "Por defecto del negocio" : "Business default"}</option>
+                {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="grow"><label className="lbl">{personal ? (lang === "es" ? "Nota de la tarea (opcional)" : "Task note (optional)") : (lang === "es" ? "Nota del pedido (opcional)" : "Order note (optional)")}</label>
             <textarea className="inp-inline" style={{ width: "100%", minHeight: 54, resize: "vertical", paddingTop: 6 }} value={orderNote} onChange={(e) => setOrderNote(e.target.value)} placeholder={lang === "es" ? "Detalles, instrucciones…" : "Details, instructions…"} />
           </div>

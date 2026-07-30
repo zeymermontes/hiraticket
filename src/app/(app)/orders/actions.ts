@@ -420,6 +420,8 @@ interface NewOrder {
   stageId: string | null;
   priority?: string;
   dueAt?: string | null;
+  /** Umbral de "terminado" propio del pedido (0072). null/ausente = el default del negocio. */
+  doneFromStageId?: string | null;
   note?: string;
   requiresInvoice?: boolean; // "Requiere factura" — adds the business's IVA to the total (if enabled)
   // Optional discount: value is $ or % depending on kind; tax applies AFTER the discount.
@@ -519,6 +521,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
 
   if (order) {
     if (input.dueAt) await supabase.from("orders").update({ due_at: input.dueAt }).eq("id", order.id); // best-effort (0029)
+    if (input.doneFromStageId) await supabase.from("orders").update({ done_from_stage_id: input.doneFromStageId }).eq("id", order.id); // best-effort (0072)
     const itemRows = lines.map((l) => ({
       order_id: order.id, name: (l.item ?? "").trim() || "Artículo", qty: l.qty || 1,
       unit_price: l.price || 0, subtotal: (l.qty || 1) * (l.price || 0), stage_id: input.stageId,
