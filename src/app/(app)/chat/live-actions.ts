@@ -39,11 +39,6 @@ export async function loadOlderMessages(convId: string, before: string): Promise
   return getConversationMessages(convId, { before });
 }
 
-/** The conversation list (preview / unread / order). */
-export async function liveList(businessId: string): Promise<ConvListItem[]> {
-  return getConversationList(businessId);
-}
-
 /** One window of the chat list with the active filters applied server-side. */
 export async function liveListPage(businessId: string, f: ConvQuery): Promise<ConvListPage> {
   return getConversationListPage(businessId, f);

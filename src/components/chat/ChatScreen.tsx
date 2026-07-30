@@ -30,7 +30,7 @@ import { menuStyle } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
-import { liveList, liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
+import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
@@ -868,9 +868,12 @@ export function ChatScreen({
       putMessages(p.messages.map((m) => ({ businessId, kind: "wa" as const, threadId: convId, msgId: m.id, body: m.body, senderName: m.senderName, dir: m.dir, ts: m.ts })));
     const run = async () => {
       await sleep(10000); // let the app settle first
-      // Its own unfiltered list, not the visible window: the cache backs the list's message-text
-      // search, so its coverage shouldn't depend on which filters the agent happens to have on.
-      const recent = await liveList(businessId).catch(() => [] as ConvListItem[]);
+      // Su propia lista, no la ventana visible: el caché respalda la búsqueda por texto y su
+      // cobertura no debe depender de los filtros que el agente tenga puestos. Pero ACOTADA: era
+      // la lista completa sin límite —- una consulta pesada 10 s después de CADA entrada al chat,
+      // incluso cuando ya no quedaba nada por sembrar. 300 por recencia cubre de sobra los 90 días
+      // que el caché guarda.
+      const recent = (await liveListPage(businessId, { scope: "all", limit: 300 }).catch(() => null))?.rows ?? [];
       for (const c of recent) {
         if (stop) return;
         if ((c.last_message_at ?? "") < CUTOFF) continue;
@@ -2212,7 +2215,7 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
-  useEffect(() => { liveList(businessId).then(setConvs).catch(() => {}); }, [businessId]);
+  useEffect(() => { liveListPage(businessId, { scope: "all", limit: 200 }).then((p) => setConvs(p.rows)).catch(() => {}); }, [businessId]);
   const view = convs.filter((c) => { const s = q.trim().toLowerCase(); return !s || (c.contact?.name ?? "").toLowerCase().includes(s) || (c.contact?.phone ?? "").includes(s); });
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const doForward = async () => {
