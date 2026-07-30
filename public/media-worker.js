@@ -213,9 +213,15 @@ self.onmessage = async (e) => {
         }
         post({ type: "blob", blob: hit.blob });
         // Entradas guardadas antes de que existieran las vistas previas: se les genera una ahora,
-        // después de responder, para que la próxima consulta del hilo ya la encuentre.
+        // después de responder. El anuncio va DESPUÉS de guardarla —- anunciar antes era una
+        // carrera: el hilo volvía a preguntar, la vista previa aún no estaba, y la burbuja se
+        // quedaba en "Ver foto" hasta la próxima visita.
         if (type === "get" && !hit.preview && hit.blob.size > PEEK_FULL_MAX) {
-          makePreview(hit.blob).then((pv) => { if (pv) attachPreview(path, pv); });
+          makePreview(hit.blob).then(async (pv) => {
+            if (!pv) return;
+            await attachPreview(path, pv);
+            self.postMessage({ id: 0, type: "previewready", path });
+          });
         }
         return;
       }

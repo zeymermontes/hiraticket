@@ -359,7 +359,7 @@ export function Lightbox({ items, index, onClose, onForward, onDelete }: { items
         <button onClick={onClose} title={lang === "es" ? "Cerrar" : "Close"}><Icon name="x" size={20} /></button>
       </div>
       {items.length > 1 && <button className="lb-nav lb-prev" onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="prev"><span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><Icon name="chevd" size={26} /></span></button>}
-      <img src={src} alt="" className="lb-img" onClick={(e) => e.stopPropagation()}
+      <img src={src} alt="" className="lb-img" decoding="async" onClick={(e) => e.stopPropagation()}
         style={!full && thumb ? { filter: "blur(10px)" } : undefined} />
       {!full && !failed && (
         <div className="lb-progress" onClick={(e) => e.stopPropagation()}>

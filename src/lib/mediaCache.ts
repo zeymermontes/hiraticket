@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
  */
 
 /** Súbelo al cambiar el worker: si no, el navegador puede seguir sirviendo el viejo de su caché. */
-const WORKER_URL = "/media-worker.js?v=4";
+const WORKER_URL = "/media-worker.js?v=5";
 
 /**
  * Se dispara cuando el visor termina de guardar un archivo (detail = la ruta). Los peek del hilo lo
@@ -31,6 +31,7 @@ const WORKER_URL = "/media-worker.js?v=4";
 const CACHED_EVENT = "ht:mediacached";
 
 type Reply =
+  | { id: number; type: "previewready"; path: string }
   | { id: number; type: "blob"; blob: Blob }
   | { id: number; type: "progress"; pct: number | null }
   | { id: number; type: "toobig"; bytes: number }
@@ -58,6 +59,12 @@ function getWorker(): Worker | null {
     worker = new Worker(WORKER_URL);
     worker.onmessage = (e: MessageEvent<Reply>) => {
       const msg = e.data;
+      // Anuncio suelto (sin petición pendiente): el worker terminó de generar la vista previa de
+      // una entrada vieja. Se reenvía como CACHED_EVENT para que los peek de ese archivo re-miren.
+      if (msg.type === "previewready") {
+        window.dispatchEvent(new CustomEvent(CACHED_EVENT, { detail: msg.path }));
+        return;
+      }
       const p = pending.get(msg.id);
       if (!p) return;
       if (msg.type === "progress") return p.onProgress?.(msg.pct);
