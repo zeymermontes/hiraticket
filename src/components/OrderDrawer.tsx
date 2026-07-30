@@ -18,7 +18,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
@@ -98,6 +98,12 @@ export function OrderDrawer({
   const [trackSent, setTrackSent] = useState<string | null>(null); // shipment id whose tracking was just WhatsApped
   const [invOpen, setInvOpen] = useState(false);
   const [invSent, setInvSent] = useState<string | null>(null); // invoice id just WhatsApped
+  const [wasteItem, setWasteItem] = useState(""); // "" → merma del pedido completo
+  const [wasteProductId, setWasteProductId] = useState<string | null>(null); // del catálogo → costo tomado de ahí; null = genérico
+  const [wasteName, setWasteName] = useState("");
+  const [wasteQty, setWasteQty] = useState("1");
+  const [wasteCost, setWasteCost] = useState("");
+  const [wasteReason, setWasteReason] = useState("");
   const run = (fn: () => Promise<unknown>) => start(async () => {
     await fn();
     const fresh = await loadOrderDetail(detailProp.id);
@@ -529,6 +535,59 @@ export function OrderDrawer({
                 </div>
               )}
               {visible.length > 0 && <div style={{ marginTop: 10 }}>{visible.map((n) => { const au = n.author_id ? agents.find((a) => a.id === n.author_id) : null; return (<div className="note" key={n.id}><Avatar name={au?.name} initials={deriveInitials(au?.name ?? "?")} color={au?.color} size={26} /><div className={"note-body " + (n.item_id ? "note-subtask" : "note-order")}><div className="note-head"><Pill color={n.item_id ? "brand" : "amber"} dot>{noteTitle(n.item_id)}</Pill><span className="grow" /><span className="note-time">{date(n.created_at)}</span></div><div className="note-head" style={{ marginTop: 2 }}><span className="note-author">{au?.name ?? "Agente"}</span></div><div className="note-text">{n.body}</div></div></div>); })}</div>}
+            </div>
+          </div>
+            );
+          })()}
+
+          {/* mermas (0074) — reimpresiones, errores de producción, cancelaciones parciales.
+              Interno: nunca se manda al cliente ni afecta total/subtotal del pedido. */}
+          {!personal && (() => {
+            const wasteTotal = detail.waste.reduce((s, w) => s + w.cost, 0);
+            const pickWasteItem = (id: string) => { setWasteItem(id); const it = detail.items.find((x) => x.id === id); if (it) { setWasteName(it.name); setWasteProductId(null); } };
+            const pickWasteProduct = (p: Product) => { setWasteProductId(p.id); setWasteName(p.name); setWasteCost(String(p.cost ?? 0)); };
+            const addWaste = () => {
+              if (!wasteName.trim()) return;
+              run(() => addOrderWaste(detail.id, { orderItemId: wasteItem || null, productId: wasteProductId, name: wasteName, qty: Number(wasteQty) || 1, cost: Number(wasteCost) || 0, reason: wasteReason }));
+              setWasteItem(""); setWasteProductId(null); setWasteName(""); setWasteQty("1"); setWasteCost(""); setWasteReason("");
+            };
+            return (
+          <div className="ws-block">
+            <div className="ws-block-head"><Icon name="ban" size={16} /><h4 className="grow">{lang === "es" ? "Mermas" : "Waste"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill>{wasteTotal > 0 && <Pill color="slate">${formatMoney(wasteTotal)}</Pill>}</div>
+            <div style={{ padding: "12px 14px" }} className="col gap-2">
+              <div className="t-xs muted">{lang === "es" ? "Reimpresiones, errores de producción o cancelaciones parciales. No se le muestra al cliente ni cambia el total del pedido." : "Reprints, production errors or partial cancellations. Never shown to the customer and doesn't change the order total."}</div>
+              {detail.waste.length > 0 && (
+                <div className="col gap-1" style={{ paddingTop: 2 }}>
+                  {detail.waste.map((w) => (
+                    <div className="row gap-2" key={w.id} style={{ alignItems: "center", fontSize: 12.5 }}>
+                      <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(w.cost)}</span>
+                      <Pill color="slate">{w.qty}× {w.name}</Pill>
+                      <span className="t-xs muted truncate grow">{w.reason} · {new Date(w.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
+                      <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteOrderWaste(w.id))}><Icon name="x" size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="col gap-2">
+                <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
+                  {detail.items.length > 0 && (
+                    <select className="inp-inline" style={{ maxWidth: 150 }} value={wasteItem} onChange={(e) => pickWasteItem(e.target.value)}>
+                      <option value="">{lang === "es" ? "Pedido completo" : "Whole order"}</option>
+                      {detail.items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                    </select>
+                  )}
+                  {products.length > 0 && (
+                    <CatalogPicker products={products} personal={personal} lang={lang} compact onPick={pickWasteProduct} />
+                  )}
+                  <input className="inp-inline grow" style={{ minWidth: 140 }} placeholder={lang === "es" ? "Qué se perdió" : "What was wasted"} value={wasteName} onChange={(e) => { setWasteName(e.target.value); setWasteProductId(null); }} />
+                </div>
+                <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
+                  <input className="inp-inline" style={{ width: 56 }} type="number" min={1} value={wasteQty} onChange={(e) => setWasteQty(e.target.value)} title={lang === "es" ? "Cantidad" : "Qty"} />
+                  <div className="field field-sm field-filled" style={{ width: 100 }}><span className="t-sm muted">$</span><input type="number" min={0} placeholder={lang === "es" ? "Costo" : "Cost"} value={wasteCost} onChange={(e) => setWasteCost(e.target.value)} title={wasteProductId ? (lang === "es" ? "Tomado del catálogo, editable" : "From the catalog, editable") : undefined} /></div>
+                  <input className="inp-inline grow" style={{ minWidth: 140 }} placeholder={lang === "es" ? "Motivo (reimpresión, error…)" : "Reason (reprint, error…)"} value={wasteReason} onChange={(e) => setWasteReason(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addWaste(); }} />
+                  <button className="btn btn-sm btn-outline" disabled={pending || !wasteName.trim()} onClick={addWaste}><Icon name="plus" size={14} />{lang === "es" ? "Registrar" : "Add"}</button>
+                </div>
+              </div>
             </div>
           </div>
             );

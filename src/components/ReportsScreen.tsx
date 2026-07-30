@@ -81,6 +81,13 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         [es ? "Ticket promedio" : "Avg ticket", data.avgTicket],
         [es ? "Descuentos otorgados" : "Discounts granted", data.discountCount],
         [es ? "Total descuentos" : "Total discounts", data.discountTotal],
+        [null, null],
+        [es ? "Cobrado en el periodo" : "Collected in period", data.collectedTotal],
+        [es ? "· de pedidos de este periodo" : "· from this period's orders", data.collectedFromPeriodOrders],
+        [es ? "· de pedidos de periodos anteriores" : "· from earlier periods' orders", data.collectedFromOtherOrders],
+        [es ? "Pendiente de cobro (pedidos del periodo)" : "Pending collection (this period's orders)", data.pendingFromPeriodOrders],
+        [es ? "Mermas" : "Waste", data.wasteCount],
+        [es ? "Costo de mermas" : "Waste cost", data.wasteTotal],
       ] as CellValue[][]),
       [objs, data.orderCount],
       [personal ? (es ? "Activas" : "Active") : (es ? "Activos" : "Active"), active],
@@ -291,6 +298,39 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           </div>
         </section>
 
+        {/* Cobros (0074): "Ventas" arriba es devengado (por fecha del pedido); esto es caja
+            (por fecha del PAGO) — separa lo cobrado de este periodo de lo que llegó tarde, y
+            muestra lo que sigue sin cobrarse de lo vendido ahora (incluye lo nunca recogido). */}
+        {!personal && (
+          <section className="ws-block" style={{ marginBottom: 20 }}>
+            <div className="ws-block-head">
+              <Icon name="orders" size={16} />
+              <h4>{lang === "es" ? "Cobros" : "Collections"}</h4>
+              <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                {lang === "es" ? "por fecha de pago, no de venta" : "by payment date, not sale date"}
+              </span>
+            </div>
+            <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
+              <div>
+                <div className="t-xs muted">{lang === "es" ? "Cobrado en el periodo" : "Collected in period"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--green)" }}>{money(Math.round(data.collectedTotal))}</div>
+              </div>
+              <div>
+                <div className="t-xs muted">{lang === "es" ? "De pedidos de este periodo" : "From this period's orders"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.collectedFromPeriodOrders))}</div>
+              </div>
+              <div>
+                <div className="t-xs muted">{lang === "es" ? "De periodos anteriores" : "From earlier periods"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.collectedFromOtherOrders))}</div>
+              </div>
+              <div>
+                <div className="t-xs muted">{lang === "es" ? "Pendiente por cobrar" : "Pending collection"}</div>
+                <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: data.pendingFromPeriodOrders > 0 ? "var(--amber)" : "var(--text)" }}>{money(Math.round(data.pendingFromPeriodOrders))}</div>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
           <BarList title={personal ? (lang === "es" ? "Subtareas más frecuentes" : "Most frequent subtasks") : (lang === "es" ? "Productos más vendidos" : "Best sellers")} rows={asBars(topQty, "qty", "brand")} />
           <BarList title={personal ? (lang === "es" ? "Subtareas menos frecuentes" : "Least frequent subtasks") : (lang === "es" ? "Productos menos vendidos" : "Worst sellers")} rows={asBars(bottomQty, "qty", "slate")} />
@@ -330,6 +370,28 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                     <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--red)" }}>{money(Math.round(data.refundedTotal))}</div>
                   </div>
                 )}
+              </div>
+            </section>
+          )}
+          {/* Mermas (0074): costo real, no venta perdida — ya se restó de la utilidad estimada. */}
+          {!personal && data.wasteCount > 0 && (
+            <section className="ws-block">
+              <div className="ws-block-head">
+                <Icon name="ban" size={16} />
+                <h4>{lang === "es" ? "Mermas" : "Waste"}</h4>
+                <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                  {lang === "es" ? "ya restado de la utilidad" : "already subtracted from profit"}
+                </span>
+              </div>
+              <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
+                <div>
+                  <div className="t-xs muted">{lang === "es" ? "Registros" : "Entries"}</div>
+                  <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{data.wasteCount}</div>
+                </div>
+                <div>
+                  <div className="t-xs muted">{lang === "es" ? "Costo total" : "Total cost"}</div>
+                  <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--amber)" }}>{money(Math.round(data.wasteTotal))}</div>
+                </div>
               </div>
             </section>
           )}

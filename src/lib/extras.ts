@@ -167,6 +167,17 @@ export interface ReportData {
   cancelledTotal: number;   // suma de sus totales — lo que se dejó de vender
   refundedTotal: number;    // dinero devuelto (pagos negativos), en positivo
   byAgentDiscounts: { id: string; name: string; color: string; count: number; amount: number }[];
+  // Cobros (0074+): "ventas" de arriba es devengado (por fecha del pedido); esto es caja (por
+  // fecha del PAGO), que es lo que de verdad hay que ver cuando cobran días o meses después, o
+  // nunca vienen a recoger. collectedTotal = collectedFromPeriodOrders + collectedFromOtherOrders.
+  collectedTotal: number;            // cobrado en el periodo, sin importar de qué pedido
+  collectedFromPeriodOrders: number; // ...de pedidos también creados en este periodo
+  collectedFromOtherOrders: number;  // ...de pedidos de otros periodos (cobros tardíos)
+  pendingFromPeriodOrders: number;   // de las ventas del periodo, lo que sigue sin cobrarse a la fecha
+  // Mermas (0074): reimpresiones, errores de producción, cancelaciones parciales. Costo real,
+  // no venta perdida — se resta de la utilidad estimada.
+  wasteCount: number;
+  wasteTotal: number;
   // Per-order detail for the report export (names already resolved).
   orders: {
     code: string; contact: string; phone: string; stage: string; area: string; agent: string;
@@ -194,7 +205,24 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     if (error) ({ data } = await get(""));
     return data ?? [];
   };
-  const [orders, { count: resolved }, stages, areas, agents, catalog] = await Promise.all([
+  // Cobrado por su propia fecha de pago (no la del pedido) — un pedido puede pagarse días o
+  // meses después de creado, o nunca cobrarse del todo. `orders!inner` solo para poder filtrar
+  // por `orders.deleted_at`; payments.order_id es la única FK entre las dos tablas, así que no
+  // hay ambigüedad de embedding aquí (a diferencia de orders→stages tras la 0072).
+  const fetchPayments = async () => {
+    const { data, error } = await supabase.from("payments")
+      .select("amount, created_at, order_id, orders!inner(created_at, deleted_at)")
+      .eq("business_id", businessId).is("orders.deleted_at", null)
+      .gte("created_at", fromISO).lte("created_at", toISO);
+    return error ? [] : (data ?? []);
+  };
+  // Mermas (0074): puede no existir la tabla aún si la migración no se ha corrido.
+  const fetchWaste = async () => {
+    const { data, error } = await supabase.from("order_waste")
+      .select("cost").eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO);
+    return error ? [] : (data ?? []);
+  };
+  const [orders, { count: resolved }, stages, areas, agents, catalog, payRows, wasteRows] = await Promise.all([
     fetchOrders(),
     supabase.from("conversations").select("id", { count: "exact", head: true })
       .eq("business_id", businessId).eq("status", "resolved")
@@ -203,6 +231,8 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     getAreas(businessId),
     getAgents(businessId),
     getProducts(businessId),
+    fetchPayments(),
+    fetchWaste(),
   ]);
 
   // Profit per sold item: items whose name matches a catalog product with a cost use
@@ -233,6 +263,26 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     allRows.reduce((s, o) => s + ((o.payments ?? []) as { amount: number }[])
       .reduce((t, p) => t + Math.min(0, Number(p.amount) || 0), 0), 0),
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const paidOf = (o: any) => ((o.payments ?? []) as { amount: number }[]).reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  // Cobrado por fecha del PAGO (caja), separado de si el pedido que se pagó es de este periodo o
+  // de uno anterior — así "cobrado" no se pierde cuando el dinero entra después de la venta.
+  let collectedFromPeriodOrders = 0, collectedFromOtherOrders = 0;
+  for (const p of payRows) {
+    const amt = Number((p as { amount: unknown }).amount ?? 0);
+    if (amt <= 0) continue; // reembolsos ya van en refundedTotal
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ord = (p as any).orders;
+    const orderCreatedAt = (Array.isArray(ord) ? ord[0] : ord)?.created_at as string | undefined;
+    if (orderCreatedAt && orderCreatedAt >= fromISO && orderCreatedAt <= toISO) collectedFromPeriodOrders += amt;
+    else collectedFromOtherOrders += amt;
+  }
+  const collectedTotal = collectedFromPeriodOrders + collectedFromOtherOrders;
+  // De las ventas de este periodo (no canceladas), cuánto sigue sin cobrarse a la fecha —
+  // incluye los que nunca vinieron a recoger o pagar.
+  const pendingFromPeriodOrders = Math.max(0, rows.reduce((s, o) => s + Number(o.total ?? 0) - paidOf(o), 0));
+  const wasteCount = wasteRows.length;
+  const wasteTotal = wasteRows.reduce((s, w) => s + Number((w as { cost: unknown }).cost ?? 0), 0);
   const countBy = <T extends { id: string; name: string; color: string }>(
     items: T[], key: "stage_id" | "area_id",
   ) => items.map((it) => ({ name: it.name, color: it.color, count: rows.filter((o) => o[key] === it.id).length }));
@@ -301,7 +351,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
   return {
     totalSales: total,
-    totalProfit: Math.round(rows.reduce((s, o) => s + orderProfit(o), 0) * 100) / 100,
+    // Las mermas del periodo son costo real incurrido, aunque no estén ligadas a un pedido
+    // vendido en este mismo rango — se restan aparte de orderProfit (que ya neteó descuentos).
+    totalProfit: Math.round((rows.reduce((s, o) => s + orderProfit(o), 0) - wasteTotal) * 100) / 100,
     orderCount: rows.length,
     resolvedConvs: resolved ?? 0,
     avgTicket: rows.length ? Math.round(total / rows.length) : 0,
@@ -319,6 +371,12 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     cancelledCount,
     cancelledTotal,
     refundedTotal,
+    collectedTotal,
+    collectedFromPeriodOrders,
+    collectedFromOtherOrders,
+    pendingFromPeriodOrders,
+    wasteCount,
+    wasteTotal: Math.round(wasteTotal * 100) / 100,
     byAgentDiscounts,
     orders: rows.map((o) => ({
       code: (o.code as string) ?? "",

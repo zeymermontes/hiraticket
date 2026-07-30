@@ -7,6 +7,11 @@ export interface OrderPayment { id: string; amount: number; method: string | nul
 export interface PaymentProof { id: string; method: string; account_ref: string | null; image_url: string; image_mime: string | null; amount: number | null; payer_note: string | null; status: string; reviewed_by: string | null; created_at: string }
 export interface OrderShipment { id: string; provider: string; carrier: string | null; service: string | null; tracking_number: string | null; label_url: string | null; cost: number | null; status: string; created_at: string }
 export interface OrderInvoice { id: string; uuid: string | null; total: number | null; pdf_url: string | null; verification_url: string | null; status: string; created_at: string }
+/** Merma interna (0074): reimpresión, error de producción o cancelación parcial. Nunca visible al
+ *  cliente. `product_id` liga con el catálogo (costo tomado de ahí); null = merma genérica con
+ *  `cost` a mano. `name` es una fotografía —- se guarda tal cual aunque el producto o la línea
+ *  del pedido se borren después. */
+export interface OrderWaste { id: string; order_item_id: string | null; product_id: string | null; name: string; qty: number; cost: number; reason: string; created_by: string | null; created_at: string }
 
 export interface OrderDetail {
   id: string;
@@ -41,6 +46,7 @@ export interface OrderDetail {
   proofs: PaymentProof[];
   shipments: OrderShipment[];
   invoices: OrderInvoice[];
+  waste: OrderWaste[];
   paid: number;
   product_stages: boolean;
 }
@@ -66,7 +72,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   if (orderErr) ({ data: order } = await supabase.from("orders").select(base("", "")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
-  const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes] = await Promise.all([
+  const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes, wasteRes] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, note, stage:stages!stage_id(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at, item_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
     supabase.from("events").select("id, kind, text, created_at, actor_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
@@ -74,6 +80,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     supabase.from("payment_proofs").select("id, method, account_ref, image_url, image_mime, amount, payer_note, status, reviewed_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("shipments").select("id, provider, carrier, service, tracking_number, label_url, cost, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("order_waste").select("id, order_item_id, product_id, name, qty, cost, reason, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
   ]);
   // Fall back to base item columns if stage_id/stage isn't available yet.
   let items = itemsRes.data;
@@ -96,6 +103,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   const shipments = (shipRes.error ? [] : (shipRes.data ?? [])) as unknown as OrderShipment[];
   // invoices table may not exist yet (0055 not applied).
   const invoices = (invRes.error ? [] : (invRes.data ?? [])) as unknown as OrderInvoice[];
+  // order_waste table may not exist yet (0074 not applied).
+  const waste = (wasteRes.error ? [] : (wasteRes.data ?? [])) as unknown as OrderWaste[];
 
   return {
     ...(order as unknown as Omit<OrderDetail, "items" | "notes" | "events" | "payments" | "proofs" | "paid" | "contact" | "stage" | "area">),
@@ -114,6 +123,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     proofs,
     shipments,
     invoices,
+    waste,
     paid,
     product_stages: ((order.business as unknown as { product_stages?: boolean } | null)?.product_stages) ?? false,
   };

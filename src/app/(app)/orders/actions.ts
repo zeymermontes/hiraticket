@@ -387,6 +387,29 @@ export async function uncancelOrder(orderId: string): Promise<{ ok: boolean; err
   return { ok: true };
 }
 
+/** Registra una merma (0074): reimpresión, error de producción o cancelación parcial. Uso
+ *  interno — no toca `total`/`subtotal` del pedido, solo se resta de la utilidad en reportes.
+ *  `productId` liga con el catálogo (el costo se tomó de ahí); null = merma genérica con costo
+ *  capturado a mano. */
+export async function addOrderWaste(orderId: string, input: { orderItemId?: string | null; productId?: string | null; name: string; qty: number; cost: number; reason: string }): Promise<void> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
+  if (!order) return;
+  await supabase.from("order_waste").insert({
+    business_id: order.business_id, order_id: orderId, order_item_id: input.orderItemId ?? null, product_id: input.productId ?? null,
+    name: input.name.trim() || "Merma", qty: input.qty || 1, cost: input.cost || 0, reason: input.reason.trim() || "Merma", created_by: user?.id ?? null,
+  });
+  revalidatePath("/orders"); revalidatePath("/reports");
+}
+
+/** Quita un registro de merma (p. ej. capturado por error). */
+export async function deleteOrderWaste(wasteId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("order_waste").delete().eq("id", wasteId);
+  revalidatePath("/orders"); revalidatePath("/reports");
+}
+
 /** One page of the orders table (live orders, or the trash with `trash: true`). Search, filters,
  *  sorting and the total count are resolved in SQL — see getOrdersPage. */
 export async function loadOrdersPage(f: OrderQuery): Promise<OrdersPage> {
