@@ -68,6 +68,37 @@ export interface Appointment {
   id: string; title: string; starts_at: string; status: string;
   contact: { name: string } | null;
 }
+/** Un pedido (o tarea, en modo personal) con fecha límite, para la agenda y las banderitas. */
+export interface DueOrder {
+  id: string; code: string; due_at: string; total: number; priority: string | null;
+  contact: { name: string } | null;
+}
+
+/**
+ * Pedidos abiertos con fecha límite: vencidos (hasta 60 días atrás) y por vencer (próximos 7 días).
+ *
+ * "Abierto" = sin borrar, sin cancelar y fuera de la etapa final —- la misma definición que usa el
+ * contador del rail. Un pedido entregado con fecha límite pasada no está "vencido": está terminado.
+ */
+export async function getDueOrders(businessId: string, lastStageId: string | null): Promise<DueOrder[]> {
+  const supabase = await createClient();
+  const from = new Date(Date.now() - 60 * 86400000).toISOString();
+  const to = new Date(Date.now() + 7 * 86400000).toISOString();
+  const build = (cols: string, cancelled: boolean) => {
+    let q = supabase.from("orders").select(cols)
+      .eq("business_id", businessId).not("due_at", "is", null)
+      .gte("due_at", from).lte("due_at", to)
+      .is("deleted_at", null);
+    if (cancelled) q = q.is("cancelled_at", null);
+    if (lastStageId) q = q.neq("stage_id", lastStageId);
+    return q.order("due_at", { ascending: true }).limit(200);
+  };
+  // cancelled_at (0065) puede no existir aún — cascada.
+  let { data, error } = await build("id, code, due_at, total, priority, contact:contacts(name)", true);
+  if (error) ({ data } = await build("id, code, due_at, total, priority, contact:contacts(name)", false));
+  return (data ?? []) as unknown as DueOrder[];
+}
+
 export async function getAppointments(businessId: string): Promise<Appointment[]> {
   const supabase = await createClient();
   const { data } = await supabase

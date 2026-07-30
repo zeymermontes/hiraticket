@@ -1,12 +1,55 @@
 import { getMyBusiness } from "@/lib/queries";
-import { getAppointments } from "@/lib/extras";
+import { getAppointments, getDueOrders, getProducts } from "@/lib/extras";
+import { getAreas, getStages } from "@/lib/business";
+import { getAgents, getConversationDetail } from "@/lib/chat";
+import { getSessions, isConnected } from "@/lib/whatsapp";
+import { getOrderDetail } from "@/lib/orders";
+import { getActiveIntegrations } from "@/lib/plugins";
 import { AgendaScreen } from "@/components/AgendaScreen";
 
 export const dynamic = "force-dynamic";
 
-export default async function AgendaPage() {
+export default async function AgendaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ order?: string }>;
+}) {
   const business = await getMyBusiness();
   if (!business) return null;
-  const appointments = await getAppointments(business.id);
-  return <AgendaScreen businessId={business.id} appointments={appointments} />;
+
+  const sp = await searchParams;
+  const stages = await getStages(business.id);
+  const lastStageId = stages.length ? stages[stages.length - 1].id : null;
+  const [appointments, dueOrders] = await Promise.all([
+    getAppointments(business.id),
+    getDueOrders(business.id, lastStageId),
+  ]);
+
+  // El detalle a la derecha vive en la URL (?order=), igual que en Pedidos: el mismo patrón, el
+  // mismo drawer. Sus datos de apoyo solo se cargan cuando de verdad hay un pedido abierto.
+  const openOrder = sp.order ? await getOrderDetail(sp.order) : null;
+  const drawer = openOrder
+    ? await (async () => {
+        const [areas, agents, products, sessions, integrations, convDetail] = await Promise.all([
+          getAreas(business.id),
+          getAgents(business.id),
+          getProducts(business.id),
+          getSessions(business.id),
+          getActiveIntegrations(business.id),
+          openOrder.conversation_id ? getConversationDetail(openOrder.conversation_id) : Promise.resolve(null),
+        ]);
+        return { areas, agents, products, connected: isConnected(sessions), shipping: integrations.shipping, invoicing: integrations.invoicing, convDetail };
+      })()
+    : null;
+
+  return (
+    <AgendaScreen
+      businessId={business.id}
+      appointments={appointments}
+      dueOrders={dueOrders}
+      stages={stages}
+      openOrder={openOrder}
+      drawer={drawer}
+    />
+  );
 }

@@ -232,7 +232,52 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
   );
 }
 
-function TopBar({ notifications, connected, businessId }: { notifications: Notif[]; connected: boolean; businessId: string }) {
+/**
+ * El calendario del TopBar: cuántas entregas (pedidos con fecha límite + citas) hay hoy, mañana y
+ * pasado mañana, como banderitas rojo/naranja/amarillo. Si algo ya se pasó, el chip entero se pone
+ * rojo con el número de vencidos. Clic → Agenda, que lista esas mismas cosas.
+ *
+ * Los cubos se calculan AQUÍ y no en el servidor porque "hoy" es el día del navegador del agente;
+ * el servidor vive en UTC y a las 6 pm de Culiacán ya sería "mañana".
+ */
+function DueFlags({ dates, onNavigate }: { dates: string[]; onNavigate?: (href: string) => void }) {
+  const { lang, personal } = useApp();
+  const day = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const now = new Date();
+  const today = day(now);
+  const tomorrow = day(new Date(now.getTime() + 86400000));
+  const dayAfter = day(new Date(now.getTime() + 2 * 86400000));
+  let overdue = 0, d0 = 0, d1 = 0, d2 = 0;
+  for (const iso of dates) {
+    const d = new Date(iso);
+    const k = day(d);
+    if (k === today) d0++;
+    else if (k === tomorrow) d1++;
+    else if (k === dayAfter) d2++;
+    else if (d.getTime() < now.getTime()) overdue++;
+  }
+  if (!overdue && !d0 && !d1 && !d2) return null; // sin entregas cerca, sin ruido
+
+  const noun = personal ? (lang === "es" ? "tareas" : "tasks") : (lang === "es" ? "entregas" : "deliveries");
+  const title = overdue
+    ? (lang === "es" ? `${overdue} ${noun} vencidas · clic para ver la agenda` : `${overdue} overdue ${noun} · click for the agenda`)
+    : (lang === "es" ? `${noun} de los próximos 3 días · clic para ver la agenda` : `${noun} for the next 3 days · click for the agenda`);
+  const flag = (n: number, bg: string, label: string) =>
+    n > 0 ? <span key={label} title={label} style={{ background: bg, color: "#fff", borderRadius: 999, minWidth: 18, height: 18, padding: "0 5px", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span> : null;
+  return (
+    <Link href="/agenda" prefetch={false} title={title} onClick={() => onNavigate?.("/agenda")}
+      className="conn-chip" style={overdue ? { background: "var(--red)", borderColor: "var(--red)", color: "#fff" } : undefined}>
+      <Icon name="calendar" size={15} />
+      {overdue > 0 && <span style={{ fontWeight: 800 }}>{overdue}</span>}
+      {overdue > 0 && <Icon name="flag" size={12} />}
+      {flag(d0, "#DC2626", lang === "es" ? "Para hoy" : "Due today")}
+      {flag(d1, "#EA580C", lang === "es" ? "Para mañana" : "Due tomorrow")}
+      {flag(d2, "#D97706", lang === "es" ? "Para pasado mañana" : "Due in 2 days")}
+    </Link>
+  );
+}
+
+function TopBar({ notifications, connected, businessId, dueDates = [], onNavigate }: { notifications: Notif[]; connected: boolean; businessId: string; dueDates?: string[]; onNavigate?: (href: string) => void }) {
   const { lang, setLang, theme, setTheme, t, personal } = useApp();
   return (
     <header className="topbar">
@@ -240,6 +285,8 @@ function TopBar({ notifications, connected, businessId }: { notifications: Notif
         <GlobalSearch businessId={businessId} />
       </div>
       <span className="grow" />
+
+      <DueFlags dates={dueDates} onNavigate={onNavigate} />
 
       <Link className={"conn-chip " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings" prefetch={false}>
         <span className="conn-dot" />
@@ -280,6 +327,7 @@ export function Shell({
   objectName = "Pedidos",
   personal = false,
   isAdmin = false,
+  dueDates = [],
   children,
 }: {
   user: ShellUser;
@@ -292,6 +340,8 @@ export function Shell({
   objectName?: string;
   personal?: boolean;
   isAdmin?: boolean;
+  /** Fechas (ISO) de pedidos con fecha límite y citas programadas, para las banderitas del TopBar. */
+  dueDates?: string[];
   children: React.ReactNode;
 }) {
   // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
@@ -357,7 +407,7 @@ export function Shell({
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />
             <div className="main" style={{ position: "relative" }}>
-              <TopBar notifications={notifs} connected={connected} businessId={businessId} />
+              <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={dueDates} onNavigate={onNavigate} />
               {children}
               {navDest && (
                 <div style={{ position: "absolute", inset: 0, top: 57, background: "var(--surface)", zIndex: 30 }}>

@@ -6,6 +6,7 @@ import { getChatBadges, getNotifications } from "@/lib/notifications";
 import { getInternalUnread } from "@/lib/internal";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getStages } from "@/lib/business";
+import { getDueOrders } from "@/lib/extras";
 import { Shell, type ShellUser } from "@/components/Shell";
 import { AppProvider } from "@/components/AppContext";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
@@ -65,7 +66,20 @@ export default async function AppLayout({
   const lastStageId = stages.length ? stages[stages.length - 1].id : null;
   let q = supabase.from("orders").select("id", { count: "exact", head: true }).eq("business_id", business.id).is("deleted_at", null);
   if (lastStageId) q = q.neq("stage_id", lastStageId);
-  const { count: openOrders } = await q;
+  // Fechas para las banderitas del TopBar: pedidos abiertos con fecha límite y citas programadas.
+  // Solo las fechas —- los cubos (hoy/mañana/vencido) se arman en el CLIENTE, porque "hoy" depende
+  // del huso del navegador y el servidor vive en UTC.
+  const [{ count: openOrders }, dueOrders, { data: dueAppts }] = await Promise.all([
+    q,
+    getDueOrders(business.id, lastStageId),
+    supabase.from("appointments").select("starts_at").eq("business_id", business.id).eq("status", "scheduled")
+      .gte("starts_at", new Date(Date.now() - 60 * 86400000).toISOString())
+      .lte("starts_at", new Date(Date.now() + 7 * 86400000).toISOString()),
+  ]);
+  const dueDates = [
+    ...dueOrders.map((o) => o.due_at),
+    ...((dueAppts ?? []) as { starts_at: string }[]).map((a) => a.starts_at),
+  ];
   const objectName = (business.object_singular ?? "Pedido") + "s";
 
   return (
@@ -80,6 +94,7 @@ export default async function AppLayout({
       personal={business.mode === "personal"}
       isAdmin={mem?.role === "admin"}
       notifPrefs={parseNotifPrefs(prof?.notif_prefs)}
+      dueDates={dueDates}
     >
       {children}
     </Shell>
