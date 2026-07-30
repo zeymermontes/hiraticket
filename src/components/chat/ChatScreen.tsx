@@ -694,6 +694,11 @@ export function ChatScreen({
   // The list window is owned by the client from here on (the server only seeds the first page), so
   // it is NOT re-seeded from listProp — that would replace a filtered window with the default one.
   const [list, setList] = useState(listProp);
+  // Se leen dentro de patchDetail. Con reactStrictMode encendido React invoca los updaters DOS veces
+  // en desarrollo, así que calcular a partir de refs (y no anidando setters) evita descontar doble.
+  const listRef = useRef(listProp);
+  listRef.current = list;
+  const listQueryRef = useRef<ConvQuery>({});
   const [detail, setDetail] = useState(detailProp);
   useEffect(() => { setDetail(detailProp); }, [detailProp]);
   const detailIdRef = useRef<string | null>(null);
@@ -706,7 +711,64 @@ export function ChatScreen({
   const realtimeHealthyRef = useRef(false);
   const resyncRef = useRef<() => void>(() => {});
   const [realtimeDown, setRealtimeDown] = useState(false); // realtime channel dropped → show a reload banner
-  const patchDetail = useCallback((patch: Partial<ConvDetail>) => setDetail((c) => (c ? { ...c, ...patch } : c)), []);
+  /**
+   * Aplica un cambio a la conversación abierta Y a la lista Y a los contadores, todo de inmediato.
+   *
+   * Antes solo tocaba el encabezado. El tag cambiaba al instante pero la lista y los chips esperaban
+   * al servidor, así que uno o dos segundos después la fila se movía y los números saltaban —- justo
+   * eso es lo que hace sentir la app lenta aunque la acción ya haya respondido.
+   *
+   * El refetch sigue llegando después y reconcilia; esto solo adelanta lo que ya sabemos sin
+   * preguntar. Si algo no cuadra, el servidor gana.
+   */
+  const patchDetail = useCallback((patch: Partial<ConvDetail>) => {
+    setDetail((c) => (c ? { ...c, ...patch } : c));
+    const id = detailIdRef.current;
+    if (!id) return;
+    const row = listRef.current.find((r) => r.id === id);
+    if (!row) return;
+    const next = { ...row, ...(patch as Partial<ConvListItem>) };
+
+    // Los contadores se mueven por la DIFERENCIA respecto a lo que la fila tenía, no por el valor
+    // nuevo: sin comparar contra el estado anterior, dos clics seguidos descontarían dos veces.
+    setCounts((c) => {
+      const d = { ...c };
+      if (patch.status !== undefined && patch.status !== row.status) {
+        const bucket = (st: string) => (st === "open" || st === "pending" || st === "resolved" ? (st as "open" | "pending" | "resolved") : null);
+        const from = bucket(row.status), to = bucket(next.status);
+        if (from) d[from] = Math.max(0, d[from] - 1);
+        if (to) d[to] = d[to] + 1;
+        // "Activos" = abierto + pendiente. Resolver saca de ahí; reabrir vuelve a meter.
+        const wasActive = row.status !== "resolved", isActive = next.status !== "resolved";
+        if (wasActive && !isActive) d.active = Math.max(0, d.active - 1);
+        if (!wasActive && isActive) d.active = d.active + 1;
+      }
+      if (patch.assignee_id !== undefined && patch.assignee_id !== row.assignee_id) {
+        const wasMine = row.assignee_id === meId, isMine = next.assignee_id === meId;
+        if (wasMine && !isMine) d.mine = Math.max(0, d.mine - 1);
+        if (!wasMine && isMine) d.mine = d.mine + 1;
+        const wasFree = !row.assignee_id, isFree = !next.assignee_id;
+        if (wasFree && !isFree) d.unassigned = Math.max(0, d.unassigned - 1);
+        if (!wasFree && isFree) d.unassigned = d.unassigned + 1;
+      }
+      return d;
+    });
+
+    // Si con el cambio la fila deja de pertenecer a la vista actual, se va ya: verla desaparecer dos
+    // segundos después es peor que verla desaparecer al instante.
+    const q = listQueryRef.current;
+    const gone =
+      (q.tab === "unassigned" && !!next.assignee_id) ||
+      (q.tab === "mine" && next.assignee_id !== meId) ||
+      (q.status === "active" && next.status === "resolved") ||
+      (!!q.status && q.status !== "active" && q.status !== "trash" && next.status !== q.status);
+    if (gone) {
+      setListTotal((t) => Math.max(0, t - 1));
+      setList((rows) => rows.filter((r) => r.id !== id));
+    } else {
+      setList((rows) => rows.map((r) => (r.id === id ? next : r)));
+    }
+  }, [meId]);
 
   // Re-render periodically so typing indicators expire on their own (no "paused" event needed).
   const [, setNowTick] = useState(0);
@@ -1056,6 +1118,7 @@ export function ChatScreen({
   }), [tab, meId, areaF, statusF, trashView, unreadOnly, showArchived, search]);
 
   // Any filter change resets the window back to one page.
+  listQueryRef.current = listQuery;
   useEffect(() => { setPages(1); }, [listQuery]);
 
   // Only the newest response may land: a filter change fires a fetch and a page reset, so two can
@@ -1755,7 +1818,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
-          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
+          <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="check" size={14} />}{lang === "es" ? "Aceptar" : "Accept"}
           </button>
         )}
