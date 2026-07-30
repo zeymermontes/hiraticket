@@ -43,6 +43,9 @@ export interface InternalMsg {
   media_path?: string | null;
   media_mime: string | null;
   media_name: string | null;
+  /** `meta.thumb` = miniatura generada en el navegador al subir (0071). Ver `@/lib/imageThumb`. */
+  meta?: Record<string, unknown> | null;
+  media_size?: number | null;
   forwarded: boolean;
 }
 
@@ -117,9 +120,15 @@ export async function getInternalUnread(businessId: string, userId: string): Pro
 export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; limit?: number }): Promise<InternalMsg[]> {
   const supabase = await createClient();
   const limit = opts?.limit ?? MSG_PAGE;
-  let q = supabase.from("internal_messages").select("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded").eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
-  if (opts?.before) q = q.lt("created_at", opts.before);
-  const { data } = await q;
+  // meta (la miniatura) y media_size llegan con la 0071. Si no está aplicada la consulta falla, así
+  // que se reintenta sin ellas: los mensajes importan más que la miniatura.
+  const page = (cols: string) => {
+    let q = supabase.from("internal_messages").select(cols).eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
+    if (opts?.before) q = q.lt("created_at", opts.before);
+    return q;
+  };
+  let { data, error } = await page("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded, meta, media_size");
+  if (error) ({ data } = await page("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded"));
   const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, body: m.body ? decryptBody(businessId, m.body) : m.body, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
   msgs.reverse();
   return signInternalMedia(msgs);

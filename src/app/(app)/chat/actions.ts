@@ -218,7 +218,10 @@ export async function removeStickerFavorite(path: string): Promise<void> {
 /** Queue an outbound media message (file already uploaded to storage). */
 export async function sendMediaMessage(
   convId: string,
-  input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string },
+  // `thumb` y `size` los calcula el navegador al subir (ver `@/lib/imageThumb`): es el único lugar
+  // donde el archivo está a mano sin volver a bajarlo. Sin la miniatura, la burbuja no tiene nada
+  // que pintar y termina cargando el original completo.
+  input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string; thumb?: string; size?: number },
 ): Promise<void> {
   const { supabase, userId } = await ctx();
   const businessId = await businessOf(convId);
@@ -227,6 +230,8 @@ export async function sendMediaMessage(
     business_id: businessId, conversation_id: convId, direction: "out",
     type: input.type, body: input.caption ? encryptBody(businessId, input.caption) : null, author_id: userId, state: "queued",
     media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name || null,
+    media_size: input.size ?? null,
+    meta: input.thumb ? { thumb: input.thumb } : null,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
 }

@@ -40,6 +40,7 @@ import { isBuildStale } from "@/lib/buildSkew";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
 import { timedClick } from "@/lib/timing";
+import { makeImageThumb } from "@/lib/imageThumb";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -218,19 +219,22 @@ function usePopover() {
 const thumbOf = (m: ChatMessage): string | undefined => ((m.meta ?? {}) as { thumb?: string }).thumb;
 
 /**
- * Desde cuándo existen las miniaturas. Marca el corte de comportamiento en el hilo:
+ * El momento exacto en que las miniaturas empezaron a existir en los TRES caminos: las que manda
+ * WhatsApp, las que calcula el worker de Go al recibir, y las que genera el navegador al subir.
  *
- *   - Antes de esta fecha: no hay nada que pintar sin bajar el original, y bajarlo es justo lo que
- *     trababa la pestaña (una foto de 16 MB no solo tarda: decodificarla congela la interfaz). Así
- *     que se pide un clic —- el visor la baja con barra de progreso.
- *   - Después: si trae miniatura se pinta y el original espera al visor. Si no la trae —- las que
- *     sube el equipo desde el navegador nunca pasan por WhatsApp ni por el worker —- se carga como
- *     siempre, porque son capturas y fotos normales, no el historial pesado.
+ * Es un instante, no un día. El primer intento usó medianoche UTC del 29 de julio, que en el huso
+ * del equipo (MST) cae a las 5 de la tarde del 28 —- así que una foto mandada a las 2:31 p.m. del 29
+ * quedaba clasificada como "nueva" y la burbuja intentaba cargar sus 16 MB. De ahí el corte al
+ * despliegue real.
+ *
+ * Antes de este instante no hay nada que pintar sin bajar el original, y bajarlo es lo que traba la
+ * pestaña: se pide un clic y el visor lo baja con barra de progreso. Después, todo lo que entra o
+ * sale trae miniatura.
  *
  * El rescate del historial (THUMB_BACKFILL en el worker) le pone miniatura a las de antes, y en
  * cuanto la tienen dejan de necesitar el clic.
  */
-const THUMBS_SINCE = new Date("2026-07-29T00:00:00Z");
+const THUMBS_SINCE = new Date("2026-07-30T00:00:00Z"); // 29 jul 2026, 17:00 MST
 
 function mediaBox(m: ChatMessage, maxW: number, maxH: number, defW: number, defH: number) {
   const meta = (m.meta ?? {}) as { w?: number; h?: number };
@@ -1419,7 +1423,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           if (error) throw new Error(error.message);
           // Store the storage PATH; the private bucket is served via signed URLs on read.
           const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-          await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+          // La miniatura se calcula aquí porque es el único momento en que el archivo está a mano
+          // sin volver a bajarlo. Sin ella la burbuja no tiene nada que pintar (ver THUMBS_SINCE).
+          const thumb = await makeImageThumb(file);
+          await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb, size: file.size });
         } catch (e) {
           // Un archivo que falla no debe tumbar a los demás ni perderse: se queda en la bandeja
           // para reintentarlo, en vez de desaparecer en silencio como antes.

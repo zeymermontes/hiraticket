@@ -40,13 +40,19 @@ export async function sendInternalMessage(channel: string, body: string, replyTo
 }
 
 /** Queue an internal media message (file already uploaded to the 'media' bucket). */
-export async function sendInternalMedia(channel: string, input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string }): Promise<void> {
+export async function sendInternalMedia(channel: string, input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string; thumb?: string; size?: number }): Promise<void> {
   const { supabase, userId, businessId } = await ctx();
   if (!userId || !businessId) return;
-  await supabase.from("internal_messages").insert({
+  const row = {
     business_id: businessId, channel, author_id: userId, body: input.caption ? encryptBody(businessId, input.caption) : "",
     type: input.type, media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name ?? null,
+  };
+  // meta/media_size llegan con la 0071. Si no está aplicada el insert falla, así que se reintenta
+  // sin ellas: mandar la foto importa más que su miniatura.
+  const { error } = await supabase.from("internal_messages").insert({
+    ...row, media_size: input.size ?? null, meta: input.thumb ? { thumb: input.thumb } : null,
   });
+  if (error) await supabase.from("internal_messages").insert(row);
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel, last_read_at: new Date().toISOString() });
 }
 

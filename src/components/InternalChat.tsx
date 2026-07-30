@@ -24,6 +24,7 @@ import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import { saveStickerFavorite, removeStickerFavorite } from "@/app/(app)/chat/actions";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia } from "@/lib/mediaCache";
+import { makeImageThumb } from "@/lib/imageThumb";
 import { CachedImg } from "@/components/chat/CachedImg";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus } from "@/lib/composerFocus";
@@ -264,7 +265,10 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
           if (error) throw new Error(error.message);
           const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
-          await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined });
+          // Igual que en el chat de clientes: la miniatura se calcula al subir, que es cuando el
+          // archivo está a mano. Ver `@/lib/imageThumb`.
+          const thumb = await makeImageThumb(file);
+          await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb, size: file.size });
         } catch (e) {
           // El que falla se queda en la bandeja para reintentar, en vez de desaparecer.
           console.error(e);
