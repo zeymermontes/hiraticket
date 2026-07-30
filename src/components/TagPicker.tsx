@@ -5,6 +5,9 @@ import { Pill } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useApp } from "@/components/AppContext";
 import { tagColor } from "@/lib/types";
+import { deleteTagFromCatalog } from "@/app/(app)/business/actions";
+
+interface CatalogTag { id: string; name: string }
 
 /** Popover to pick an existing tag or create a new one (deterministic colors). */
 export function TagPicker({
@@ -18,26 +21,31 @@ export function TagPicker({
   onClose: () => void;
 }) {
   const { lang } = useApp();
-  const [all, setAll] = useState<string[]>([]);
+  const [all, setAll] = useState<CatalogTag[]>([]);
   const [q, setQ] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     const supabase = createClient();
     // Del catálogo (0073), no de escanear contacts.tags: esa consulta no tenía límite explícito, así
     // que en un negocio con muchos contactos el tope por defecto de PostgREST la truncaba —- se veía
     // como "solo salen las etiquetas recientes". El catálogo es chico y no tiene ese problema.
-    supabase.from("tags").select("name").eq("business_id", businessId).then(({ data }) => {
+    supabase.from("tags").select("id, name").eq("business_id", businessId).then(({ data }) => {
       // Alfabético sin distinguir mayúsculas: el orden de la base depende de su collation, y
       // "Zapatos" antes que "árbol" por ir en mayúscula no es lo que alguien espera de "alfabético".
-      setAll((data ?? []).map((t) => t.name as string).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+      setAll(((data ?? []) as CatalogTag[]).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })));
     });
-  }, [businessId]);
+  };
+  useEffect(load, [businessId]);
 
   const cur = new Set(current);
   const needle = q.trim().toLowerCase();
-  const suggestions = all.filter((t) => !cur.has(t) && t.toLowerCase().includes(needle));
-  const exists = all.some((t) => t.toLowerCase() === needle) || cur.has(q.trim());
+  const suggestions = all.filter((t) => !cur.has(t.name) && t.name.toLowerCase().includes(needle));
+  const exists = all.some((t) => t.name.toLowerCase() === needle) || cur.has(q.trim());
   const choose = (t: string) => { if (t.trim()) { onPick(t.trim()); onClose(); } };
+  // Quita del CATÁLOGO, no del contacto actual —- es una acción distinta de onRemove (que sí
+  // quita la etiqueta puesta aquí). El popover se queda abierto: es de esperar seguir borrando
+  // más de una seguida sin tener que reabrir el selector cada vez.
+  const removeFromCatalog = (t: CatalogTag) => { setAll((a) => a.filter((x) => x.id !== t.id)); deleteTagFromCatalog(t.id); };
 
   return (
     <>
@@ -60,7 +68,14 @@ export function TagPicker({
             <button className="menu-item" onClick={() => choose(q)}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"} <Pill color={tagColor(q.trim())}>{q.trim()}</Pill></button>
           )}
           {suggestions.map((t) => (
-            <button className="menu-item" key={t} onClick={() => choose(t)}><Pill color={tagColor(t)}><Icon name="tag" size={11} />{t}</Pill></button>
+            <div className="menu-item" key={t.id} style={{ justifyContent: "space-between" }}>
+              <span role="button" tabIndex={0} onClick={() => choose(t.name)} onKeyDown={(e) => { if (e.key === "Enter") choose(t.name); }} style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, cursor: "pointer" }}>
+                <Pill color={tagColor(t.name)}><Icon name="tag" size={11} />{t.name}</Pill>
+              </span>
+              <button onClick={(e) => { e.stopPropagation(); removeFromCatalog(t); }} aria-label="remove from catalog" title={lang === "es" ? "Quitar del catálogo" : "Remove from catalog"} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, padding: 0, border: "none", background: "transparent", color: "currentColor", opacity: 0.5, cursor: "pointer" }} onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.5")}>
+                <Icon name="x" size={12} />
+              </button>
+            </div>
           ))}
           {suggestions.length === 0 && !q.trim() && <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin etiquetas todavía. Escribe una para crearla." : "No tags yet. Type one to create it."}</div>}
         </div>

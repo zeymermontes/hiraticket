@@ -1,6 +1,7 @@
 import { getMyBusiness } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
+import { listTagCatalog } from "@/lib/tags";
 import { BusinessConfig } from "@/components/BusinessConfig";
 
 export const dynamic = "force-dynamic";
@@ -9,10 +10,11 @@ export default async function BusinessPage() {
   const business = await getMyBusiness();
   if (!business) return null;
 
-  const [stages, areas, agents] = await Promise.all([
+  const [stages, areas, agents, tags] = await Promise.all([
     getStages(business.id),
     getAreas(business.id),
     getAgents(business.id),
+    listTagCatalog(business.id),
   ]);
 
   return (
@@ -22,6 +24,7 @@ export default async function BusinessPage() {
       stages={stages}
       areas={areas}
       agents={agents}
+      tags={tags}
       vertical={business.vertical ?? null}
       objectSingular={business.object_singular ?? "Pedido"}
       customFields={(business.custom_fields as string[] | null) ?? []}

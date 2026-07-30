@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
-import type { PillColor } from "@/lib/types";
+import { type PillColor, tagColor } from "@/lib/types";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { ReorderList } from "@/components/ReorderList";
 import {
-  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields, updatePaymentConfig,
+  createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields, updatePaymentConfig, deleteTagFromCatalog,
 } from "@/app/(app)/business/actions";
+import type { TagCatalogItem } from "@/lib/tags";
 import type { Branch, BankAccount } from "@/lib/types";
 import { DAY_ORDER, DAY_LABEL, defaultHours, normalizeHours, type DayHours } from "@/lib/hours";
 
@@ -49,7 +50,7 @@ const TIMEZONES = [
 ];
 
 export function BusinessConfig({
-  businessId, businessName, stages, areas, agents, vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
+  businessId, businessName, stages, areas, agents, tags = [], vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
   payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0, invoiceAddTax, invoiceTaxRate, manualMarginPct,
 }: {
   businessId: string;
@@ -57,6 +58,7 @@ export function BusinessConfig({
   stages: Stage[];
   areas: Area[];
   agents: Agent[];
+  tags?: TagCatalogItem[];
   vertical: string | null;
   objectSingular: string;
   customFields: string[];
@@ -326,6 +328,31 @@ export function BusinessConfig({
               <input className="inp-inline grow" placeholder={lang === "es" ? "Nueva etapa…" : "New stage…"} value={newStage} onChange={(e) => setNewStage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addStage(); }} />
               <button className="btn btn-sm btn-primary" disabled={!newStage.trim()} onClick={addStage}><Icon name="plus" size={14} />{lang === "es" ? "Agregar etapa" : "Add stage"}</button>
             </div>
+          </div>
+        </section>
+
+        {/* Tag catalog (0073) */}
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="tag" size={16} /><h4 className="grow">{lang === "es" ? "Etiquetas" : "Tags"}</h4><Pill color="slate">{tags.length}</Pill></div>
+          <div className="ws-block-body col gap-2">
+            <div className="t-xs muted">{lang === "es" ? "El catálogo que ofrece el selector al etiquetar un contacto o pedido. Borrar una de aquí solo la quita del catálogo — los contactos que ya la tienen la conservan." : "The catalog offered by the picker when tagging a contact or order. Deleting one here only removes it from the catalog — contacts that already have it keep it."}</div>
+            {tags.length === 0 ? (
+              <div className="muted t-sm">{lang === "es" ? "Sin etiquetas todavía. Se agregan solas la primera vez que se usan." : "No tags yet. They're added automatically the first time one is used."}</div>
+            ) : (
+              <div className="row gap-1" style={{ flexWrap: "wrap" }}>
+                {tags.map((t) => (
+                  <span key={t.id} style={{ display: "inline-flex", alignItems: "center" }}>
+                    <Pill color={tagColor(t.name)}>{t.name}
+                      <button onClick={() => run(() => deleteTagFromCatalog(t.id))} aria-label="remove" title={lang === "es" ? "Quitar del catálogo" : "Remove from catalog"}
+                        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, marginLeft: 4, padding: 0, border: "none", background: "transparent", color: "currentColor", opacity: 0.75, cursor: "pointer" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.75")}>
+                        <Icon name="x" size={12} />
+                      </button>
+                    </Pill>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 

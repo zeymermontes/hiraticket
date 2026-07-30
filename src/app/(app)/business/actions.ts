@@ -91,3 +91,11 @@ export async function updatePaymentConfig(
   if (!data || data.length === 0) return { ok: false, error: "no-permission" };
   return { ok: true };
 }
+
+/** Quita una etiqueta del catálogo (0073). Solo del catálogo: los contactos que ya la tienen la
+ *  conservan —- deja de sugerirse para lo nuevo, no se toca nada existente. */
+export async function deleteTagFromCatalog(tagId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("tags").delete().eq("id", tagId);
+  revalidateAll();
+}

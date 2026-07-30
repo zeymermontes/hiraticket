@@ -1,3 +1,5 @@
+import { createClient } from "@/lib/supabase/server";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
@@ -15,4 +17,17 @@ export async function ensureTag(supabase: AnySupabase, businessId: string, name:
   await supabase.from("tags").insert({ business_id: businessId, name: clean });
   // Sin comprobar error: la violación de unicidad (la etiqueta ya estaba) es tan buen resultado
   // como el insert exitoso — en los dos casos el catálogo ya la tiene.
+}
+
+export interface TagCatalogItem { id: string; name: string }
+
+/**
+ * El catálogo completo del negocio, para administrarlo (Negocio → Etiquetas). Se ordena
+ * alfabético sin distinguir mayúsculas, igual que el selector — el collation de la base no es de
+ * fiar para eso.
+ */
+export async function listTagCatalog(businessId: string): Promise<TagCatalogItem[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from("tags").select("id, name").eq("business_id", businessId);
+  return ((data ?? []) as TagCatalogItem[]).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
