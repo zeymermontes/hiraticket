@@ -242,6 +242,17 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
  */
 function DueFlags({ dates, onNavigate }: { dates: string[]; onNavigate?: (href: string) => void }) {
   const { lang, personal } = useApp();
+  // Prefetch con intención al pasar el mouse, igual que el rail: quien va a dar clic se detiene
+  // unos ms encima, y para cuando suelta el clic la Agenda ya viene en camino o llegó.
+  const router = useRouter();
+  const prefetched = useRef(false);
+  const hoverTO = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const armPrefetch = () => {
+    if (prefetched.current) return;
+    clearTimeout(hoverTO.current);
+    hoverTO.current = setTimeout(() => { prefetched.current = true; router.prefetch("/agenda"); }, 120);
+  };
+  const cancelPrefetch = () => clearTimeout(hoverTO.current);
   const day = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   const now = new Date();
   const today = day(now);
@@ -266,6 +277,7 @@ function DueFlags({ dates, onNavigate }: { dates: string[]; onNavigate?: (href: 
     n > 0 ? <span key={label} title={label} style={{ background: bg, color: "#fff", borderRadius: 999, minWidth: 18, height: 18, padding: "0 5px", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span> : null;
   return (
     <Link href="/agenda" prefetch={false} title={title} onClick={() => onNavigate?.("/agenda")}
+      onMouseEnter={armPrefetch} onMouseLeave={cancelPrefetch}
       className="conn-chip" style={overdue ? { background: "var(--red)", borderColor: "var(--red)", color: "#fff" } : undefined}>
       <Icon name="calendar" size={15} />
       {overdue > 0 && <span style={{ fontWeight: 800 }}>{overdue}</span>}

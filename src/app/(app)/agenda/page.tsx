@@ -18,12 +18,11 @@ export default async function AgendaPage({
   if (!business) return null;
 
   const sp = await searchParams;
-  const stages = await getStages(business.id);
+  // Etapas y citas no dependen entre sí: en paralelo. Solo los pedidos con fecha límite esperan a
+  // las etapas (necesitan saber cuál es la final para excluir lo ya entregado).
+  const [stages, appointments] = await Promise.all([getStages(business.id), getAppointments(business.id)]);
   const lastStageId = stages.length ? stages[stages.length - 1].id : null;
-  const [appointments, dueOrders] = await Promise.all([
-    getAppointments(business.id),
-    getDueOrders(business.id, lastStageId),
-  ]);
+  const dueOrders = await getDueOrders(business.id, lastStageId);
 
   // El detalle a la derecha vive en la URL (?order=), igual que en Pedidos: el mismo patrón, el
   // mismo drawer. Sus datos de apoyo solo se cargan cuando de verdad hay un pedido abierto.
