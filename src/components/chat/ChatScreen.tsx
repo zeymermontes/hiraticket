@@ -746,8 +746,10 @@ export function ChatScreen({
 
     // Los contadores se mueven por la DIFERENCIA respecto a lo que la fila tenía, no por el valor
     // nuevo: sin comparar contra el estado anterior, dos clics seguidos descontarían dos veces.
-    setCounts((c) => {
-      const d = { ...c };
+    // Va por ref y no por updater para poder guardar el resultado en el caché de la vista (con
+    // strict mode los updaters corren dos veces y un efecto adentro descontaría doble).
+    {
+      const d = { ...countsRef.current };
       if (patch.status !== undefined && patch.status !== row.status) {
         const bucket = (st: string) => (st === "open" || st === "pending" || st === "resolved" ? (st as "open" | "pending" | "resolved") : null);
         const from = bucket(row.status), to = bucket(next.status);
@@ -766,8 +768,9 @@ export function ChatScreen({
         if (wasFree && !isFree) d.unassigned = Math.max(0, d.unassigned - 1);
         if (!wasFree && isFree) d.unassigned = d.unassigned + 1;
       }
-      return d;
-    });
+      setCounts(d);
+      countsCacheRef.current.set(countsKeyRef.current, d);
+    }
 
     // Si con el cambio la fila deja de pertenecer a la vista actual, se va ya: verla desaparecer dos
     // segundos después es peor que verla desaparecer al instante.
@@ -1107,6 +1110,21 @@ export function ChatScreen({
   const [listTotal, setListTotal] = useState(listProp.length);
   // Sembrados por el servidor: los chips salen con su número en el primer pintado.
   const [counts, setCounts] = useState<ChatListCounts>(initialCounts ?? EMPTY_CHAT_COUNTS);
+  const countsRef = useRef(counts);
+  countsRef.current = counts;
+
+  // Lo último conocido de CADA vista, para que cambiar de pestaña pinte al instante y el servidor
+  // solo reconcilie. Antes, cada cambio de pestaña dejaba los números y la lista de la vista
+  // ANTERIOR en pantalla hasta que llegara el servidor (~0.4-1 s, o varios tras un deploy): se veía
+  // como "tarda en actualizar el total". El caché muestra los valores de la última visita —- casi
+  // siempre de hace segundos —- y el refetch corrige si algo cambió.
+  const countsCacheRef = useRef<Map<string, ChatListCounts>>(new Map());
+  const listCacheRef = useRef<Map<string, { rows: ConvListItem[]; total: number }>>(new Map());
+  const listKeyOf = (q: ConvQuery, howMany: number) =>
+    JSON.stringify([q.tab, q.status, q.areaId, q.unreadOnly, q.archived, q.q, q.extraIds, howMany]);
+  // Fila recién aceptada: se mantiene visible en "Míos" aunque un refetch lanzado ANTES del commit
+  // del servidor regrese sin ella —- sin esto, la fila aparecía, desaparecía y volvía a aparecer.
+  const stickyMineRef = useRef<{ row: ConvListItem; until: number } | null>(null);
   const [listLoading, setListLoading] = useState(false);
   // The typed search, debounced, together with the conversation ids its message text matched in
   // this device's cache. They move as one value so a search costs a single list fetch: last_body is
@@ -1145,8 +1163,18 @@ export function ChatScreen({
     try {
       const page = await liveListPage(businessId, { ...query, limit: howMany * LIST_PAGE });
       if (seq !== listSeq.current) return;
-      setList(page.rows);
-      setListTotal(page.total);
+      let rows = page.rows;
+      let total = page.total;
+      // El refetch pudo salir antes de que el servidor confirmara el Aceptar: la fila recién
+      // aceptada se conserva hasta que el servidor ya la incluya (o pasen unos segundos).
+      const sticky = stickyMineRef.current;
+      if (sticky && query.tab === "mine") {
+        if (rows.some((r) => r.id === sticky.row.id) || Date.now() > sticky.until) stickyMineRef.current = null;
+        else { rows = [sticky.row, ...rows]; total += 1; }
+      }
+      setList(rows);
+      setListTotal(total);
+      listCacheRef.current.set(listKeyOf(query, howMany), { rows, total });
     } catch { /* keep the previous window */ }
     finally { if (seq === listSeq.current) setListLoading(false); }
   }, [businessId]);
@@ -1156,6 +1184,16 @@ export function ChatScreen({
   const listMounted = useRef(false);
   useEffect(() => {
     if (!listMounted.current) { listMounted.current = true; return; }
+    const hit = listCacheRef.current.get(listKeyOf(listQuery, pages));
+    if (hit) {
+      // La fila pegajosa aplica también al caché: la vista de "Míos" guardada puede ser anterior
+      // al Aceptar que nos trajo aquí.
+      const sticky = stickyMineRef.current;
+      const rows = sticky && listQuery.tab === "mine" && !hit.rows.some((r) => r.id === sticky.row.id)
+        ? [sticky.row, ...hit.rows] : hit.rows;
+      setList(rows);
+      setListTotal(rows.length > hit.total ? hit.total + 1 : hit.total);
+    }
     fetchList(listQuery, pages);
   }, [fetchList, listQuery, pages]);
 
@@ -1163,19 +1201,30 @@ export function ChatScreen({
   // que cada tecla del buscador y cada clic en un chip los volvía a pedir sin que pudieran cambiar.
   const countsKey = `${listQuery.tab}|${listQuery.areaId ?? ""}|${listQuery.archived ? 1 : 0}`;
   const countsSeq = useRef(0);
+  const countsKeyRef = useRef(countsKey);
+  countsKeyRef.current = countsKey;
   const refreshCounts = useCallback(async () => {
     const seq = ++countsSeq.current;
     const [tab, areaId, archived] = countsKey.split("|");
     try {
       const c = await liveChatCounts(businessId, { tab: tab as ConvQuery["tab"], areaId: areaId || undefined, archived: archived === "1" });
+      countsCacheRef.current.set(countsKey, c);
       if (seq === countsSeq.current) setCounts(c);
     } catch { /* se conservan los anteriores */ }
   }, [businessId, countsKey]);
   const countsMounted = useRef(false);
   useEffect(() => {
-    // Mismo motivo: initialCounts ya trae los de la pestaña con la que abre.
-    if (!countsMounted.current && initialCounts) { countsMounted.current = true; return; }
+    if (!countsMounted.current && initialCounts) {
+      // initialCounts ya trae los de la pestaña con la que abre — y siembra el caché de esa vista.
+      countsCacheRef.current.set(countsKeyRef.current, initialCounts);
+      countsMounted.current = true;
+      return;
+    }
     countsMounted.current = true;
+    // Del caché primero: los números de la última visita a esta vista salen al instante en vez de
+    // dejar los de la vista anterior congelados mientras contesta el servidor.
+    const hit = countsCacheRef.current.get(countsKeyRef.current);
+    if (hit) setCounts(hit);
     refreshCounts();
   }, [refreshCounts, initialCounts]);
   useEffect(() => { refetchListRef.current = () => { void fetchList(listQuery, pages); void refreshCounts(); }; }, [fetchList, listQuery, pages, refreshCounts]);
@@ -1193,6 +1242,12 @@ export function ChatScreen({
   // Un chat que pasa a ser mío: la lista salta a "Míos" y el hilo abierto se queda donde está.
   // Lo usan Aceptar y los dos Transferir (encabezado y panel), para que se comporten igual.
   const acceptedToMine = useCallback((id: string) => {
+    // La fila del chat aceptado viaja con nosotros: al aterrizar en "Míos" ya está ahí, en vez de
+    // esperar al servidor —- que era el "tarda la lista en moverse a Míos". El refetch que sale al
+    // cambiar de pestaña puede ganarle al commit del Aceptar, así que la fila queda pegajosa unos
+    // segundos hasta que el servidor ya la traiga por su cuenta.
+    const row = listRef.current.find((c) => c.id === id);
+    if (row) stickyMineRef.current = { row: { ...row, assignee_id: meId }, until: Date.now() + 8000 };
     setTab("mine");
     setDetail((d) => (d && d.id === id ? { ...d, assignee_id: meId } : d));
     setList((l) => l.map((c) => (c.id === id ? { ...c, assignee_id: meId } : c)));
