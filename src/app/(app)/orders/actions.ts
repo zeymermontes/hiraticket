@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { ensureTag } from "@/lib/tags";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { getOrderDetail, type OrderDetail } from "@/lib/orders";
@@ -215,11 +216,12 @@ export async function addOrderTag(orderId: string, tag: string): Promise<void> {
   const clean = tag.trim();
   if (!clean) return;
   const supabase = await createClient();
-  const { data: order } = await supabase.from("orders").select("contact_id").eq("id", orderId).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("contact_id, business_id").eq("id", orderId).maybeSingle();
   if (!order?.contact_id) return;
   const { data: c } = await supabase.from("contacts").select("tags").eq("id", order.contact_id).maybeSingle();
   const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), clean]));
   await supabase.from("contacts").update({ tags }).eq("id", order.contact_id);
+  if (order.business_id) await ensureTag(supabase, order.business_id as string, clean);
   revalidatePath("/orders");
 }
 

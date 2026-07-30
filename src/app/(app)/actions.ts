@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { encryptBody } from "@/lib/msgcrypto";
+import { ensureTag } from "@/lib/tags";
 
 async function actorCtx() {
   const supabase = await createClient();
@@ -89,6 +90,7 @@ export async function runStageAutomations(orderId: string, businessId: string, s
         const { data: c } = await supabase.from("contacts").select("tags").eq("id", o.contact_id).maybeSingle();
         const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), payload.tag]));
         await supabase.from("contacts").update({ tags }).eq("id", o.contact_id);
+        await ensureTag(supabase, businessId, payload.tag as string);
       }
     }
 

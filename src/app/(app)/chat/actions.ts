@@ -6,6 +6,7 @@ import { getMyBusiness } from "@/lib/queries";
 import { getConversationDetail, type ConvDetail } from "@/lib/chat";
 import { encryptBody, decryptBody } from "@/lib/msgcrypto";
 import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
+import { ensureTag } from "@/lib/tags";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -301,6 +302,7 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
         const { data: c } = await supabase.from("contacts").select("tags").eq("id", conv.contact_id).maybeSingle();
         const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), payload.tag]));
         await supabase.from("contacts").update({ tags }).eq("id", conv.contact_id);
+        await ensureTag(supabase, businessId, payload.tag as string);
       }
     }
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
@@ -417,9 +419,10 @@ export async function addContactTag(contactId: string, tag: string): Promise<voi
   const clean = tag.trim();
   if (!clean) return;
   const { supabase } = await ctx();
-  const { data: c } = await supabase.from("contacts").select("tags").eq("id", contactId).maybeSingle();
+  const { data: c } = await supabase.from("contacts").select("tags, business_id").eq("id", contactId).maybeSingle();
   const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), clean]));
   await supabase.from("contacts").update({ tags }).eq("id", contactId);
+  if (c?.business_id) await ensureTag(supabase, c.business_id as string, clean);
 }
 
 /** Remove a tag from a contact. */

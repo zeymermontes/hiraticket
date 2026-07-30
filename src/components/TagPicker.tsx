@@ -23,10 +23,13 @@ export function TagPicker({
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.from("contacts").select("tags").eq("business_id", businessId).then(({ data }) => {
-      const set = new Set<string>();
-      (data ?? []).forEach((c) => ((c.tags as string[]) ?? []).forEach((t) => set.add(t)));
-      setAll([...set].sort());
+    // Del catálogo (0073), no de escanear contacts.tags: esa consulta no tenía límite explícito, así
+    // que en un negocio con muchos contactos el tope por defecto de PostgREST la truncaba —- se veía
+    // como "solo salen las etiquetas recientes". El catálogo es chico y no tiene ese problema.
+    supabase.from("tags").select("name").eq("business_id", businessId).then(({ data }) => {
+      // Alfabético sin distinguir mayúsculas: el orden de la base depende de su collation, y
+      // "Zapatos" antes que "árbol" por ir en mayúscula no es lo que alguien espera de "alfabético".
+      setAll((data ?? []).map((t) => t.name as string).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
     });
   }, [businessId]);
 
