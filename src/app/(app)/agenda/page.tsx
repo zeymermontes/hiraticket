@@ -48,6 +48,7 @@ export default async function AgendaPage({
       stages={stages}
       openOrder={openOrder}
       drawer={drawer}
+      doneFromStageId={business.done_from_stage_id ?? null}
     />
   );
 }

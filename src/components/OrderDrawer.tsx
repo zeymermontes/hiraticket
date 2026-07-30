@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { defaultDoneStageName } from "@/lib/doneStage";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useFlowToast } from "@/components/Toast";
@@ -39,12 +40,13 @@ function toLocalInput(iso: string | null): string {
 }
 
 export function OrderDrawer({
-  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing,
+  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing, doneFromStageId = null,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean; products?: Product[];
   shipping?: string | null; // active shipping plugin id — gates the Envío block entirely
   invoicing?: boolean; // Facturapi active — gates the Factura (CFDI) block entirely
+  doneFromStageId?: string | null; // default del negocio (0072) — solo para NOMBRARLO en el dropdown
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -253,7 +255,7 @@ export function OrderDrawer({
                 <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Sale de la agenda en" : "Leaves the agenda at"}</label>
                 <select className="inp-inline" value={detail.done_from_stage_id ?? ""}
                   onChange={(e) => { const v = e.target.value || null; runOpt({ done_from_stage_id: v }, () => setOrderDoneFrom(detail.id, v)); }}>
-                  <option value="">{lang === "es" ? "Por defecto del negocio" : "Business default"}</option>
+                  <option value="">{(() => { const n = defaultDoneStageName(stages, doneFromStageId); return lang === "es" ? `Por defecto del negocio${n ? ` (${n})` : ""}` : `Business default${n ? ` (${n})` : ""}`; })()}</option>
                   {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
                 </select>
               </div>

@@ -121,6 +121,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, products = [], 
           businessId={businessId}
           convDetail={detail}
           connected={connected}
+          doneFromStageId={doneFromStageId}
           onClose={() => { setOpenOrder(null); router.refresh(); }}
         />
       )}

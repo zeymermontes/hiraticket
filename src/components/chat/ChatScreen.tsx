@@ -1450,7 +1450,7 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} meId={meId}
             onAccepted={acceptedToMine} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} onClose={() => setShow360(false)} />}
@@ -2343,7 +2343,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe, doneFromStageId = null }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void; doneFromStageId?: string | null }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -2590,7 +2590,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       )}
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={products} businessId={businessId}
-          convDetail={detail} connected={connected} shipping={shipping} invoicing={invoicing}
+          convDetail={detail} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId}
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
       {showNewTask && (

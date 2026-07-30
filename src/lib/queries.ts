@@ -98,7 +98,7 @@ const CONTACT_MATCH_CAP = 500;
 
 const ORDER_COLS = (opt: string) =>
   `id, code, priority, pay_status, total, updated_at, created_at, stage_id, area_id, ${opt}assignee_id, ` +
-  `stage:stages(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
+  `stage:stages!stage_id(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
 
 const SORT_COL: Record<OrderSortKey, string> = {
   code: "code_num",       // 0061 — numeric part, so HIR-999 sorts before HIR-1144

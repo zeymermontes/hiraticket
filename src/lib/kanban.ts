@@ -85,7 +85,7 @@ export async function getKanbanOrderColumn(
   const contactIds = needle ? await matchingContactIds(supabase, businessId, needle) : [];
 
   const COLS = (cancel: string) => `id, code, total, priority, due_at, stage_id, area_id, assignee_id, ${cancel}` +
-    "contact:contacts(name), stage:stages(name,color), area:areas(name,color), items:order_items(name)";
+    "contact:contacts(name), stage:stages!stage_id(name,color), area:areas(name,color), items:order_items(name)";
 
   const build = (cancel: string) => {
     let b = supabase.from("orders").select(COLS(cancel))

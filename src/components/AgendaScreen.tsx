@@ -32,9 +32,10 @@ export interface AgendaDrawerData {
   shipping: string | null; invoicing: boolean; convDetail: ConvDetail | null;
 }
 
-export function AgendaScreen({ businessId, appointments, dueOrders = [], stages = [], openOrder = null, drawer = null }: {
+export function AgendaScreen({ businessId, appointments, dueOrders = [], stages = [], openOrder = null, drawer = null, doneFromStageId = null }: {
   businessId: string; appointments: Appointment[];
   dueOrders?: DueOrder[]; stages?: Stage[]; openOrder?: OrderDetail | null; drawer?: AgendaDrawerData | null;
+  doneFromStageId?: string | null;
 }) {
   const { lang, personal } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
@@ -214,6 +215,7 @@ export function AgendaScreen({ businessId, appointments, dueOrders = [], stages 
           connected={drawer.connected}
           shipping={drawer.shipping}
           invoicing={drawer.invoicing}
+          doneFromStageId={doneFromStageId}
           onClose={() => router.push("/agenda")}
         />
       )}

@@ -345,6 +345,7 @@ export function OrdersTable({
           connected={connected}
           shipping={shipping}
           invoicing={invoicing}
+          doneFromStageId={doneFromStageId}
           onClose={() => { router.push("/orders", { scroll: false }); reload(); }}
         />
       )}

@@ -292,7 +292,7 @@ export function KanbanBoard({
       </div>
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={catalog} businessId={businessId}
-          convDetail={null} connected={connected} shipping={shipping} invoicing={invoicing}
+          convDetail={null} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId}
           onClose={() => { setOpenOrder(null); router.refresh(); }} />
       )}
     </div>

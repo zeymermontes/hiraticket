@@ -23,3 +23,10 @@ export function doneStageNames(stages: { id: string; name: string }[], doneFromI
   const ids = doneStageIds(stages, doneFromId);
   return new Set(stages.filter((s) => ids.has(s.id)).map((s) => s.name));
 }
+
+/** El nombre de la etapa que hoy actúa como umbral (la elegida, o la última). Para que "Por
+ *  defecto del negocio" diga textualmente cuál es, sin mandar a nadie a Ajustes a averiguarlo. */
+export function defaultDoneStageName(stages: { id: string; name: string }[], doneFromId?: string | null): string | null {
+  if (!stages.length) return null;
+  return (doneFromId && stages.find((s) => s.id === doneFromId)?.name) || stages[stages.length - 1].name;
+}
