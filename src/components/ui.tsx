@@ -32,6 +32,7 @@ export function Avatar({
   size = 32,
   presence,
   src,
+  badge,
 }: {
   name?: string;
   initials?: string;
@@ -39,12 +40,19 @@ export function Avatar({
   size?: number;
   presence?: "online" | "away" | "offline" | null;
   src?: string;
+  /** Mini-avatar montado abajo a la derecha: quién atiende a este cliente. */
+  badge?: { initials: string; color: string; src?: string | null; title?: string } | null;
 }) {
   const fs = Math.round(size * 0.4);
   return (
     <span className="av" style={{ width: size, height: size, background: color, fontSize: fs }} title={name}>
       {src ? <img src={src} alt={name} /> : initials}
       {presence && <span className={"av-presence " + presence} />}
+      {badge && (
+        <span className="av-badge" style={{ background: badge.color, fontSize: Math.max(7, Math.round(size * 0.19)) }} title={badge.title}>
+          {badge.src ? <img src={badge.src} alt="" /> : badge.initials}
+        </span>
+      )}
     </span>
   );
 }

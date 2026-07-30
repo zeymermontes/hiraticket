@@ -85,9 +85,22 @@
 .av {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
   border-radius: 50%; font-weight: 700; color: #fff; flex: none;
-  background: var(--slate); overflow: hidden; user-select: none;
+  background: var(--slate); user-select: none;
 }
-.av img { width: 100%; height: 100%; object-fit: cover; }
+/* El recorte vive en la imagen, no en el contenedor: con overflow:hidden en .av, la insignia del
+   asesor y el punto de presencia —- que asoman fuera del círculo —- se cercenaban. */
+.av img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+
+/* Quién atiende, montado sobre el avatar del cliente. El borde del color de la superficie lo
+   separa visualmente del avatar de abajo, como en WhatsApp/Teams. */
+.av-badge {
+  position: absolute; right: -3px; bottom: -3px;
+  width: 52%; height: 52%; min-width: 14px; min-height: 14px;
+  border-radius: 50%; border: 2px solid var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #fff; overflow: hidden; line-height: 1;
+}
+.av-badge img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .av-presence {
   position: absolute; right: -1px; bottom: -1px;
   width: 32%; height: 32%; min-width: 8px; min-height: 8px; border-radius: 50%;

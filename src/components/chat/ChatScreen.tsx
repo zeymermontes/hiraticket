@@ -1340,7 +1340,8 @@ export function ChatScreen({
                   className={"conv" + (c.id === (detail?.id ?? selectedId) && !selectMode ? " sel" : "") + (c.unread ? " unread" : "")}
                   style={selectMode && selected.has(c.id) ? { background: "var(--brand-50)" } : undefined}>
                   {selectMode && <span style={{ width: 22, height: 22, borderRadius: "50%", flex: "none", border: "2px solid " + (selected.has(c.id) ? "var(--brand)" : "var(--border-strong)"), background: selected.has(c.id) ? "var(--brand)" : "transparent", color: "var(--on-brand)", display: "flex", alignItems: "center", justifyContent: "center" }}>{selected.has(c.id) && <Icon name="check" size={13} />}</span>}
-                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42} />
+                  <Avatar name={c.contact?.name} initials={deriveInitials(c.contact?.name || c.contact?.phone || "?")} color={avatarColor(c.contact?.phone)} size={42}
+                    badge={a ? { initials: deriveInitials(a.name), color: a.color, src: a.avatar_url, title: (lang === "es" ? "Atiende " : "Handled by ") + a.name } : null} />
                   <div className="conv-body">
                     <div className="conv-top">
                       <span className="conv-name truncate">{c.is_group && <span style={{ display: "inline-flex", verticalAlign: "-2px", marginRight: 4, opacity: 0.6 }} title={lang === "es" ? "Grupo" : "Group"}><Icon name="agents" size={13} /></span>}{c.contact?.name ?? "—"}</span>
@@ -1357,7 +1358,9 @@ export function ChatScreen({
                       {c.area && <Pill color={c.area.color as PillColor}>{c.area.name}</Pill>}
                       {(c.contact?.tags ?? []).slice(0, 3).map((tg) => <Pill key={tg} color={tagColor(tg)}><Icon name="tag" size={10} />{tg}</Pill>)}
                       <span className="grow" />
-                      {a ? <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={20} /> : <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
+                      {/* El asesor vive como insignia sobre el avatar; aquí solo queda la ausencia,
+                          que montada no se vería. */}
+                      {!a && <Pill color="slate">{lang === "es" ? "Sin asignar" : "Unassigned"}</Pill>}
                       {c.unread > 0 && <span className="badge badge-red">{c.unread}</span>}
                     </div>
                   </div>
@@ -1811,7 +1814,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     <div className="chatcol" style={{ position: "relative", ...(floating ? { height: "100%", flex: 1, minWidth: 0, width: "100%" } : {}) }} {...dragProps}>
       {dragOver && <DropOverlay lang={lang} />}
       <div className="thread-head">
-        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38} />
+        <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38}
+          badge={assignee ? { initials: deriveInitials(assignee.name), color: assignee.color, src: assignee.avatar_url, title: (lang === "es" ? "Atiende " : "Handled by ") + assignee.name } : null} />
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="row gap-2">
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
@@ -1830,7 +1834,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             onClick={() => { const t = timedClick("resolver"); patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); t.done(); flowToast(r.flows, lang); headerRefresh(); t.settled(); }); }}>
             {pending ? <Spinner size={14} /> : <Icon name="checks" size={14} />}{lang === "es" ? "Resolver" : "Resolve"}
           </button>
-        ) : <Pill color="green" dot>{STATUS_LABEL.resolved[lang]}</Pill>}
+        ) : <HeaderStatusPill detail={detail} />}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" onClick={() => { const t = timedClick("aceptar"); onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); t.done(); headerRefresh(); t.settled(); }); }}>
@@ -2527,6 +2531,38 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
           onClose={() => setShowNewTask(false)} onCreated={() => { setShowNewTask(false); refresh(); }} />
       )}
     </div>
+  );
+}
+
+/** El pill de estado del encabezado, clicable: abre el mismo menú de estados que StatusControl.
+ *  Existe porque "Resuelto" como texto muerto obligaba a ir al panel lateral solo para reabrir. */
+function HeaderStatusPill({ detail }: { detail: ConvDetail }) {
+  const { lang } = useApp();
+  const refresh = useChatHeaderRefresh();
+  const patch = useChatPatch();
+  const flowToast = useFlowToast();
+  const { ref, open, rect, toggle, close } = usePopover();
+  const [, start] = useTransition();
+  return (
+    <span style={{ display: "inline-flex" }}>
+      <button ref={ref} onClick={toggle} title={lang === "es" ? "Cambiar estado" : "Change status"}
+        style={{ all: "unset", cursor: "pointer", display: "inline-flex" }}>
+        <Pill color={STATUS_COLOR[detail.status]} dot>{STATUS_LABEL[detail.status][lang]}<Icon name="chevd" size={11} /></Pill>
+      </button>
+      {open && rect && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 130, align: "right" })}>
+            {(["open", "pending", "resolved"] as const).map((s) => (
+              <button className="menu-item" key={s} onClick={() => { close(); if (s === detail.status) return; patch({ status: s }); start(async () => { const r = await setConvStatus(detail.id, s); flowToast(r.flows, lang); refresh(); }); }}>
+                <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
+                {s === detail.status && <Icon name="check" size={13} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
   );
 }
 
