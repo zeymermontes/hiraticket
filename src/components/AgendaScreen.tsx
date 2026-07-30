@@ -53,6 +53,18 @@ export function AgendaScreen({ businessId, appointments, dueOrders = [], stages 
   const upcomingOrders = dueOrders.filter((o) => new Date(o.due_at) >= startOfToday);
   const missedAppts = appointments.filter((a) => a.status === "scheduled" && new Date(a.starts_at) < startOfToday);
   const openOrderRow = (o: DueOrder) => router.push(`/agenda?order=${o.id}`);
+  // El mismo semáforo que las banderitas del TopBar, ahora en el borde de cada tarjeta: rojo hoy,
+  // naranja mañana, amarillo pasado mañana. Más lejos, el borde normal — el color es urgencia, y
+  // pintarlo todo sería no pintar nada.
+  const toneOf = (iso: string): string | null => {
+    const key = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const now = new Date();
+    const k = key(new Date(iso));
+    if (k === key(now)) return "#DC2626";
+    if (k === key(new Date(now.getTime() + 86400000))) return "#EA580C";
+    if (k === key(new Date(now.getTime() + 2 * 86400000))) return "#D97706";
+    return null;
+  };
   const fmtMoney = (n: number) => "$" + n.toLocaleString(lang === "es" ? "es-MX" : "en-US");
   const daysLate = (iso: string) => Math.max(1, Math.floor((startOfToday.getTime() - new Date(iso).getTime()) / 86400000) + 1);
   const inTime = (a: Appointment) => (past ? new Date(a.starts_at) < startOfToday : new Date(a.starts_at) >= startOfToday);
@@ -72,7 +84,7 @@ export function AgendaScreen({ businessId, appointments, dueOrders = [], stages 
 
   const orderRow = (o: DueOrder, late: boolean) => (
     <div key={o.id} className="row gap-3" role="button" onClick={() => openOrderRow(o)}
-      style={{ alignItems: "center", border: "1px solid " + (late ? "var(--red)" : "var(--border)"), borderRadius: "var(--r-md)", padding: 12, cursor: "pointer" }}>
+      style={{ alignItems: "center", border: "1px solid " + (late ? "var(--red)" : (toneOf(o.due_at) ?? "var(--border)")), borderRadius: "var(--r-md)", padding: 12, cursor: "pointer" }}>
       <div style={{ textAlign: "center", minWidth: 52, borderRight: "1px solid var(--border)", paddingRight: 10 }}>
         <div className="mono" style={{ fontWeight: 800, fontSize: 15 }}>{new Date(o.due_at).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "2-digit", minute: "2-digit" })}</div>
       </div>
@@ -150,7 +162,7 @@ export function AgendaScreen({ businessId, appointments, dueOrders = [], stages 
                 {/* Intercalados por hora: la agenda del día se lee de arriba a abajo, sin importar
                     si lo de las 11 es una cita y lo de las 12 una entrega. */}
                 {items.filter((i) => dayBucket(i.at, lang) === bucket).map((i) => i.o ? orderRow(i.o, false) : ((a) => (
-                  <div key={a.id} className="row gap-3" style={{ alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 12 }}>
+                  <div key={a.id} className="row gap-3" style={{ alignItems: "center", border: "1px solid " + ((!past && toneOf(a.starts_at)) || "var(--border)"), borderRadius: "var(--r-md)", padding: 12 }}>
                     <div style={{ textAlign: "center", minWidth: 52, borderRight: "1px solid var(--border)", paddingRight: 10 }}>
                       <div className="mono" style={{ fontWeight: 800, fontSize: 15 }}>{new Date(a.starts_at).toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { hour: "2-digit", minute: "2-digit" })}</div>
                     </div>
