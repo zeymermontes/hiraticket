@@ -11,6 +11,7 @@ import { ConfirmProvider } from "@/components/Confirm";
 import { RealtimeNotifier } from "@/components/RealtimeNotifier";
 import type { NotifPrefs } from "@/lib/notifPrefs";
 import { NavProgress } from "@/components/NavProgress";
+import { PageSkeleton } from "@/components/PageSkeleton";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { clearCache } from "@/lib/localCache";
 import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
@@ -151,7 +152,7 @@ export interface ShellUser {
   avatarUrl?: string | null;
 }
 
-function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser; isAdmin: boolean }) {
+function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNavigate }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser; isAdmin: boolean; onNavigate?: (href: string) => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const { lang, t, personal } = useApp();
@@ -187,7 +188,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin }: { 
     const secondary = secondaryBadges[it.id] ?? null;
     return (
       <Link key={it.id} href={it.href} prefetch={false} className={"rail-item" + (on ? " on" : "")}
-        onMouseEnter={() => armPrefetch(it.href)} onMouseLeave={cancelPrefetch}>
+        onMouseEnter={() => armPrefetch(it.href)} onMouseLeave={cancelPrefetch} onClick={() => onNavigate?.(it.href)}>
         <Icon name={it.icon} />
         <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : it.id === "contacts" && personal ? (lang === "es" ? "Contactos" : "Contacts") : t(it.labelKey)}</span>
         <span className="rail-badges">
@@ -327,6 +328,25 @@ export function Shell({
     return () => window.removeEventListener("ht:badges", h);
   }, [refreshBadges]);
 
+  // Esqueleto INSTANTÁNEO al cambiar de sección, del lado del cliente.
+  //
+  // El loading.tsx de Next solo aparece al instante si la ruta se prefetcheó —- y el prefetch
+  // automático está apagado a propósito (renderizaba media app de fondo, para siempre). Así que la
+  // respuesta visual la damos nosotros: el clic en el rail cubre el contenido con el esqueleto en
+  // el mismo frame, como superposición —- la página vieja sigue montada debajo, no se pierde nada
+  // si la navegación falla —- y se quita cuando cambia el pathname.
+  const navPath = usePathname();
+  const [navDest, setNavDest] = useState<string | null>(null);
+  useEffect(() => { setNavDest(null); }, [navPath]);
+  useEffect(() => {
+    if (!navDest) return;
+    const t = setTimeout(() => setNavDest(null), 8000); // por si la navegación nunca llega
+    return () => clearTimeout(t);
+  }, [navDest]);
+  const onNavigate = useCallback((href: string) => {
+    if (href.split("?")[0] !== window.location.pathname) setNavDest(href);
+  }, []);
+
   return (
     <AppProvider personal={personal}>
       <ToastProvider>
@@ -335,10 +355,15 @@ export function Shell({
           <BuildSkewGuard />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
-            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} />
-            <div className="main">
+            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />
+            <div className="main" style={{ position: "relative" }}>
               <TopBar notifications={notifs} connected={connected} businessId={businessId} />
               {children}
+              {navDest && (
+                <div style={{ position: "absolute", inset: 0, top: 57, background: "var(--surface)", zIndex: 30 }}>
+                  <PageSkeleton />
+                </div>
+              )}
             </div>
           </div>
         </ConfirmProvider>
