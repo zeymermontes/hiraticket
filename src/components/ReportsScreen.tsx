@@ -201,6 +201,14 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           [es ? "Total" : "Total", data.discountCount, data.discountTotal],
         ] as CellValue[][],
       }]),
+      ...(personal || data.wasteList.length === 0 ? [] : [{
+        name: es ? "Mermas" : "Waste",
+        rows: [
+          [es ? "Pedido" : "Order", es ? "Qué se perdió" : "What was wasted", es ? "Cantidad" : "Qty", es ? "Costo" : "Cost", es ? "Motivo" : "Reason", dateHead],
+          ...data.wasteList.map((w) => [w.code, w.name, w.qty, w.cost, w.reason, fmtTs(w.created_at)] as CellValue[]),
+          [es ? "Total" : "Total", null, null, data.wasteTotal, null, null],
+        ] as CellValue[][],
+      }]),
       { name: objs, rows: detail },
       { name: itemLabel, rows: itemsSheet },
     ]);
@@ -314,6 +322,52 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           </section>
         )}
 
+        {/* Mermas (0074): costo real, no venta perdida — ya se restó de la utilidad estimada.
+            Lista de detalle (no solo el agregado) para poder revisar/auditar cada registro. */}
+        {!personal && data.wasteCount > 0 && (
+          <section className="ws-block" style={{ marginBottom: 20 }}>
+            <div className="ws-block-head">
+              <Icon name="ban" size={16} />
+              <h4>{lang === "es" ? "Mermas" : "Waste"}</h4>
+              <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                {lang === "es" ? "ya restado de la utilidad" : "already subtracted from profit"}
+              </span>
+            </div>
+            <div className="ws-block-body col gap-3">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
+                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Registros" : "Entries"} value={data.wasteCount} />
+                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Costo total" : "Total cost"} value={money(Math.round(data.wasteTotal))} />
+              </div>
+              <div className="scroll" style={{ overflowX: "auto" }}>
+                <table className="tbl" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>{lang === "es" ? "Pedido" : "Order"}</th>
+                      <th>{lang === "es" ? "Qué se perdió" : "What was wasted"}</th>
+                      <th>{lang === "es" ? "Cant." : "Qty"}</th>
+                      <th>{lang === "es" ? "Costo" : "Cost"}</th>
+                      <th>{lang === "es" ? "Motivo" : "Reason"}</th>
+                      <th>{lang === "es" ? "Fecha" : "Date"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.wasteList.map((w, i) => (
+                      <tr key={i} style={{ cursor: "default" }}>
+                        <td className="mono t-sm">{w.code}</td>
+                        <td>{w.name}</td>
+                        <td className="mono t-sm">{w.qty}</td>
+                        <td className="mono t-sm" style={{ color: "var(--red)", fontWeight: 700 }}>{money(w.cost)}</td>
+                        <td className="t-sm muted">{w.reason}</td>
+                        <td className="t-xs muted">{new Date(w.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
           <BarList title={personal ? (lang === "es" ? "Subtareas más frecuentes" : "Most frequent subtasks") : (lang === "es" ? "Productos más vendidos" : "Best sellers")} rows={asBars(topQty, "qty", "brand")} />
           <BarList title={personal ? (lang === "es" ? "Subtareas menos frecuentes" : "Least frequent subtasks") : (lang === "es" ? "Productos menos vendidos" : "Worst sellers")} rows={asBars(bottomQty, "qty", "slate")} />
@@ -344,22 +398,6 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {!personal && data.refundedTotal > 0 && (
                   <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Reembolsado" : "Refunded"} value={money(Math.round(data.refundedTotal))} />
                 )}
-              </div>
-            </section>
-          )}
-          {/* Mermas (0074): costo real, no venta perdida — ya se restó de la utilidad estimada. */}
-          {!personal && data.wasteCount > 0 && (
-            <section className="ws-block">
-              <div className="ws-block-head">
-                <Icon name="ban" size={16} />
-                <h4>{lang === "es" ? "Mermas" : "Waste"}</h4>
-                <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
-                  {lang === "es" ? "ya restado de la utilidad" : "already subtracted from profit"}
-                </span>
-              </div>
-              <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
-                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Registros" : "Entries"} value={data.wasteCount} />
-                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Costo total" : "Total cost"} value={money(Math.round(data.wasteTotal))} />
               </div>
             </section>
           )}

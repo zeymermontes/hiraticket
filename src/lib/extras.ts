@@ -178,6 +178,7 @@ export interface ReportData {
   // no venta perdida — se resta de la utilidad estimada.
   wasteCount: number;
   wasteTotal: number;
+  wasteList: { code: string; name: string; qty: number; cost: number; reason: string; created_at: string }[];
   // Per-order detail for the report export (names already resolved).
   orders: {
     code: string; contact: string; phone: string; stage: string; area: string; agent: string;
@@ -216,10 +217,14 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       .gte("created_at", fromISO).lte("created_at", toISO);
     return error ? [] : (data ?? []);
   };
-  // Mermas (0074): puede no existir la tabla aún si la migración no se ha corrido.
+  // Mermas (0074): puede no existir la tabla aún si la migración no se ha corrido. order_waste
+  // solo tiene una FK a orders (order_id), así que el embed no es ambiguo (a diferencia de
+  // orders→stages tras la 0072).
   const fetchWaste = async () => {
     const { data, error } = await supabase.from("order_waste")
-      .select("cost").eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO);
+      .select("name, qty, cost, reason, created_at, order:orders(code)")
+      .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
+      .order("created_at", { ascending: false });
     return error ? [] : (data ?? []);
   };
   const [orders, { count: resolved }, stages, areas, agents, catalog, payRows, wasteRows] = await Promise.all([
@@ -283,6 +288,19 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const pendingFromPeriodOrders = Math.max(0, rows.reduce((s, o) => s + Number(o.total ?? 0) - paidOf(o), 0));
   const wasteCount = wasteRows.length;
   const wasteTotal = wasteRows.reduce((s, w) => s + Number((w as { cost: unknown }).cost ?? 0), 0);
+  const wasteList = wasteRows.map((w) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec = w as any;
+    const ord = Array.isArray(rec.order) ? rec.order[0] : rec.order;
+    return {
+      code: (ord?.code as string) ?? "",
+      name: (rec.name as string) ?? "",
+      qty: Number(rec.qty ?? 0),
+      cost: Number(rec.cost ?? 0),
+      reason: (rec.reason as string) ?? "",
+      created_at: (rec.created_at as string) ?? "",
+    };
+  });
   const countBy = <T extends { id: string; name: string; color: string }>(
     items: T[], key: "stage_id" | "area_id",
   ) => items.map((it) => ({ name: it.name, color: it.color, count: rows.filter((o) => o[key] === it.id).length }));
@@ -377,6 +395,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     pendingFromPeriodOrders,
     wasteCount,
     wasteTotal: Math.round(wasteTotal * 100) / 100,
+    wasteList,
     byAgentDiscounts,
     orders: rows.map((o) => ({
       code: (o.code as string) ?? "",
