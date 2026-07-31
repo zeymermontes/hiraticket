@@ -7,6 +7,28 @@ import type { ReportData } from "@/lib/extras";
 import { PRIORITY_LABEL } from "@/lib/types";
 import { downloadXlsx, type CellValue } from "@/lib/xlsx";
 
+type Tone = "brand" | "green" | "amber" | "red" | "slate" | "blue" | "violet" | "teal";
+
+/** Icon-badge stat, the building block for every KPI/summary card in this screen — consistent
+ *  tint (bg + icon) per metric, so the page reads as one coherent dashboard instead of ad-hoc
+ *  divs. `valueColor` is separate from the badge tone: most counts stay neutral text, only
+ *  genuinely "good/bad" money (profit, collected, cancelled, waste) gets tinted. */
+function Stat({ icon, label, value, tone = "slate", valueColor }: { icon: string; label: string; value: React.ReactNode; tone?: Tone; valueColor?: string }) {
+  const bg = tone === "brand" ? "var(--brand-50)" : `var(--${tone}-bg)`;
+  const fg = tone === "brand" ? "var(--brand-700)" : `var(--${tone})`;
+  return (
+    <div className="row gap-3" style={{ alignItems: "center", minWidth: 0 }}>
+      <span style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: bg, color: fg, flex: "none" }}>
+        <Icon name={icon} size={17} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div className="t-xs muted truncate">{label}</div>
+        <div className="mono truncate" style={{ fontWeight: 800, fontSize: 19, color: valueColor }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
 function BarList({ title, rows, fmt }: { title: string; rows: { name: string; color: string; count: number }[]; fmt?: (n: number) => string }) {
   const max = Math.max(1, ...rows.map((r) => Math.max(0, r.count)));
   // Stage/area colors are palette names (→ CSS var); agent colors are raw hex from the profile.
@@ -215,45 +237,18 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${personal ? 4 : 5},1fr)`, gap: 14, marginBottom: 20 }}>
           {personal ? (
             <>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="orders" size={15} />{lang === "es" ? "Tareas" : "Tasks"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.orderCount}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="clock" size={15} />{lang === "es" ? "Activas" : "Active"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{active}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="check" size={15} />{lang === "es" ? "Completadas" : "Completed"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.completedCount}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="chat" size={15} />{lang === "es" ? "Chats resueltos" : "Resolved chats"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.resolvedConvs}</div>
-              </div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="orders" tone="brand" label={lang === "es" ? "Tareas" : "Tasks"} value={data.orderCount} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="clock" tone="amber" label={lang === "es" ? "Activas" : "Active"} value={active} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="check" tone="green" label={lang === "es" ? "Completadas" : "Completed"} value={data.completedCount} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="chat" tone="teal" label={lang === "es" ? "Chats resueltos" : "Resolved chats"} value={data.resolvedConvs} /></div>
             </>
           ) : (
             <>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="orders" size={15} />{lang === "es" ? "Ventas" : "Sales"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{money(data.totalSales)}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="sparkles" size={15} />{lang === "es" ? "Ganancia est." : "Est. profit"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6, color: "var(--green)" }} className="mono">{money(Math.round(data.totalProfit))}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="kanban" size={15} />{lang === "es" ? "Pedidos" : "Orders"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.orderCount}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="orders" size={15} />{lang === "es" ? "Ticket prom." : "Avg ticket"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{money(data.avgTicket)}</div>
-              </div>
-              <div className="ws-block" style={{ padding: 16 }}>
-                <div className="row gap-2 muted t-sm"><Icon name="check" size={15} />{lang === "es" ? "Resueltas" : "Resolved"}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }} className="mono">{data.resolvedConvs}</div>
-              </div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="orders" tone="brand" label={lang === "es" ? "Ventas" : "Sales"} value={money(data.totalSales)} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="sparkles" tone="green" label={lang === "es" ? "Ganancia est." : "Est. profit"} value={money(Math.round(data.totalProfit))} valueColor="var(--green)" /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="kanban" tone="blue" label={lang === "es" ? "Pedidos" : "Orders"} value={data.orderCount} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="orders" tone="violet" label={lang === "es" ? "Ticket prom." : "Avg ticket"} value={money(data.avgTicket)} /></div>
+              <div className="ws-block" style={{ padding: 16 }}><Stat icon="check" tone="teal" label={lang === "es" ? "Resueltas" : "Resolved"} value={data.resolvedConvs} /></div>
             </>
           )}
         </div>
@@ -310,23 +305,11 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {lang === "es" ? "por fecha de pago, no de venta" : "by payment date, not sale date"}
               </span>
             </div>
-            <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
-              <div>
-                <div className="t-xs muted">{lang === "es" ? "Cobrado en el periodo" : "Collected in period"}</div>
-                <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--green)" }}>{money(Math.round(data.collectedTotal))}</div>
-              </div>
-              <div>
-                <div className="t-xs muted">{lang === "es" ? "De pedidos de este periodo" : "From this period's orders"}</div>
-                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.collectedFromPeriodOrders))}</div>
-              </div>
-              <div>
-                <div className="t-xs muted">{lang === "es" ? "De periodos anteriores" : "From earlier periods"}</div>
-                <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.collectedFromOtherOrders))}</div>
-              </div>
-              <div>
-                <div className="t-xs muted">{lang === "es" ? "Pendiente por cobrar" : "Pending collection"}</div>
-                <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: data.pendingFromPeriodOrders > 0 ? "var(--amber)" : "var(--text)" }}>{money(Math.round(data.pendingFromPeriodOrders))}</div>
-              </div>
+            <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+              <Stat icon="check" tone="green" valueColor="var(--green)" label={lang === "es" ? "Cobrado en el periodo" : "Collected in period"} value={money(Math.round(data.collectedTotal))} />
+              <Stat icon="orders" tone="slate" label={lang === "es" ? "De pedidos de este periodo" : "From this period's orders"} value={money(Math.round(data.collectedFromPeriodOrders))} />
+              <Stat icon="clock" tone="slate" label={lang === "es" ? "De periodos anteriores" : "From earlier periods"} value={money(Math.round(data.collectedFromOtherOrders))} />
+              <Stat icon="clock" tone={data.pendingFromPeriodOrders > 0 ? "amber" : "slate"} valueColor={data.pendingFromPeriodOrders > 0 ? "var(--amber)" : undefined} label={lang === "es" ? "Pendiente por cobrar" : "Pending collection"} value={money(Math.round(data.pendingFromPeriodOrders))} />
             </div>
           </section>
         )}
@@ -353,22 +336,13 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                   {lang === "es" ? "no cuentan como venta" : "not counted as sales"}
                 </span>
               </div>
-              <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
-                <div>
-                  <div className="t-xs muted">{lang === "es" ? "Cancelados" : "Cancelled"}</div>
-                  <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{data.cancelledCount}</div>
-                </div>
+              <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: `repeat(${!personal ? 3 : 1},1fr)`, gap: 16 }}>
+                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Cancelados" : "Cancelled"} value={data.cancelledCount} />
                 {!personal && (
-                  <div>
-                    <div className="t-xs muted">{lang === "es" ? "Valor cancelado" : "Cancelled value"}</div>
-                    <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{money(Math.round(data.cancelledTotal))}</div>
-                  </div>
+                  <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Valor cancelado" : "Cancelled value"} value={money(Math.round(data.cancelledTotal))} />
                 )}
                 {!personal && data.refundedTotal > 0 && (
-                  <div>
-                    <div className="t-xs muted">{lang === "es" ? "Reembolsado" : "Refunded"}</div>
-                    <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--red)" }}>{money(Math.round(data.refundedTotal))}</div>
-                  </div>
+                  <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Reembolsado" : "Refunded"} value={money(Math.round(data.refundedTotal))} />
                 )}
               </div>
             </section>
@@ -383,15 +357,9 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                   {lang === "es" ? "ya restado de la utilidad" : "already subtracted from profit"}
                 </span>
               </div>
-              <div className="ws-block-body row gap-4" style={{ flexWrap: "wrap" }}>
-                <div>
-                  <div className="t-xs muted">{lang === "es" ? "Registros" : "Entries"}</div>
-                  <div className="mono" style={{ fontWeight: 800, fontSize: 20 }}>{data.wasteCount}</div>
-                </div>
-                <div>
-                  <div className="t-xs muted">{lang === "es" ? "Costo total" : "Total cost"}</div>
-                  <div className="mono" style={{ fontWeight: 800, fontSize: 20, color: "var(--amber)" }}>{money(Math.round(data.wasteTotal))}</div>
-                </div>
+              <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
+                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Registros" : "Entries"} value={data.wasteCount} />
+                <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Costo total" : "Total cost"} value={money(Math.round(data.wasteTotal))} />
               </div>
             </section>
           )}

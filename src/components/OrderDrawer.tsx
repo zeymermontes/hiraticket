@@ -18,7 +18,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
@@ -104,6 +104,8 @@ export function OrderDrawer({
   const [wasteQty, setWasteQty] = useState("1");
   const [wasteCost, setWasteCost] = useState("");
   const [wasteReason, setWasteReason] = useState("");
+  const [wasteErr, setWasteErr] = useState<string | null>(null);
+  const [editWaste, setEditWaste] = useState(false);
   const run = (fn: () => Promise<unknown>) => start(async () => {
     await fn();
     const fresh = await loadOrderDetail(detailProp.id);
@@ -548,24 +550,44 @@ export function OrderDrawer({
             const pickWasteProduct = (p: Product) => { setWasteProductId(p.id); setWasteName(p.name); setWasteCost(String(p.cost ?? 0)); };
             const addWaste = () => {
               if (!wasteName.trim()) return;
-              run(() => addOrderWaste(detail.id, { orderItemId: wasteItem || null, productId: wasteProductId, name: wasteName, qty: Number(wasteQty) || 1, cost: Number(wasteCost) || 0, reason: wasteReason }));
-              setWasteItem(""); setWasteProductId(null); setWasteName(""); setWasteQty("1"); setWasteCost(""); setWasteReason("");
+              const payload = { orderItemId: wasteItem || null, productId: wasteProductId, name: wasteName, qty: Number(wasteQty) || 1, cost: Number(wasteCost) || 0, reason: wasteReason };
+              setWasteErr(null);
+              start(async () => {
+                const r = await addOrderWaste(detail.id, payload);
+                if (!r.ok) { setWasteErr(r.error || (lang === "es" ? "No se pudo guardar la merma." : "Couldn't save the waste entry.")); return; }
+                setWasteItem(""); setWasteProductId(null); setWasteName(""); setWasteQty("1"); setWasteCost(""); setWasteReason("");
+                const fresh = await loadOrderDetail(detailProp.id);
+                if (fresh) setDetail(fresh);
+                router.refresh();
+              });
             };
             return (
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="ban" size={16} /><h4 className="grow">{lang === "es" ? "Mermas" : "Waste"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill>{wasteTotal > 0 && <Pill color="slate">${formatMoney(wasteTotal)}</Pill>}</div>
+            <div className="ws-block-head"><Icon name="ban" size={16} /><h4 className="grow">{lang === "es" ? "Mermas" : "Waste"}</h4><Pill color="amber"><Icon name="lock" size={11} />{lang === "es" ? "Interno" : "Internal"}</Pill>{wasteTotal > 0 && <Pill color="red">${formatMoney(wasteTotal)}</Pill>}
+              {detail.waste.length > 0 && (
+                <button className={"btn btn-sm " + (editWaste ? "btn-primary" : "btn-outline")} onClick={() => setEditWaste((v) => !v)}><Icon name={editWaste ? "check" : "edit"} size={13} />{editWaste ? (lang === "es" ? "Listo" : "Done") : (lang === "es" ? "Editar" : "Edit")}</button>
+              )}
+            </div>
             <div style={{ padding: "12px 14px" }} className="col gap-2">
               <div className="t-xs muted">{lang === "es" ? "Reimpresiones, errores de producción o cancelaciones parciales. No se le muestra al cliente ni cambia el total del pedido." : "Reprints, production errors or partial cancellations. Never shown to the customer and doesn't change the order total."}</div>
               {detail.waste.length > 0 && (
                 <div className="col gap-1" style={{ paddingTop: 2 }}>
-                  {detail.waste.map((w) => (
+                  {detail.waste.map((w) => (editWaste ? (
+                    <div className="row gap-2" key={w.id} style={{ alignItems: "center", padding: "5px 0" }}>
+                      <input key={"n" + w.name} className="inp-inline grow" defaultValue={w.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== w.name) run(() => updateOrderWaste(w.id, { name: e.target.value })); }} placeholder={lang === "es" ? "Qué se perdió" : "What was wasted"} />
+                      <input key={"q" + w.qty} className="inp-inline" style={{ width: 48 }} defaultValue={String(w.qty)} title={lang === "es" ? "Cantidad" : "Qty"} onBlur={(e) => { const q = Number(e.target.value) || 1; if (q !== w.qty) run(() => updateOrderWaste(w.id, { qty: q })); }} />
+                      <div className="field field-sm field-filled" style={{ width: 90 }}><span className="t-sm muted">$</span><input key={"c" + w.cost} type="number" min={0} defaultValue={String(w.cost)} title={lang === "es" ? "Costo" : "Cost"} onBlur={(e) => { const c = Number(e.target.value) || 0; if (c !== w.cost) run(() => updateOrderWaste(w.id, { cost: c })); }} /></div>
+                      <input key={"r" + w.reason} className="inp-inline grow" defaultValue={w.reason} placeholder={lang === "es" ? "Motivo" : "Reason"} onBlur={(e) => { if (e.target.value !== w.reason) run(() => updateOrderWaste(w.id, { reason: e.target.value })); }} />
+                      <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }} onClick={() => run(() => deleteOrderWaste(w.id))}><Icon name="trash" size={14} /></button>
+                    </div>
+                  ) : (
                     <div className="row gap-2" key={w.id} style={{ alignItems: "center", fontSize: 12.5 }}>
-                      <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(w.cost)}</span>
+                      <span className="mono" style={{ fontWeight: 700, color: "var(--red)" }}>${formatMoney(w.cost)}</span>
                       <Pill color="slate">{w.qty}× {w.name}</Pill>
                       <span className="t-xs muted truncate grow">{w.reason} · {new Date(w.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
                       <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} onClick={() => run(() => deleteOrderWaste(w.id))}><Icon name="x" size={13} /></button>
                     </div>
-                  ))}
+                  )))}
                 </div>
               )}
               <div className="col gap-2">
@@ -587,6 +609,7 @@ export function OrderDrawer({
                   <input className="inp-inline grow" style={{ minWidth: 140 }} placeholder={lang === "es" ? "Motivo (reimpresión, error…)" : "Reason (reprint, error…)"} value={wasteReason} onChange={(e) => setWasteReason(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addWaste(); }} />
                   <button className="btn btn-sm btn-outline" disabled={pending || !wasteName.trim()} onClick={addWaste}><Icon name="plus" size={14} />{lang === "es" ? "Registrar" : "Add"}</button>
                 </div>
+                {wasteErr && <div className="t-xs" style={{ color: "var(--red)" }}>{wasteErr}</div>}
               </div>
             </div>
           </div>

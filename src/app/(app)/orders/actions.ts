@@ -390,16 +390,26 @@ export async function uncancelOrder(orderId: string): Promise<{ ok: boolean; err
 /** Registra una merma (0074): reimpresión, error de producción o cancelación parcial. Uso
  *  interno — no toca `total`/`subtotal` del pedido, solo se resta de la utilidad en reportes.
  *  `productId` liga con el catálogo (el costo se tomó de ahí); null = merma genérica con costo
- *  capturado a mano. */
-export async function addOrderWaste(orderId: string, input: { orderItemId?: string | null; productId?: string | null; name: string; qty: number; cost: number; reason: string }): Promise<void> {
+ *  capturado a mano. Devuelve {ok,error} (en vez de tragarse el error) para que la migración 0074
+ *  sin correr en producción se note en la UI en lugar de fallar en silencio. */
+export async function addOrderWaste(orderId: string, input: { orderItemId?: string | null; productId?: string | null; name: string; qty: number; cost: number; reason: string }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id").eq("id", orderId).maybeSingle();
-  if (!order) return;
-  await supabase.from("order_waste").insert({
+  if (!order) return { ok: false, error: "El pedido no existe." };
+  const { error } = await supabase.from("order_waste").insert({
     business_id: order.business_id, order_id: orderId, order_item_id: input.orderItemId ?? null, product_id: input.productId ?? null,
     name: input.name.trim() || "Merma", qty: input.qty || 1, cost: input.cost || 0, reason: input.reason.trim() || "Merma", created_by: user?.id ?? null,
   });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/orders"); revalidatePath("/reports");
+  return { ok: true };
+}
+
+/** Edita una merma ya capturada (cantidad, costo, motivo o el nombre a mano). */
+export async function updateOrderWaste(wasteId: string, patch: { name?: string; qty?: number; cost?: number; reason?: string }): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("order_waste").update(patch).eq("id", wasteId);
   revalidatePath("/orders"); revalidatePath("/reports");
 }
 
