@@ -547,14 +547,24 @@ export function OrderDrawer({
               Interno: nunca se manda al cliente ni afecta total/subtotal del pedido. */}
           {!personal && (() => {
             const wasteTotal = detail.waste.reduce((s, w) => s + w.cost, 0);
-            const pickWasteItem = (id: string) => { setWasteItem(id); const it = detail.items.find((x) => x.id === id); if (it) { setWasteName(it.name); setWasteProductId(null); } };
-            // Si el producto no tiene costo registrado, se estima igual que en reportes: el % de
-            // margen de Ajustes aplicado al precio (costo = precio × (1 - margen%)), en vez de "0"
-            // — que grabaría la merma como si no costara nada.
+            // Estimación de costo compartida por los dos selectores: si hay costo de catálogo
+            // (directo, o por nombre para el producto DEL PEDIDO, que no trae su propio costo) se
+            // usa ese; si no, el % de margen de Ajustes aplicado al precio — igual que en reportes.
+            const norm = (s: string) => s.trim().toLowerCase();
+            const costByName = new Map(products.filter((p) => p.cost != null).map((p) => [norm(p.name), p.cost as number]));
+            const estimateCost = (name: string, price: number) => {
+              const known = costByName.get(norm(name));
+              const cost = known ?? price * (1 - manualMarginPct / 100);
+              return Math.round(cost * 100) / 100;
+            };
+            const pickWasteItem = (id: string) => {
+              setWasteItem(id);
+              const it = detail.items.find((x) => x.id === id);
+              if (it) { setWasteName(it.name); setWasteProductId(null); setWasteCost(String(estimateCost(it.name, it.unit_price))); }
+            };
             const pickWasteProduct = (p: Product) => {
               setWasteProductId(p.id); setWasteName(p.name);
-              const cost = p.cost != null ? p.cost : p.price * (1 - manualMarginPct / 100);
-              setWasteCost(String(Math.round(cost * 100) / 100));
+              setWasteCost(String(p.cost != null ? p.cost : estimateCost(p.name, p.price)));
             };
             const addWaste = () => {
               if (!wasteName.trim()) return;
