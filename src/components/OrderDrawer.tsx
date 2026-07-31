@@ -547,7 +547,10 @@ export function OrderDrawer({
           {!personal && (() => {
             const wasteTotal = detail.waste.reduce((s, w) => s + w.cost, 0);
             const pickWasteItem = (id: string) => { setWasteItem(id); const it = detail.items.find((x) => x.id === id); if (it) { setWasteName(it.name); setWasteProductId(null); } };
-            const pickWasteProduct = (p: Product) => { setWasteProductId(p.id); setWasteName(p.name); setWasteCost(String(p.cost ?? 0)); };
+            // Si el producto no tiene costo registrado, se deja el campo vacío en vez de "0": poner
+            // 0 grabaría la merma como si no costara nada, escondiendo un costo real que solo no
+            // está catalogado — mejor que se note y lo capturen a mano.
+            const pickWasteProduct = (p: Product) => { setWasteProductId(p.id); setWasteName(p.name); setWasteCost(p.cost != null ? String(p.cost) : ""); };
             const addWaste = () => {
               if (!wasteName.trim()) return;
               const payload = { orderItemId: wasteItem || null, productId: wasteProductId, name: wasteName, qty: Number(wasteQty) || 1, cost: Number(wasteCost) || 0, reason: wasteReason };
