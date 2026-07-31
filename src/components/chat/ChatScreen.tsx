@@ -681,12 +681,13 @@ function lockConfirmOpts(agentName: string, lang: "es" | "en"): ConfirmOpts {
 }
 
 export function ChatScreen({
-  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, initialCounts, doneFromStageId = null,
+  list: listProp, detail: detailProp, selectedId, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, initialCounts, doneFromStageId = null, manualMarginPct = 50,
 }: {
   list: ConvListItem[];
   initialCounts?: ChatListCounts;
   /** Umbral de "terminado" del negocio (0072) — para el conteo de abiertos del cliente 360. */
   doneFromStageId?: string | null;
+  manualMarginPct?: number;
   detail: ConvDetail | null;
   selectedId: string | null;
   agents: Agent[];
@@ -1450,10 +1451,10 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} meId={meId}
             onAccepted={acceptedToMine} />
-          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} onClose={() => setShow360(false)} />}
+          {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} onClose={() => setShow360(false)} />}
         </>
       ) : (
         <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
@@ -2343,7 +2344,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe, doneFromStageId = null }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void; doneFromStageId?: string | null }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();
@@ -2590,7 +2591,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       )}
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={products} businessId={businessId}
-          convDetail={detail} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId}
+          convDetail={detail} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct}
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
       {showNewTask && (

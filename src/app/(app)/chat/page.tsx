@@ -68,6 +68,7 @@ export default async function ChatPage({
       connected={isConnected(sessions)}
       invoice={{ add: business.invoice_add_tax ?? true, rate: business.invoice_tax_rate ?? 16 }}
       doneFromStageId={business.done_from_stage_id ?? null}
+      manualMarginPct={business.manual_margin_pct ?? 50}
       shipping={integrations.shipping}
       invoicing={integrations.invoicing}
     />

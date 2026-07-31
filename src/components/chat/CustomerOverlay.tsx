@@ -16,7 +16,7 @@ import { useApp } from "@/components/AppContext";
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
-export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose, doneFromStageId = null }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void; doneFromStageId?: string | null }) {
+export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
   const router = useRouter();
   const { personal } = useApp();
   const ORDERS = personal ? "Tareas" : "Pedidos";
@@ -122,6 +122,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, products = [], 
           convDetail={detail}
           connected={connected}
           doneFromStageId={doneFromStageId}
+          manualMarginPct={manualMarginPct}
           onClose={() => { setOpenOrder(null); router.refresh(); }}
         />
       )}

@@ -19,7 +19,7 @@ import { loadOrderDetail, setItemStage } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 
 export function KanbanBoard({
-  initial, stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing, doneFromStageId = null,
+  initial, stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
 }: {
   initial: KanbanBoardData; // counts + first page of each column (board opens grouped by stage)
   stages: Stage[];
@@ -32,6 +32,7 @@ export function KanbanBoard({
   shipping?: string | null;
   invoicing?: boolean;
   doneFromStageId?: string | null;
+  manualMarginPct?: number;
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -292,7 +293,7 @@ export function KanbanBoard({
       </div>
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={catalog} businessId={businessId}
-          convDetail={null} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId}
+          convDetail={null} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct}
           onClose={() => { setOpenOrder(null); router.refresh(); }} />
       )}
     </div>

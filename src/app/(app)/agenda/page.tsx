@@ -49,6 +49,7 @@ export default async function AgendaPage({
       openOrder={openOrder}
       drawer={drawer}
       doneFromStageId={business.done_from_stage_id ?? null}
+      manualMarginPct={business.manual_margin_pct ?? 50}
     />
   );
 }

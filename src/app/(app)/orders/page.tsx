@@ -37,6 +37,7 @@ export default async function OrdersPage({
   return (
     <OrdersTable
       doneFromStageId={business.done_from_stage_id ?? null}
+      manualMarginPct={business.manual_margin_pct ?? 50}
       initial={firstPage}
       objectName={(business.object_singular ?? "Pedido") + "s"}
       businessId={business.id}

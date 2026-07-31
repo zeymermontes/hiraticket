@@ -40,13 +40,14 @@ function toLocalInput(iso: string | null): string {
 }
 
 export function OrderDrawer({
-  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing, doneFromStageId = null,
+  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean; products?: Product[];
   shipping?: string | null; // active shipping plugin id — gates the Envío block entirely
   invoicing?: boolean; // Facturapi active — gates the Factura (CFDI) block entirely
   doneFromStageId?: string | null; // default del negocio (0072) — solo para NOMBRARLO en el dropdown
+  manualMarginPct?: number; // % de margen (Ajustes) — para estimar el costo de mermas de catálogo sin costo propio
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -547,10 +548,14 @@ export function OrderDrawer({
           {!personal && (() => {
             const wasteTotal = detail.waste.reduce((s, w) => s + w.cost, 0);
             const pickWasteItem = (id: string) => { setWasteItem(id); const it = detail.items.find((x) => x.id === id); if (it) { setWasteName(it.name); setWasteProductId(null); } };
-            // Si el producto no tiene costo registrado, se deja el campo vacío en vez de "0": poner
-            // 0 grabaría la merma como si no costara nada, escondiendo un costo real que solo no
-            // está catalogado — mejor que se note y lo capturen a mano.
-            const pickWasteProduct = (p: Product) => { setWasteProductId(p.id); setWasteName(p.name); setWasteCost(p.cost != null ? String(p.cost) : ""); };
+            // Si el producto no tiene costo registrado, se estima igual que en reportes: el % de
+            // margen de Ajustes aplicado al precio (costo = precio × (1 - margen%)), en vez de "0"
+            // — que grabaría la merma como si no costara nada.
+            const pickWasteProduct = (p: Product) => {
+              setWasteProductId(p.id); setWasteName(p.name);
+              const cost = p.cost != null ? p.cost : p.price * (1 - manualMarginPct / 100);
+              setWasteCost(String(Math.round(cost * 100) / 100));
+            };
             const addWaste = () => {
               if (!wasteName.trim()) return;
               const payload = { orderItemId: wasteItem || null, productId: wasteProductId, name: wasteName, qty: Number(wasteQty) || 1, cost: Number(wasteCost) || 0, reason: wasteReason };

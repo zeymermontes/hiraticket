@@ -28,7 +28,7 @@ function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
 }
 
 export function OrdersTable({
-  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing, doneFromStageId = null,
+  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
 }: {
   initial: OrdersPage; // first page, rendered on the server; the rest is fetched on demand
   objectName: string;
@@ -45,6 +45,7 @@ export function OrdersTable({
   contacts: { id: string; name: string }[];
   invoice?: { add: boolean; rate: number };
   doneFromStageId?: string | null;
+  manualMarginPct?: number;
   shipping?: string | null; // active shipping plugin id (gates all shipping UI)
   invoicing?: boolean; // Facturapi active (gates the CFDI block)
 }) {
@@ -347,6 +348,7 @@ export function OrdersTable({
           shipping={shipping}
           invoicing={invoicing}
           doneFromStageId={doneFromStageId}
+          manualMarginPct={manualMarginPct}
           onClose={() => { router.push("/orders", { scroll: false }); reload(); }}
         />
       )}
