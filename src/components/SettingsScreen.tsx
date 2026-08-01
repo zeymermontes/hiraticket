@@ -272,6 +272,21 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
           </div>
         </section>
 
+        <section className="ws-block">
+          <div className="ws-block-head"><Icon name="bell" size={16} /><h4>{lang === "es" ? "Notificaciones" : "Notifications"}</h4></div>
+          <div className="ws-block-body col gap-3">
+            <div className="row gap-2">
+              <span className="grow">{lang === "es" ? "Sonido de notificaciones" : "Notification sound"}<span className="t-xs muted" style={{ display: "block" }}>{lang === "es" ? "Tono corto al recibir una notificación asignada a ti" : "Short chime on a notification assigned to you"}</span></span>
+              <div className="seg">
+                <button className={!muted ? "on" : ""} onClick={() => setMute(false)}>{lang === "es" ? "Activado" : "On"}</button>
+                <button className={muted ? "on" : ""} onClick={() => setMute(true)}><Icon name="x" size={13} />{lang === "es" ? "Silenciado" : "Muted"}</button>
+              </div>
+            </div>
+            <DesktopNotifRow lang={lang} />
+            <NotifPrefsRows lang={lang} />
+          </div>
+        </section>
+
         {!personal && (
           <section className="ws-block">
             <div className="ws-block-head"><Icon name="orders" size={16} /><h4>{lang === "es" ? "Confirmar pago" : "Confirm payment"}</h4></div>
@@ -294,21 +309,6 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             </div>
           </section>
         )}
-
-        <section className="ws-block">
-          <div className="ws-block-head"><Icon name="bell" size={16} /><h4>{lang === "es" ? "Notificaciones" : "Notifications"}</h4></div>
-          <div className="ws-block-body col gap-3">
-            <div className="row gap-2">
-              <span className="grow">{lang === "es" ? "Sonido de notificaciones" : "Notification sound"}<span className="t-xs muted" style={{ display: "block" }}>{lang === "es" ? "Tono corto al recibir una notificación asignada a ti" : "Short chime on a notification assigned to you"}</span></span>
-              <div className="seg">
-                <button className={!muted ? "on" : ""} onClick={() => setMute(false)}>{lang === "es" ? "Activado" : "On"}</button>
-                <button className={muted ? "on" : ""} onClick={() => setMute(true)}><Icon name="x" size={13} />{lang === "es" ? "Silenciado" : "Muted"}</button>
-              </div>
-            </div>
-            <DesktopNotifRow lang={lang} />
-            <NotifPrefsRows lang={lang} />
-          </div>
-        </section>
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Áreas y etapas" : "Areas & stages"}</h4></div>
