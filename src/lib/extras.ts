@@ -71,7 +71,7 @@ export interface Appointment {
 }
 /** Un pedido (o tarea, en modo personal) con fecha límite, para la agenda y las banderitas. */
 export interface DueOrder {
-  id: string; code: string; due_at: string; total: number; priority: string | null;
+  id: string; code: string; due_at: string; total: number; pay_status: string; priority: string | null;
   contact: { name: string } | null;
 }
 
@@ -98,7 +98,7 @@ export async function getDueOrders(
     if (cancelled) q = q.is("cancelled_at", null);
     return q.order("due_at", { ascending: true }).limit(200);
   };
-  const COLS = "id, code, due_at, total, priority, stage_id, contact:contacts(name)";
+  const COLS = "id, code, due_at, total, pay_status, priority, stage_id, contact:contacts(name)";
   // done_from_stage_id (0072) / cancelled_at (0065) pueden no existir aún — cascada.
   let { data, error } = await build(COLS + ", done_from_stage_id", true);
   if (error) ({ data, error } = await build(COLS, true));

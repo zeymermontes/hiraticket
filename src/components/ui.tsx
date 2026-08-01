@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { payStatusColor } from "@/lib/types";
 
 type PillColor =
   | "brand" | "blue" | "violet" | "teal" | "green" | "amber" | "red" | "slate";
@@ -23,6 +24,12 @@ export function Pill({
       {children}
     </span>
   );
+}
+
+/** Punto de color junto al monto de un pedido: rojo = nada pagado, ámbar = pago parcial, verde =
+ *  pagado. Mismo semáforo dondequiera que se muestre un pedido, para saber si ya cobró sin abrirlo. */
+export function PayDot({ status, title, size = 8 }: { status?: string | null; title?: string; size?: number }) {
+  return <span title={title} style={{ display: "inline-block", width: size, height: size, borderRadius: "50%", background: `var(--${payStatusColor(status)})`, flex: "none" }} />;
 }
 
 export function Avatar({

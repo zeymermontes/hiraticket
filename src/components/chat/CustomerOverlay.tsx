@@ -3,8 +3,8 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { doneStageIds } from "@/lib/doneStage";
-import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
-import { type PillColor, priorityColor, PRIORITY_LABEL, tagColor } from "@/lib/types";
+import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/ui";
+import { type PillColor, priorityColor, PRIORITY_LABEL, tagColor, payStatusLabel } from "@/lib/types";
 import type { ConvDetail, Agent } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import type { OrderDetail } from "@/lib/orders";
@@ -18,7 +18,7 @@ const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
 export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
   const router = useRouter();
-  const { personal } = useApp();
+  const { personal, lang } = useApp();
   const ORDERS = personal ? "Tareas" : "Pedidos";
   const [tab, setTab] = useState<"orders" | "history" | "notes">("orders");
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
@@ -77,7 +77,7 @@ export function CustomerOverlay({ detail, agents, areas, stages, products = [], 
                     <div className="o360-items">
                       {o.items.map((li, i) => <div className="o360-item" key={i}><span className="nm truncate">{li.name}</span><span className="t-xs muted mono">×{li.qty}</span>{!personal && <span className="mono" style={{ fontWeight: 700 }}>{money(li.subtotal)}</span>}</div>)}
                     </div>
-                    <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" />{!personal && <span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span>}</div>
+                    <div className="row gap-2">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<Pill color={priorityColor(o.priority as never)}><Icon name="flag" size={11} />{PRIORITY_LABEL[o.priority]?.es ?? o.priority}</Pill><span className="grow" />{!personal && <span className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 800 }}>{money(o.total)}</span></span>}</div>
                     <div className="row gap-2"><span className="t-xs muted grow">Creado {date(o.created_at)} · {date(o.updated_at)}</span>{ag && <Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={22} />}<button className="btn btn-sm btn-outline" disabled={loadingId === o.id} onClick={() => openDrawer(o.id)}>{loadingId === o.id ? "…" : "Abrir"}<Icon name="arrowr" size={13} /></button></div>
                   </div>
                 );

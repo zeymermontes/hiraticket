@@ -117,3 +117,15 @@ export const PRIORITY_LABEL: Record<string, { es: string; en: string }> = {
 export function formatMoney(n: number): string {
   return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(n);
 }
+
+/** Semáforo de cobro: rojo = nada pagado, ámbar = pago parcial, verde = pagado. Un solo mapeo para
+ *  que la tabla, el kanban, la agenda, el chat y el drawer coincidan sin que cada uno lo repita. */
+export function payStatusColor(status?: string | null): PillColor {
+  return status === "paid" ? "green" : status === "partial" ? "amber" : "red";
+}
+
+export function payStatusLabel(status: string | null | undefined, lang: "es" | "en"): string {
+  return status === "paid" ? (lang === "es" ? "Pagado" : "Paid")
+    : status === "partial" ? (lang === "es" ? "Parcial" : "Partial")
+    : (lang === "es" ? "Pendiente" : "Pending");
+}

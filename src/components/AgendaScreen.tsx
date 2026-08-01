@@ -3,9 +3,10 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useConfirm } from "@/components/Confirm";
-import { Pill, Avatar, deriveInitials } from "@/components/ui";
+import { Pill, Avatar, deriveInitials, PayDot } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Appointment, DueOrder, Product } from "@/lib/extras";
+import { payStatusLabel } from "@/lib/types";
 import type { OrderDetail } from "@/lib/orders";
 import type { Stage, Area } from "@/lib/business";
 import type { Agent, ConvDetail } from "@/lib/chat";
@@ -100,7 +101,7 @@ export function AgendaScreen({ businessId, appointments, dueOrders = [], stages 
         </div>
       </div>
       {/* Dinero solo en modo negocio: en personal las tareas no tienen importe. */}
-      {!personal && o.total > 0 && <span className="mono t-sm" style={{ fontWeight: 700 }}>{fmtMoney(o.total)}</span>}
+      {!personal && o.total > 0 && <span className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono t-sm" style={{ fontWeight: 700 }}>{fmtMoney(o.total)}</span></span>}
       {late && <Pill color="red" dot>{lang === "es" ? "Vencido" : "Overdue"}</Pill>}
       <Icon name="arrowr" size={14} />
     </div>

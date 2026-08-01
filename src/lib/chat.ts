@@ -123,6 +123,7 @@ export interface ChatOrderCard {
   id: string;
   code: string;
   total: number;
+  pay_status: string;
   priority: string;
   stage_id: string | null;
   assignee_id: string | null;
@@ -467,7 +468,7 @@ export async function getConversationMessages(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function ordersOfContact(supabase: any, contactId: string) {
   const q = (cancel: string) => supabase.from("orders")
-    .select(`id, code, total, priority, stage_id, assignee_id, created_at, updated_at, ${cancel}stage:stages!stage_id(name,color), area:areas(name,color), items:order_items(name, qty, unit_price, subtotal)`)
+    .select(`id, code, total, pay_status, priority, stage_id, assignee_id, created_at, updated_at, ${cancel}stage:stages!stage_id(name,color), area:areas(name,color), items:order_items(name, qty, unit_price, subtotal)`)
     .eq("contact_id", contactId).is("deleted_at", null)
     .order("created_at", { ascending: false });
   const res = await q("cancelled_at, ");

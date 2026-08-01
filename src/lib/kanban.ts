@@ -4,6 +4,7 @@ export interface KanbanOrder {
   id: string;
   code: string;
   total: number;
+  pay_status: string;
   priority: string;
   due_at: string | null;
   stage_id: string | null;
@@ -84,7 +85,7 @@ export async function getKanbanOrderColumn(
   const needle = (f.q ?? "").trim().replace(/[(),]/g, " ").trim();
   const contactIds = needle ? await matchingContactIds(supabase, businessId, needle) : [];
 
-  const COLS = (cancel: string) => `id, code, total, priority, due_at, stage_id, area_id, assignee_id, ${cancel}` +
+  const COLS = (cancel: string) => `id, code, total, pay_status, priority, due_at, stage_id, area_id, assignee_id, ${cancel}` +
     "contact:contacts(name), stage:stages!stage_id(name,color), area:areas(name,color), items:order_items(name)";
 
   const build = (cancel: string) => {

@@ -7,7 +7,7 @@ import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useFlowToast } from "@/components/Toast";
 import { useConfirm } from "@/components/Confirm";
-import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue } from "@/lib/types";
+import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue, payStatusColor, payStatusLabel } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
 import { CatalogAutocomplete } from "@/components/CatalogAutocomplete";
 import type { OrderDetail } from "@/lib/orders";
@@ -379,7 +379,7 @@ export function OrderDrawer({
           {/* payment */}
           {!personal && (
           <div className="ws-block">
-            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4>{detail.proofs.some((p) => p.status === "pending") && <Pill color="violet" dot><Icon name="clock" size={11} />{lang === "es" ? "En revisión" : "In review"}</Pill>}<Pill color={detail.pay_status === "paid" ? "green" : detail.pay_status === "partial" ? "amber" : "slate"} dot>{detail.pay_status === "paid" ? (lang === "es" ? "Pagado" : "Paid") : detail.pay_status === "partial" ? (lang === "es" ? "Parcial" : "Partial") : (lang === "es" ? "Pendiente" : "Pending")}</Pill></div>
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4 className="grow">{lang === "es" ? "Pagos" : "Payments"}</h4>{detail.proofs.some((p) => p.status === "pending") && <Pill color="violet" dot><Icon name="clock" size={11} />{lang === "es" ? "En revisión" : "In review"}</Pill>}<Pill color={payStatusColor(detail.pay_status)} dot>{payStatusLabel(detail.pay_status, lang)}</Pill></div>
             <div style={{ padding: "12px 14px" }} className="col gap-2">
               <div className="col gap-1">
                 <div className="kv"><span className="k">{lang === "es" ? "Total" : "Total"}</span><span className="v mono">${formatMoney(detail.total)}</span></div>

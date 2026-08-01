@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { doneStageNames } from "@/lib/doneStage";
 import { Spinner } from "@/components/Spinner";
-import { Pill, Avatar, deriveInitials } from "@/components/ui";
+import { Pill, Avatar, deriveInitials, PayDot } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useFlowToast } from "@/components/Toast";
-import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO } from "@/lib/types";
+import { type PillColor, priorityColor, isOverdue, PRIORITY_LABEL as PRIO, payStatusLabel } from "@/lib/types";
 import { KANBAN_PAGE, type KanbanOrder, type KanbanItem, type KanbanFilters, type KanbanBoardData } from "@/lib/kanban";
 import { loadKanbanBoard, loadKanbanColumn } from "@/app/(app)/kanban/actions";
 import type { Area, Stage } from "@/lib/business";
@@ -280,7 +280,7 @@ export function KanbanBoard({
                         <span className="grow" />
                         {o.due_at && (() => { const od = isOverdue(o.due_at, !!o.stage && doneStageNames(stages, doneFromStageId).has(o.stage.name)); return <span className="row gap-1" style={{ color: od ? "var(--red)" : "var(--text-muted)", fontWeight: od ? 700 : 500, fontSize: 11.5 }}><Icon name={od ? "clock" : "calendar"} size={11} />{new Date(o.due_at!).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>; })()}
                         {!personal && o.pending_proof && <Pill color="violet" dot title={lang === "es" ? "Comprobante por revisar" : "Receipt to review"}><Icon name="clock" size={10} /></Pill>}
-                        {!personal && <span className="kcard-meta"><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}
+                        {!personal && <span className="kcard-meta" style={{ gap: 5 }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}
                         <button className="btn btn-sm btn-outline" style={{ height: 26, padding: "0 8px" }} disabled={loadingId === o.id}
                           onClick={(e) => { e.stopPropagation(); openDrawer(o.id); }} onPointerDown={(e) => e.stopPropagation()}>
                           {loadingId === o.id ? "…" : (lang === "es" ? "Abrir" : "Open")}<Icon name="arrowr" size={13} />
