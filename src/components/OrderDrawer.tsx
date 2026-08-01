@@ -9,7 +9,7 @@ import { useFlowToast } from "@/components/Toast";
 import { useConfirm } from "@/components/Confirm";
 import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
-import { CatalogPicker } from "@/components/CatalogPicker";
+import { CatalogAutocomplete } from "@/components/CatalogAutocomplete";
 import type { OrderDetail } from "@/lib/orders";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
@@ -64,6 +64,10 @@ export function OrderDrawer({
   const [noteItem, setNoteItem] = useState(""); // selected subtask for a subtask note ("" → first)
   const [noteFilter, setNoteFilter] = useState<Set<"order" | "subtask">>(new Set()); // empty = all
   const [editItems, setEditItems] = useState(false);
+  // Borrador controlado del nombre por línea, para que el autocompletar del catálogo pueda filtrar
+  // en vivo mientras se escribe. El campo antes era no-controlado (defaultValue + onBlur) porque no
+  // hacía falta releer cada tecla; ahora sí, para saber qué mostrar en el dropdown.
+  const [itemDraft, setItemDraft] = useState<Record<string, string>>({});
   const [newItem, setNewItem] = useState({ name: "", qty: "1", price: "" });
   const [payAmount, setPayAmount] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
@@ -280,11 +284,12 @@ export function OrderDrawer({
             <div style={{ padding: "4px 14px 12px" }}>
               {detail.items.map((li) => (editItems ? (
                 <div className="row gap-2" key={li.id} style={{ alignItems: "center", padding: "5px 0" }}>
-                  <input key={"n" + li.name} className="inp-inline grow" defaultValue={li.name} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== li.name) run(() => updateOrderItem(li.id, { name: e.target.value })); }} placeholder={personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Producto" : "Product")} />
-                  {products.length > 0 && (
-                    <CatalogPicker products={products} personal={personal} lang={lang} compact
-                      onPick={(p) => runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, name: p.name, unit_price: p.price, subtotal: (it.qty || 1) * p.price } : it)) }, () => updateOrderItem(li.id, { name: p.name, unit_price: p.price }))} />
-                  )}
+                  <CatalogAutocomplete className="inp-inline grow" products={products} personal={personal} lang={lang}
+                    value={itemDraft[li.id] ?? li.name}
+                    placeholder={personal ? (lang === "es" ? "Subtarea" : "Subtask") : (lang === "es" ? "Producto" : "Product")}
+                    onChange={(v) => setItemDraft((d) => ({ ...d, [li.id]: v }))}
+                    onBlur={(e) => { if (e.target.value.trim() && e.target.value !== li.name) run(() => updateOrderItem(li.id, { name: e.target.value })); }}
+                    onPick={(p) => { setItemDraft((d) => ({ ...d, [li.id]: p.name })); runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, name: p.name, unit_price: p.price, subtotal: (it.qty || 1) * p.price } : it)) }, () => updateOrderItem(li.id, { name: p.name, unit_price: p.price })); }} />
                   <input key={"q" + li.qty} className="inp-inline" style={{ width: 48 }} defaultValue={String(li.qty)} title={lang === "es" ? "Cantidad" : "Qty"} onBlur={(e) => { const q = Number(e.target.value) || 1; if (q !== li.qty) runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, qty: q, subtotal: q * it.unit_price } : it)) }, () => updateOrderItem(li.id, { qty: q })); }} />
                   {!personal && <input key={"p" + li.unit_price} className="inp-inline" style={{ width: 80 }} defaultValue={String(li.unit_price)} title={lang === "es" ? "Precio unit." : "Unit price"} placeholder="$" onBlur={(e) => { const p = Number(e.target.value) || 0; if (p !== li.unit_price) runOpt({ items: detail.items.map((it) => (it.id === li.id ? { ...it, unit_price: p, subtotal: it.qty * p } : it)) }, () => updateOrderItem(li.id, { unit_price: p })); }} />}
                   <button className="iconbtn sm" title={lang === "es" ? "Eliminar" : "Delete"} style={{ color: "var(--red)" }} onClick={() => runOpt({ items: detail.items.filter((it) => it.id !== li.id) }, () => deleteOrderItem(li.id))}><Icon name="trash" size={14} /></button>
@@ -306,11 +311,12 @@ export function OrderDrawer({
               )))}
               {editItems && (
                 <div className="row gap-2" style={{ alignItems: "center", paddingTop: 8, marginTop: 4, borderTop: "1px dashed var(--border)" }}>
-                  <input className="inp-inline grow" value={newItem.name} onChange={(e) => setNewItem((n) => ({ ...n, name: e.target.value }))} placeholder={personal ? (lang === "es" ? "Nueva subtarea" : "New subtask") : (lang === "es" ? "Nuevo producto" : "New product")} onKeyDown={(e) => { if (e.key === "Enter" && newItem.name.trim()) { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); } }} />
-                  {products.length > 0 && (
-                    <CatalogPicker products={products} personal={personal} lang={lang} compact
-                      onPick={(p) => setNewItem((n) => ({ ...n, name: p.name, price: personal ? n.price : String(p.price) }))} />
-                  )}
+                  <CatalogAutocomplete className="inp-inline grow" products={products} personal={personal} lang={lang}
+                    value={newItem.name}
+                    placeholder={personal ? (lang === "es" ? "Nueva subtarea" : "New subtask") : (lang === "es" ? "Nuevo producto" : "New product")}
+                    onChange={(v) => setNewItem((n) => ({ ...n, name: v }))}
+                    onKeyDown={(e) => { if (e.key === "Enter" && newItem.name.trim()) { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); } }}
+                    onPick={(p) => setNewItem((n) => ({ ...n, name: p.name, price: personal ? n.price : String(p.price) }))} />
                   <input className="inp-inline" style={{ width: 48 }} value={newItem.qty} onChange={(e) => setNewItem((n) => ({ ...n, qty: e.target.value }))} title={lang === "es" ? "Cantidad" : "Qty"} />
                   {!personal && <input className="inp-inline" style={{ width: 80 }} value={newItem.price} onChange={(e) => setNewItem((n) => ({ ...n, price: e.target.value }))} placeholder="$" />}
                   <button className="iconbtn sm" disabled={!newItem.name.trim()} title={lang === "es" ? "Agregar" : "Add"} onClick={() => { run(() => addOrderItem(detail.id, { name: newItem.name, qty: Number(newItem.qty) || 1, price: Number(newItem.price) || 0, stageId: detail.stage_id })); setNewItem({ name: "", qty: "1", price: "" }); }}><Icon name="plus" size={15} /></button>
@@ -616,10 +622,11 @@ export function OrderDrawer({
                       {detail.items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
                     </select>
                   )}
-                  {products.length > 0 && (
-                    <CatalogPicker products={products} personal={personal} lang={lang} compact onPick={pickWasteProduct} />
-                  )}
-                  <input className="inp-inline grow" style={{ minWidth: 140 }} placeholder={lang === "es" ? "Qué se perdió" : "What was wasted"} value={wasteName} onChange={(e) => { setWasteName(e.target.value); setWasteProductId(null); }} />
+                  <CatalogAutocomplete className="inp-inline grow" style={{ minWidth: 140 }} products={products} personal={personal} lang={lang}
+                    value={wasteName}
+                    placeholder={lang === "es" ? "Qué se perdió" : "What was wasted"}
+                    onChange={(v) => { setWasteName(v); setWasteProductId(null); }}
+                    onPick={pickWasteProduct} />
                 </div>
                 <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
                   <input className="inp-inline" style={{ width: 56 }} type="number" min={1} value={wasteQty} onChange={(e) => setWasteQty(e.target.value)} title={lang === "es" ? "Cantidad" : "Qty"} />
