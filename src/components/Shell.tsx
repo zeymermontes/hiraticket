@@ -161,6 +161,24 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
   const [profRect, setProfRect] = useState<DOMRect | null>(null);
   const toggleProf = () => { if (!profOpen && profBtn.current) setProfRect(profBtn.current.getBoundingClientRect()); setProfOpen((o) => !o); };
 
+  // Flechita de "hay más abajo": el rail hace scroll propio (overflow: hidden auto) y en negocios
+  // con muchas secciones (platform admin, etc.) las últimas quedaban fuera de vista sin ninguna
+  // pista de que se podía bajar más. Se recalcula con el scroll propio del rail, con el tamaño de
+  // la ventana, y cuando cambian los items (login, badges que aparecen/desaparecen empujan alto).
+  const railRef = useRef<HTMLElement>(null);
+  const [railOverflows, setRailOverflows] = useState(false);
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el) return;
+    const check = () => setRailOverflows(el.scrollHeight - el.scrollTop - el.clientHeight > 8);
+    check();
+    el.addEventListener("scroll", check);
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    window.addEventListener("resize", check);
+    return () => { el.removeEventListener("scroll", check); ro.disconnect(); window.removeEventListener("resize", check); };
+  }, []);
+
   // Prefetch solo con intención, y una vez por sección.
   //
   // El rail está siempre visible y TODAS las páginas son force-dynamic, así que el prefetch
@@ -204,11 +222,12 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
   };
 
   return (
-    <nav className="rail">
+    <nav className="rail" ref={railRef}>
       <div className="rail-logo" title="Hiraticket">H</div>
       <div className="rail-nav">{PRIMARY.map(renderItem)}</div>
       <div className="rail-sep" />
       <div className="rail-nav">{ADMIN.filter((it) => isAdmin || !it.adminOnly).map(renderItem)}</div>
+      {railOverflows && <div className="rail-more" aria-hidden><Icon name="chevd" size={14} /></div>}
       <div className="rail-foot" style={{ marginTop: "auto", position: "relative", padding: 8 }}>
         <button ref={profBtn} className="rail-item" style={{ width: "100%" }} onClick={toggleProf}>
           <Avatar name={user.name} initials={deriveInitials(user.name)} color={user.color || "#0E8C82"} size={28} presence="online" src={user.avatarUrl ?? undefined} />
