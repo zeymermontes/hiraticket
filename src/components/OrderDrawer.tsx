@@ -161,7 +161,24 @@ export function OrderDrawer({
   // When the order's items carry their own stage, moving the order stage prompts whether to drag
   // the items along (sync) or leave them as they are.
   const hasItemStages = detail.product_stages && detail.items.length > 0;
-  const moveOrderTo = (s: Stage) => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, async () => { const r = await moveOrderStage(detail.id, s.id); flowToast(r.flows, lang); });
+  // 0075: llegó a la etapa de "confirmar pago" y ningún flujo ya decidió el pago por su cuenta —
+  // pregunta al que acaba de mover el pedido, sin importar por cuál de las dos rutas (con o sin
+  // sincronizar subtareas) haya llegado ahí.
+  const confirmMarkPaid = async () => {
+    const yes = await ask({
+      icon: "check",
+      title: lang === "es" ? "¿Marcar como pagado?" : "Mark as paid?",
+      message: lang === "es" ? "El pedido llegó a la etapa de confirmar pago." : "The order reached the confirm-payment stage.",
+      confirmLabel: lang === "es" ? "Marcar pagado" : "Mark paid",
+      cancelLabel: lang === "es" ? "No" : "No",
+    });
+    if (yes) await markPaid(detail.id);
+  };
+  const moveOrderTo = (s: Stage) => runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color } }, async () => {
+    const r = await moveOrderStage(detail.id, s.id);
+    flowToast(r.flows, lang);
+    if (r.confirmPayment) await confirmMarkPaid();
+  });
   const goToStage = (s: Stage | undefined) => {
     if (!s || s.id === detail.stage_id) return;
     if (hasItemStages) setStagePrompt(s);
@@ -170,7 +187,10 @@ export function OrderDrawer({
   // Resolve the subtask-sync choice: sync = move every item to the target too; keep = order only.
   const applyStage = (s: Stage, sync: boolean) => {
     setStagePrompt(null);
-    if (sync) runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color }, items: detail.items.map((it) => ({ ...it, stage_id: s.id, stage: { name: s.name, color: s.color } })) }, () => setAllItemStages(detail.id, s.id));
+    if (sync) runOpt({ stage_id: s.id, stage: { name: s.name, color: s.color }, items: detail.items.map((it) => ({ ...it, stage_id: s.id, stage: { name: s.name, color: s.color } })) }, async () => {
+      const r = await setAllItemStages(detail.id, s.id);
+      if (r.confirmPayment) await confirmMarkPaid();
+    });
     else moveOrderTo(s);
   };
   const advance = () => goToStage(stages[Math.min(curIdx + 1, stages.length - 1)]);

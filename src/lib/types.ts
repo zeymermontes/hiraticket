@@ -45,6 +45,8 @@ export interface Business {
   manual_margin_pct: number; // % of the sale that counts as profit for manually-typed items (default 50)
   /** Desde qué etapa un pedido cuenta como terminado (0072). null = la última, como siempre. */
   done_from_stage_id?: string | null;
+  /** A qué etapa se le pregunta "¿marcar como pagado?" (0075). null = la última, como siempre. */
+  confirm_payment_stage_id?: string | null;
 }
 
 export interface OrderRow {

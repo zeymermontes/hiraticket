@@ -108,10 +108,12 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
+export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, confirmPaymentStageId = null, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; confirmPaymentStageId?: string | null; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
   const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand, personal } = useApp();
   const [doneFrom, setDoneFrom] = useState<string | null>(doneFromStageId);
   useEffect(() => { setDoneFrom(doneFromStageId); }, [doneFromStageId]);
+  const [confirmPayStage, setConfirmPayStage] = useState<string | null>(confirmPaymentStageId);
+  useEffect(() => { setConfirmPayStage(confirmPaymentStageId); }, [confirmPaymentStageId]);
   const router = useRouter();
   const [, start] = useTransition();
 
@@ -269,6 +271,29 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             </div>
           </div>
         </section>
+
+        {!personal && (
+          <section className="ws-block">
+            <div className="ws-block-head"><Icon name="orders" size={16} /><h4>{lang === "es" ? "Confirmar pago" : "Confirm payment"}</h4></div>
+            <div className="ws-block-body col gap-3">
+              <div className="row gap-2">
+                <span className="grow">
+                  {lang === "es" ? "Preguntar si se marca pagado al llegar a" : "Ask to mark paid when it reaches"}
+                  <span className="t-xs muted" style={{ display: "block" }}>
+                    {lang === "es"
+                      ? "Sin importar cómo llegue ahí un pedido (kanban, su detalle, o un cambio masivo), se le pregunta a quien lo mueve si ya se debe marcar pagado. Un flujo puede contestar esto por adelantado desde su propia configuración, en Flujos."
+                      : "However an order gets there (kanban, its detail, or a bulk change), whoever moves it gets asked if it should be marked paid. A flow can pre-answer this from its own settings, in Flows."}
+                  </span>
+                </span>
+                <select className="inp-inline" style={{ width: 200 }} value={confirmPayStage ?? ""}
+                  onChange={(e) => { const v = e.target.value || null; setConfirmPayStage(v); start(async () => { await updateBusinessProfile(businessId, { confirm_payment_stage_id: v }); router.refresh(); }); }}>
+                  <option value="">{lang === "es" ? "Última etapa (por defecto)" : "Last stage (default)"}</option>
+                  {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </section>
+        )}
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="bell" size={16} /><h4>{lang === "es" ? "Notificaciones" : "Notifications"}</h4></div>

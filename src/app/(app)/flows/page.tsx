@@ -3,6 +3,7 @@ import { getAutomations } from "@/lib/extras";
 import { getCanned } from "@/lib/canned";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
+import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 import { FlowsScreen } from "@/components/FlowsScreen";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ export default async function FlowsPage() {
       areas={areas}
       stages={stages}
       agents={agents}
+      confirmPaymentStageId={resolveConfirmPaymentStageId(stages, business.confirm_payment_stage_id ?? null)}
     />
   );
 }

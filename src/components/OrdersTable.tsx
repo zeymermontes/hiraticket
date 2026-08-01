@@ -15,7 +15,7 @@ import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { TransferModal } from "@/components/TransferModal";
 import { CatalogPicker } from "@/components/CatalogPicker";
-import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadOrdersPage, loadOrderIds, purgeOrder, bulkMoveOrderStage } from "@/app/(app)/orders/actions";
+import { createOrder, assignOrder, addOrderNote, setOrderDeleted, loadOrdersPage, loadOrderIds, purgeOrder, bulkMoveOrderStage, markPaid } from "@/app/(app)/orders/actions";
 import type { OrderQuery, OrdersPage } from "@/lib/queries";
 import { moveOrderArea } from "@/app/(app)/actions";
 import { menuStyle } from "@/lib/popover";
@@ -107,7 +107,28 @@ export function OrdersTable({
     return () => { stale = true; };
   }, [filters, page, reloadKey]);
 
-  const bulkStage = (stageId: string) => { setStageMenu(null); const ids = [...sel]; startBulk(async () => { const r = await bulkMoveOrderStage(ids, stageId); flowToast(r.flows, lang); setSel(new Set()); reload(); }); };
+  const bulkStage = (stageId: string) => {
+    setStageMenu(null);
+    const ids = [...sel];
+    startBulk(async () => {
+      const r = await bulkMoveOrderStage(ids, stageId);
+      flowToast(r.flows, lang);
+      if (r.confirmPaymentOrderIds.length > 0) {
+        const yes = await ask({
+          icon: "check",
+          title: lang === "es" ? "¿Marcar como pagados?" : "Mark as paid?",
+          message: lang === "es"
+            ? `${r.confirmPaymentOrderIds.length} pedido(s) llegaron a la etapa de confirmar pago.`
+            : `${r.confirmPaymentOrderIds.length} order(s) reached the confirm-payment stage.`,
+          confirmLabel: lang === "es" ? "Marcar pagados" : "Mark paid",
+          cancelLabel: lang === "es" ? "No" : "No",
+        });
+        if (yes) await Promise.all(r.confirmPaymentOrderIds.map((id) => markPaid(id)));
+      }
+      setSel(new Set());
+      reload();
+    });
+  };
   const openTrash = (on: boolean) => { setTrashView(on); setSel(new Set()); setPage(0); };
   const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 

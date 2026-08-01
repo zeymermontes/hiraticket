@@ -7,6 +7,8 @@ import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 import { getMyBusiness, getOrdersPage, getOrderIds, type OrderQuery, type OrdersPage } from "@/lib/queries";
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 import { encryptBody } from "@/lib/msgcrypto";
+import { markOrderPaid } from "@/lib/payments";
+import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -108,15 +110,7 @@ export async function deletePayment(paymentId: string): Promise<void> {
 export async function markPaid(orderId: string): Promise<void> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
-  if (!order) return;
-  const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
-  const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
-  const remaining = (Number(order.total) || 0) - paid;
-  if (remaining > 0) {
-    await supabase.from("payments").insert({ business_id: order.business_id, order_id: orderId, amount: remaining, method: "manual", note: "Pago completo", created_by: user?.id ?? null });
-  }
-  await supabase.from("orders").update({ pay_status: "paid" }).eq("id", orderId);
+  await markOrderPaid(supabase, orderId, user?.id ?? null);
   revalidatePath("/orders");
 }
 
@@ -165,10 +159,10 @@ export async function setItemStage(itemId: string, stageId: string | null): Prom
 /** Move every line item (subtask/product) of an order to one stage, then move the order to it too
  *  (firing the same events/automations as a manual stage move). Used when advancing an order whose
  *  items track their own stages and the user chooses to sync the items along. */
-export async function setAllItemStages(orderId: string, stageId: string): Promise<void> {
+export async function setAllItemStages(orderId: string, stageId: string): Promise<{ flows: string[]; confirmPayment: boolean }> {
   const supabase = await createClient();
   await supabase.from("order_items").update({ stage_id: stageId }).eq("order_id", orderId);
-  await moveOrderStage(orderId, stageId);
+  return moveOrderStage(orderId, stageId);
 }
 
 /** order.stage_id := the least-advanced (lowest-position) stage among products that have one. */
@@ -243,30 +237,47 @@ export async function assignOrder(orderId: string, agentId: string): Promise<voi
 
 /** Bulk-move several orders to a stage in one round trip (used by the orders table selection bar).
  *  Logs a "Cambio de etapa" event per order and fires the order-stage flows for each; returns the
- *  set of flow names that fired so the caller can toast. */
-export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<{ flows: string[] }> {
-  if (!orderIds.length) return { flows: [] };
+ *  set of flow names that fired so the caller can toast, plus `confirmPaymentOrderIds`: los ids de
+ *  esta tanda que llegaron a la etapa de "confirmar pago" (0075) y ningún flujo ya decidió el pago
+ *  por su cuenta — el cliente pregunta UNA vez por todos, no un popup por pedido. */
+export async function bulkMoveOrderStage(orderIds: string[], stageId: string): Promise<{ flows: string[]; confirmPaymentOrderIds: string[] }> {
+  if (!orderIds.length) return { flows: [], confirmPaymentOrderIds: [] };
   const supabase = await createClient();
   const user = await getSessionUser();
   const { data: first } = await supabase.from("orders").select("business_id").eq("id", orderIds[0]).maybeSingle();
   const businessId = (first?.business_id as string) ?? null;
   await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).in("id", orderIds);
   const fired = new Set<string>();
+  const confirmPaymentOrderIds: string[] = [];
   if (businessId) {
     await supabase.from("events").insert(orderIds.map((id) => ({
       business_id: businessId, parent_type: "order", parent_id: id,
       actor_id: user?.id ?? null, kind: "status", text: "Cambio de etapa",
     })));
+    // Resuelto UNA vez para toda la tanda: mismo negocio, misma etapa destino para todos.
+    const [{ data: biz }, { data: stages }] = await Promise.all([
+      supabase.from("businesses").select("confirm_payment_stage_id").eq("id", businessId).maybeSingle(),
+      supabase.from("stages").select("id, position").eq("business_id", businessId).order("position", { ascending: true }),
+    ]);
+    const resolvedConfirmStage = resolveConfirmPaymentStageId((stages ?? []) as { id: string }[], (biz?.confirm_payment_stage_id as string) ?? null);
     // Space out the auto-replies so a bulk change doesn't fire a burst of WhatsApp messages at once.
     const GAP_SEC = 20;
     const now = Date.now();
     for (let i = 0; i < orderIds.length; i++) {
       const sendAfter = i === 0 ? null : new Date(now + i * GAP_SEC * 1000).toISOString();
-      for (const name of await runStageAutomations(orderIds[i], businessId, stageId, user?.id ?? null, sendAfter)) fired.add(name);
+      const { flows, markPaidPref } = await runStageAutomations(orderIds[i], businessId, stageId, user?.id ?? null, sendAfter);
+      for (const name of flows) fired.add(name);
+      if (resolvedConfirmStage && resolvedConfirmStage === stageId) {
+        const { data: o } = await supabase.from("orders").select("pay_status").eq("id", orderIds[i]).maybeSingle();
+        if ((o?.pay_status as string) !== "paid") {
+          if (markPaidPref === true) await markOrderPaid(supabase, orderIds[i], user?.id ?? null);
+          else if (markPaidPref === null) confirmPaymentOrderIds.push(orderIds[i]);
+        }
+      }
     }
   }
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); revalidatePath("/flows");
-  return { flows: [...fired] };
+  return { flows: [...fired], confirmPaymentOrderIds };
 }
 
 /** order.total := sum of its line-item subtotals (+ the order's IVA when it requires an invoice,

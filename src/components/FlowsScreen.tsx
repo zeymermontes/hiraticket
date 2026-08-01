@@ -74,7 +74,7 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
 
   const payload = w.action_payload as { template?: string; area?: string; agent?: string; tag?: string };
   const act = ACTIONS[w.action_type] ?? { es: w.action_type, en: w.action_type, icon: "bolt" };
-  const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean };
+  const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean; mark_paid?: boolean };
   const triggerVal = w.trigger_type === "message_hours"
     ? hoursSummary(cfg, lang)
     : w.trigger_type === "message_date"
@@ -100,6 +100,11 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
         <div className="flow-line">
           <span className="flow-node when"><Icon name={TRIGGER_ICON[w.trigger_type] ?? "bolt"} size={14} />{lang === "es" ? "Cuando" : "When"} {triggerLabel(w.trigger_type, personal, lang).toLowerCase()}</span>
           {triggerVal && <span className="pill pill-slate">{triggerVal}</span>}
+          {w.trigger_type === "order_stage" && cfg.mark_paid !== undefined && (
+            <span className={"pill " + (cfg.mark_paid ? "pill-green" : "pill-slate")}>
+              {cfg.mark_paid ? (lang === "es" ? "Marca pagado" : "Marks paid") : (lang === "es" ? "No marca pagado" : "Doesn't mark paid")}
+            </span>
+          )}
           <span className="flow-arrow"><Icon name="arrowr" size={16} /></span>
           <span className="flow-node then"><Icon name={act.icon} size={14} />{act[lang]}</span>
           {w.action_type === "send_template" && payload.template && <span className="pill pill-brand">{payload.template}</span>}
@@ -115,7 +120,7 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
 }
 
 export function FlowsScreen({
-  businessId, automations, cannedTitles, areas, stages, agents,
+  businessId, automations, cannedTitles, areas, stages, agents, confirmPaymentStageId = null,
 }: {
   businessId: string;
   automations: Automation[];
@@ -123,6 +128,9 @@ export function FlowsScreen({
   areas: Area[];
   stages: Stage[];
   agents: Agent[];
+  /** La etapa de "confirmar pago" del negocio (0075), ya resuelta (elegida, o la última). Un flujo
+   *  cuyo trigger apunte exactamente ahí puede contestar de antemano si se marca pagado. */
+  confirmPaymentStageId?: string | null;
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
@@ -143,6 +151,10 @@ export function FlowsScreen({
   const [holidayDate, setHolidayDate] = useState("");
   const [recurring, setRecurring] = useState(true);
   const [cooldown, setCooldown] = useState("6");
+  // 0075: si el trigger es justo la etapa de "confirmar pago" del negocio, este flujo puede
+  // contestar de antemano si se marca pagado — sin esto, se le pregunta a quien mueva el pedido.
+  const [markPaidOnTrigger, setMarkPaidOnTrigger] = useState(false);
+  const isConfirmPaymentTrigger = trigger === "order_stage" && !!stageId && stageId === confirmPaymentStageId;
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -154,12 +166,14 @@ export function FlowsScreen({
     setTrigger("order_stage"); setStageId(""); setStatusVal("open"); setAction("send_template");
     setTemplate(cannedTitles[0] ?? ""); setAreaId(areas[0]?.id ?? ""); setAgentId(agents[0]?.id ?? "");
     setHourDays(defaultDays()); setHolidayDate(""); setRecurring(true); setCooldown("6");
+    setMarkPaidOnTrigger(false);
   }
 
   function startEdit(w: Automation) {
     const p = (w.action_payload ?? {}) as { template?: string; area?: string; agent?: string; tag?: string };
-    const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean; cooldown_hours?: number };
+    const cfg = (w.trigger_config ?? {}) as { days?: Record<string, { open?: boolean; from?: string; to?: string }>; open_from?: string; open_to?: string; date?: string; recurring?: boolean; cooldown_hours?: number; mark_paid?: boolean };
     setEditId(w.id);
+    setMarkPaidOnTrigger(cfg.mark_paid ?? false);
     setName(w.name);
     setTrigger(w.trigger_type);
     setStageId(w.trigger_type === "order_stage" ? (w.trigger_value ?? "") : "");
@@ -192,7 +206,9 @@ export function FlowsScreen({
       ? { days: Object.fromEntries(hourDays.map((d, i) => [String(i), { open: d.open, from: d.from, to: d.to }])), cooldown_hours: cool }
       : trigger === "message_date"
         ? { date: holidayDate, recurring, cooldown_hours: cool }
-        : undefined;
+        : isConfirmPaymentTrigger
+          ? { mark_paid: markPaidOnTrigger }
+          : undefined;
     const input = {
       name,
       trigger_type: trigger,
@@ -257,6 +273,20 @@ export function FlowsScreen({
                 <option value="">{lang === "es" ? "Cualquier etapa" : "Any stage"}</option>
                 {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
+            )}
+            {isConfirmPaymentTrigger && (
+              <div className="col gap-1">
+                <label className="lbl">{lang === "es" ? "¿Marcar pagado automáticamente?" : "Mark paid automatically?"}</label>
+                <span className="t-xs muted">
+                  {lang === "es"
+                    ? "Esta etapa confirma pago (en Ajustes). Con \"No\" o sin este flujo, se le pregunta a quien mueva el pedido."
+                    : "This stage confirms payment (in Settings). With \"No\" or without this flow, whoever moves the order gets asked."}
+                </span>
+                <div className="seg seg-sm">
+                  <button type="button" className={markPaidOnTrigger ? "on" : ""} onClick={() => setMarkPaidOnTrigger(true)}>{lang === "es" ? "Sí" : "Yes"}</button>
+                  <button type="button" className={!markPaidOnTrigger ? "on" : ""} onClick={() => setMarkPaidOnTrigger(false)}>{lang === "es" ? "No" : "No"}</button>
+                </div>
+              </div>
             )}
             {trigger === "conversation_status" && (
               <select className="select" value={statusVal} onChange={(e) => setStatusVal(e.target.value)}>

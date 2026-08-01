@@ -15,8 +15,9 @@ import type { Agent } from "@/lib/chat";
 import type { Product as CatalogProduct } from "@/lib/extras";
 import type { OrderDetail } from "@/lib/orders";
 import { OrderDrawer } from "@/components/OrderDrawer";
-import { loadOrderDetail, setItemStage } from "@/app/(app)/orders/actions";
+import { loadOrderDetail, setItemStage, markPaid } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
+import { useConfirm } from "@/components/Confirm";
 
 export function KanbanBoard({
   initial, stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
@@ -37,6 +38,7 @@ export function KanbanBoard({
   const { lang, personal } = useApp();
   const router = useRouter();
   const flowToast = useFlowToast();
+  const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const [, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -155,7 +157,17 @@ export function KanbanBoard({
 
     start(async () => {
       if (products) await setItemStage(id, colId);
-      else if (effGroup === "status") { const r = await moveOrderStage(id, colId); flowToast(r.flows, lang); }
+      else if (effGroup === "status") {
+        const r = await moveOrderStage(id, colId);
+        flowToast(r.flows, lang);
+        if (r.confirmPayment && await ask({
+          icon: "check",
+          title: lang === "es" ? "¿Marcar como pagado?" : "Mark as paid?",
+          message: lang === "es" ? "El pedido llegó a la etapa de confirmar pago." : "The order reached the confirm-payment stage.",
+          confirmLabel: lang === "es" ? "Marcar pagado" : "Mark paid",
+          cancelLabel: lang === "es" ? "No" : "No",
+        })) await markPaid(id);
+      }
       else await moveOrderArea(id, colId);
       refetch(filters, colIds); // reconcilia contra el servidor (flows pueden mover más cosas)
     });

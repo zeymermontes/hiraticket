@@ -27,8 +27,13 @@ async function _getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id`)
     .eq("id", bizId).maybeSingle();
+  if (error) {
+    // confirm_payment_stage_id (0075) puede no existir aún — el resto de la cascada sigue sin él.
+    let r0 = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id`).eq("id", bizId).maybeSingle();
+    if (!r0.error) { data = r0.data as typeof data; error = null; }
+  }
   if (error) {
     // manual_margin_pct (0057) / invoice (0050) / payment columns (0048) / timezone (0043) / allow_groups (0032) may not be applied yet — cascade the fallbacks.
     let r = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate`).eq("id", bizId).maybeSingle();

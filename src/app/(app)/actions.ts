@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { encryptBody } from "@/lib/msgcrypto";
 import { ensureTag } from "@/lib/tags";
+import { markOrderPaid } from "@/lib/payments";
+import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
 async function actorCtx() {
   const supabase = await createClient();
@@ -18,35 +20,63 @@ async function orderBusiness(orderId: string): Promise<string | null> {
 }
 
 /** Move an order to a new pipeline stage (Kanban drag / status change). Returns the names of any
- *  flows that fired so the caller can toast "flujo activado". */
-export async function moveOrderStage(orderId: string, stageId: string): Promise<{ flows: string[] }> {
+ *  flows that fired so the caller can toast "flujo activado", plus `confirmPayment`: true si el
+ *  cliente debe preguntar "¿marcar como pagado?" (0075) — llegó a la etapa configurada en Ajustes
+ *  y ningún flujo ya decidió el pago por su cuenta. */
+export async function moveOrderStage(orderId: string, stageId: string): Promise<{ flows: string[]; confirmPayment: boolean }> {
   const { supabase, userId } = await actorCtx();
   const businessId = await orderBusiness(orderId);
-  if (!businessId) return { flows: [] };
+  if (!businessId) return { flows: [], confirmPayment: false };
   await supabase.from("orders").update({ stage_id: stageId, updated_at: new Date().toISOString() }).eq("id", orderId);
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId,
     actor_id: userId, kind: "status", text: "Cambio de etapa",
   });
-  const flows = await runStageAutomations(orderId, businessId, stageId, userId);
+  const { flows, markPaidPref } = await runStageAutomations(orderId, businessId, stageId, userId);
   revalidatePath("/kanban");
   revalidatePath("/orders");
   revalidatePath("/chat");
   revalidatePath("/flows");
-  return { flows };
+  const confirmPayment = await resolveConfirmPayment(supabase, orderId, businessId, stageId, markPaidPref, userId);
+  return { flows, confirmPayment };
 }
 
-/** Fire enabled automations triggered by an order reaching a stage. Returns fired flow names. */
-export async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null, sendAfter?: string | null): Promise<string[]> {
+/** 0075: ¿esta etapa es la de "confirmar pago" del negocio, y si sí, quién decide el pago? Si un
+ *  flujo apuntado a esta etapa ya trae trigger_config.mark_paid, se aplica aquí mismo (sin
+ *  preguntar); si no hay ninguno, el llamador le pregunta al humano que movió el pedido. */
+async function resolveConfirmPayment(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any, orderId: string, businessId: string, stageId: string, markPaidPref: boolean | null, userId: string | null,
+): Promise<boolean> {
+  const [{ data: biz }, { data: stages }, { data: order }] = await Promise.all([
+    supabase.from("businesses").select("confirm_payment_stage_id").eq("id", businessId).maybeSingle(),
+    supabase.from("stages").select("id, position").eq("business_id", businessId).order("position", { ascending: true }),
+    supabase.from("orders").select("pay_status").eq("id", orderId).maybeSingle(),
+  ]);
+  if ((order?.pay_status as string) === "paid") return false; // ya está pagado, no hay nada que preguntar
+  const resolved = resolveConfirmPaymentStageId((stages ?? []) as { id: string }[], (biz?.confirm_payment_stage_id as string) ?? null);
+  if (!resolved || resolved !== stageId) return false;
+  if (markPaidPref === true) { await markOrderPaid(supabase, orderId, userId); return false; }
+  if (markPaidPref === false) return false; // el flujo decidió que no, tampoco se pregunta
+  return true; // nadie lo decidió por adelantado — que conteste quien movió el pedido
+}
+
+/** Fire enabled automations triggered by an order reaching a stage. Returns fired flow names plus
+ *  `markPaidPref`: la preferencia de "marcar pagado" (0075) del primer flujo que trae esa
+ *  etapa como trigger y define trigger_config.mark_paid — null si ninguno lo define. */
+export async function runStageAutomations(orderId: string, businessId: string, stageId: string, userId: string | null, sendAfter?: string | null): Promise<{ flows: string[]; markPaidPref: boolean | null }> {
   const supabase = await createClient();
   const fired: string[] = [];
+  let markPaidPref: boolean | null = null;
   const { data: autos } = await supabase
-    .from("automations").select("id, name, action_type, action_payload, trigger_value, runs")
+    .from("automations").select("id, name, action_type, action_payload, trigger_value, trigger_config, runs")
     .eq("business_id", businessId).eq("enabled", true).eq("trigger_type", "order_stage");
 
   for (const a of autos ?? []) {
     if (a.trigger_value && a.trigger_value !== stageId) continue;
     const payload = (a.action_payload as { template?: string; area?: string; agent?: string; tag?: string }) ?? {};
+    const tconfig = (a.trigger_config as { mark_paid?: boolean }) ?? {};
+    if (markPaidPref === null && typeof tconfig.mark_paid === "boolean") markPaidPref = tconfig.mark_paid;
 
     if (a.action_type === "send_template" && payload.template) {
       const { data: order } = await supabase
@@ -97,7 +127,7 @@ export async function runStageAutomations(orderId: string, businessId: string, s
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
     fired.push((a.name as string) || "Flujo");
   }
-  return fired;
+  return { flows: fired, markPaidPref };
 }
 
 /** Move an order to a different area/department. */
