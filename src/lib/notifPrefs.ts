@@ -14,18 +14,19 @@ export interface NotifPrefs {
   mentions: boolean;    // @menciones (equipo y notas)
   calls: boolean;       // llamadas de WhatsApp
   transfers: boolean;   // cuando alguien me transfiere un chat
+  payments: boolean;    // comprobante de pago nuevo, pendiente de revisar
 }
 
 /** Todo encendido: quien nunca entró a Ajustes debe seguir recibiendo lo de siempre. */
 export const DEFAULT_NOTIF_PREFS: NotifPrefs = {
-  all: true, unassigned: true, mine: true, internal: true, mentions: true, calls: true, transfers: true,
+  all: true, unassigned: true, mine: true, internal: true, mentions: true, calls: true, transfers: true, payments: true,
 };
 
 /** Normaliza lo que venga de la base (jsonb suelto) a la forma completa. */
 export function parseNotifPrefs(raw: unknown): NotifPrefs {
   const o = (raw ?? {}) as Partial<Record<keyof NotifPrefs, unknown>>;
   const b = (k: keyof NotifPrefs) => (typeof o[k] === "boolean" ? (o[k] as boolean) : DEFAULT_NOTIF_PREFS[k]);
-  return { all: b("all"), unassigned: b("unassigned"), mine: b("mine"), internal: b("internal"), mentions: b("mentions"), calls: b("calls"), transfers: b("transfers") };
+  return { all: b("all"), unassigned: b("unassigned"), mine: b("mine"), internal: b("internal"), mentions: b("mentions"), calls: b("calls"), transfers: b("transfers"), payments: b("payments") };
 }
 
 /** El maestro manda: en off, nada pasa. */

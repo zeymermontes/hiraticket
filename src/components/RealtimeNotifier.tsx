@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { getToastPreview, getMediaPreviewUrl } from "@/app/(app)/chat/actions";
 import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } from "@/lib/notify";
+import { formatMoney } from "@/lib/types";
 import { keepSubscribed } from "@/lib/realtime";
 import { DEFAULT_NOTIF_PREFS, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
 import { loadNotifPrefs } from "@/app/(app)/settings/notif-actions";
@@ -212,6 +213,26 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
           push({ kind: "mention", title: "Te mencionaron", message: n.body.slice(0, 90), href });
           notify();
         }
+      })
+      // Comprobante de transferencia nuevo (0048): sin esto, el único aviso de que hay un pago
+      // por aprobar era ver el pill "En revisión" al entrar al pedido a mano.
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "payment_proofs", filter: `business_id=eq.${businessId}` }, async (payload) => {
+        const p = payload.new as { id?: string; order_id?: string; amount?: number | null; status?: string };
+        if (p.status !== "pending" || !p.id) return;
+        if (!notifOn(prefsRef.current, "payments")) return;
+        let code = "";
+        try {
+          const { data } = await supabase.from("orders").select("code").eq("id", p.order_id ?? "").maybeSingle();
+          code = (data as { code?: string } | null)?.code ?? "";
+        } catch {}
+        const title = "💳 Comprobante por revisar";
+        const message = (code ? `${code} · ` : "") + (p.amount != null ? `$${formatMoney(p.amount)}` : "Nuevo comprobante");
+        const href = `/orders?order=${p.order_id}`;
+        // Fijo: como transferencias/llamadas, es trabajo que alguien tiene que aprobar o rechazar,
+        // no solo un aviso informativo que se puede perder de vista.
+        push({ kind: "warn", title, message, href, sticky: true, key: `proof-${p.id}` });
+        alertIncoming({ title, body: message, href, tag: `proof-${p.id}` });
+        notify();
       })
       , {
       // Al reconectar, los badges y la campanita pueden haberse quedado atrás.
