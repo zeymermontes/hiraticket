@@ -24,6 +24,7 @@ export default async function SettingsPage() {
       stages={stages}
       doneFromStageId={business.done_from_stage_id ?? null}
       confirmPaymentStageId={business.confirm_payment_stage_id ?? null}
+      confirmPaymentEnabled={business.confirm_payment_enabled ?? true}
       isPlatformAdmin={platformAdmin}
       showOfficial={showOfficial}
       fbAppId={es.appId}

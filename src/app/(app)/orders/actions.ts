@@ -256,10 +256,11 @@ export async function bulkMoveOrderStage(orderIds: string[], stageId: string): P
     })));
     // Resuelto UNA vez para toda la tanda: mismo negocio, misma etapa destino para todos.
     const [{ data: biz }, { data: stages }] = await Promise.all([
-      supabase.from("businesses").select("confirm_payment_stage_id").eq("id", businessId).maybeSingle(),
+      supabase.from("businesses").select("confirm_payment_stage_id, confirm_payment_enabled").eq("id", businessId).maybeSingle(),
       supabase.from("stages").select("id, position").eq("business_id", businessId).order("position", { ascending: true }),
     ]);
     const resolvedConfirmStage = resolveConfirmPaymentStageId((stages ?? []) as { id: string }[], (biz?.confirm_payment_stage_id as string) ?? null);
+    const confirmPaymentEnabled = biz?.confirm_payment_enabled !== false;
     // Space out the auto-replies so a bulk change doesn't fire a burst of WhatsApp messages at once.
     const GAP_SEC = 20;
     const now = Date.now();
@@ -271,7 +272,7 @@ export async function bulkMoveOrderStage(orderIds: string[], stageId: string): P
         const { data: o } = await supabase.from("orders").select("pay_status").eq("id", orderIds[i]).maybeSingle();
         if ((o?.pay_status as string) !== "paid") {
           if (markPaidPref === true) await markOrderPaid(supabase, orderIds[i], user?.id ?? null);
-          else if (markPaidPref === null) confirmPaymentOrderIds.push(orderIds[i]);
+          else if (markPaidPref === null && confirmPaymentEnabled) confirmPaymentOrderIds.push(orderIds[i]);
         }
       }
     }

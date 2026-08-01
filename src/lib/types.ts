@@ -47,6 +47,9 @@ export interface Business {
   done_from_stage_id?: string | null;
   /** A qué etapa se le pregunta "¿marcar como pagado?" (0075). null = la última, como siempre. */
   confirm_payment_stage_id?: string | null;
+  /** Si esa pregunta está encendida (0076). false = nunca preguntar (un flujo que ya haya
+   *  decidido por adelantado sigue aplicando igual). */
+  confirm_payment_enabled?: boolean;
 }
 
 export interface OrderRow {

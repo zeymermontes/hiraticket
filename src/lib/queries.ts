@@ -27,10 +27,15 @@ async function _getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id, confirm_payment_enabled`)
     .eq("id", bizId).maybeSingle();
   if (error) {
-    // confirm_payment_stage_id (0075) puede no existir aún — el resto de la cascada sigue sin él.
+    // confirm_payment_enabled (0076) puede no existir aún — el resto de la cascada sigue sin él.
+    let rA = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id`).eq("id", bizId).maybeSingle();
+    if (!rA.error) { data = rA.data as typeof data; error = null; }
+  }
+  if (error) {
+    // confirm_payment_stage_id (0075) puede no existir aún tampoco.
     let r0 = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id`).eq("id", bizId).maybeSingle();
     if (!r0.error) { data = r0.data as typeof data; error = null; }
   }
@@ -65,6 +70,7 @@ async function _getMyBusiness(): Promise<Business | null> {
     invoice_add_tax: (d.invoice_add_tax as boolean) ?? true,
     invoice_tax_rate: Number(d.invoice_tax_rate ?? 16),
     manual_margin_pct: Number(d.manual_margin_pct ?? 50),
+    confirm_payment_enabled: (d.confirm_payment_enabled as boolean) ?? true,
   } as Business;
 }
 

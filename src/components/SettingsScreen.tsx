@@ -108,12 +108,14 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, confirmPaymentStageId = null, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; confirmPaymentStageId?: string | null; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
+export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, confirmPaymentStageId = null, confirmPaymentEnabled = true, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; confirmPaymentStageId?: string | null; confirmPaymentEnabled?: boolean; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
   const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand, personal } = useApp();
   const [doneFrom, setDoneFrom] = useState<string | null>(doneFromStageId);
   useEffect(() => { setDoneFrom(doneFromStageId); }, [doneFromStageId]);
   const [confirmPayStage, setConfirmPayStage] = useState<string | null>(confirmPaymentStageId);
   useEffect(() => { setConfirmPayStage(confirmPaymentStageId); }, [confirmPaymentStageId]);
+  const [confirmPayOn, setConfirmPayOn] = useState(confirmPaymentEnabled);
+  useEffect(() => { setConfirmPayOn(confirmPaymentEnabled); }, [confirmPaymentEnabled]);
   const router = useRouter();
   const [, start] = useTransition();
 
@@ -293,14 +295,28 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             <div className="ws-block-body col gap-3">
               <div className="row gap-2">
                 <span className="grow">
-                  {lang === "es" ? "Preguntar si se marca pagado al llegar a" : "Ask to mark paid when it reaches"}
+                  {lang === "es" ? "Preguntar si se marca pagado al llegar a una etapa" : "Ask to mark paid when it reaches a stage"}
                   <span className="t-xs muted" style={{ display: "block" }}>
                     {lang === "es"
-                      ? "Sin importar cómo llegue ahí un pedido (kanban, su detalle, o un cambio masivo), se le pregunta a quien lo mueve si ya se debe marcar pagado. Un flujo puede contestar esto por adelantado desde su propia configuración, en Flujos."
-                      : "However an order gets there (kanban, its detail, or a bulk change), whoever moves it gets asked if it should be marked paid. A flow can pre-answer this from its own settings, in Flows."}
+                      ? "Sin importar cómo llegue ahí un pedido (kanban, su detalle, o un cambio masivo), se le pregunta a quien lo mueve si ya se debe marcar pagado."
+                      : "However an order gets there (kanban, its detail, or a bulk change), whoever moves it gets asked if it should be marked paid."}
                   </span>
                 </span>
-                <select className="inp-inline" style={{ width: 200 }} value={confirmPayStage ?? ""}
+                <div className="seg">
+                  <button className={confirmPayOn ? "on" : ""} onClick={() => { setConfirmPayOn(true); start(async () => { await updateBusinessProfile(businessId, { confirm_payment_enabled: true }); router.refresh(); }); }}>{lang === "es" ? "Activado" : "On"}</button>
+                  <button className={!confirmPayOn ? "on" : ""} onClick={() => { setConfirmPayOn(false); start(async () => { await updateBusinessProfile(businessId, { confirm_payment_enabled: false }); router.refresh(); }); }}><Icon name="x" size={13} />{lang === "es" ? "Apagado" : "Off"}</button>
+                </div>
+              </div>
+              <div className="row gap-2" style={{ opacity: confirmPayOn ? 1 : 0.45, paddingLeft: 10 }}>
+                <span className="grow">
+                  {lang === "es" ? "Etapa" : "Stage"}
+                  <span className="t-xs muted" style={{ display: "block" }}>
+                    {lang === "es"
+                      ? "Un flujo puede contestar esto por adelantado desde su propia configuración, en Flujos — eso sigue aplicando aunque esto esté apagado."
+                      : "A flow can pre-answer this from its own settings, in Flows — that still applies even with this off."}
+                  </span>
+                </span>
+                <select className="inp-inline" style={{ width: 200 }} value={confirmPayStage ?? ""} disabled={!confirmPayOn}
                   onChange={(e) => { const v = e.target.value || null; setConfirmPayStage(v); start(async () => { await updateBusinessProfile(businessId, { confirm_payment_stage_id: v }); router.refresh(); }); }}>
                   <option value="">{lang === "es" ? "Última etapa (por defecto)" : "Last stage (default)"}</option>
                   {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}

@@ -49,7 +49,7 @@ async function resolveConfirmPayment(
   supabase: any, orderId: string, businessId: string, stageId: string, markPaidPref: boolean | null, userId: string | null,
 ): Promise<boolean> {
   const [{ data: biz }, { data: stages }, { data: order }] = await Promise.all([
-    supabase.from("businesses").select("confirm_payment_stage_id").eq("id", businessId).maybeSingle(),
+    supabase.from("businesses").select("confirm_payment_stage_id, confirm_payment_enabled").eq("id", businessId).maybeSingle(),
     supabase.from("stages").select("id, position").eq("business_id", businessId).order("position", { ascending: true }),
     supabase.from("orders").select("pay_status").eq("id", orderId).maybeSingle(),
   ]);
@@ -58,6 +58,8 @@ async function resolveConfirmPayment(
   if (!resolved || resolved !== stageId) return false;
   if (markPaidPref === true) { await markOrderPaid(supabase, orderId, userId); return false; }
   if (markPaidPref === false) return false; // el flujo decidió que no, tampoco se pregunta
+  // Apagado (0076): sin un flujo que ya haya decidido (arriba), no se pregunta nada.
+  if (biz?.confirm_payment_enabled === false) return false;
   return true; // nadie lo decidió por adelantado — que conteste quien movió el pedido
 }
 
