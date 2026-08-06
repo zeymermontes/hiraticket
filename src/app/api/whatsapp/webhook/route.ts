@@ -56,6 +56,19 @@ export async function POST(req: NextRequest) {
     // ingest never throws, and per-event work is small enough to stay under Meta's timeout.
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
+        // Observability without content: which event types Meta actually delivers.
+        const v = change.value as { messages?: unknown[]; statuses?: unknown[]; history?: unknown[]; state_sync?: unknown[]; message_echoes?: unknown[] } | undefined;
+        console.log(
+          "[wa-webhook]",
+          change.field,
+          JSON.stringify({
+            messages: v?.messages?.length,
+            statuses: v?.statuses?.length,
+            history: v?.history?.length,
+            state_sync: v?.state_sync?.length,
+            echoes: v?.message_echoes?.length,
+          }),
+        );
         await ingestCloudEvent(change.field ?? "", change.value);
       }
     }
