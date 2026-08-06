@@ -322,8 +322,9 @@ function mapConvRow(businessId: string, c: Record<string, unknown>, legacy: bool
 
 /** The number the business is connected as right now, or null. Threads are scoped to it (0078):
  *  connected → only this number's conversations are listed; disconnected → everything shows.
- *  getSessions is React-cache()d, so this piggybacks on the fetch the layout already does. */
-async function connectedNumberPhone(businessId: string): Promise<string | null> {
+ *  getSessions is React-cache()d, so this piggybacks on the fetch the layout already does.
+ *  Shared by every surface that counts/lists conversations (list, chips, badges, bell, agents). */
+export async function connectedNumberPhone(businessId: string): Promise<string | null> {
   const sessions = await getSessions(businessId);
   return sessions.find((s) => s.status === "connected" && s.phone)?.phone ?? null;
 }

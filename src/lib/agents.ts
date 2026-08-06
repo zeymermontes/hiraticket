@@ -27,7 +27,14 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
   const [{ data: profsRaw }, { data: areas }, { data: convs }, { data: orders }] = await Promise.all([
     supabase.from("profiles").select("id, full_name, avatar_color, avatar_url").in("id", ids),
     supabase.from("areas").select("id, name, color").eq("business_id", businessId),
-    supabase.from("conversations").select("assignee_id").eq("business_id", businessId).neq("status", "resolved"),
+    (async () => {
+      // Workload counts follow the connected number, like the chat list (0078).
+      const { connectedNumberPhone } = await import("@/lib/chat");
+      const connPhone = await connectedNumberPhone(businessId);
+      let q = supabase.from("conversations").select("assignee_id").eq("business_id", businessId).neq("status", "resolved");
+      if (connPhone) q = q.eq("number_phone", connPhone);
+      return q;
+    })(),
     supabase.from("orders").select("assignee_id").eq("business_id", businessId),
   ]);
   // avatar_url (0045) may not be applied yet — fall back without it.
