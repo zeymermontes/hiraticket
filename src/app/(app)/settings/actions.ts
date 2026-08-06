@@ -10,10 +10,20 @@ async function officialOnly(): Promise<boolean> {
   return showOfficialWhatsApp();
 }
 
-/** Ask the worker to (re)connect this session — it will publish a QR. */
+/** Ask the worker to (re)connect this session — it will publish a QR. Official (Cloud API)
+ *  sessions have no worker: connecting them is just flipping the flag back on (webhook resumes). */
 export async function connectSession(sessionId: string): Promise<void> {
-  if (await officialOnly()) return;
   const supabase = await createClient();
+  const { data: s } = await supabase.from("whatsapp_sessions").select("connect_method").eq("id", sessionId).maybeSingle();
+  if (s?.connect_method === "official") {
+    await supabase
+      .from("whatsapp_sessions")
+      .update({ status: "connected", updated_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    revalidatePath("/settings");
+    return;
+  }
+  if (await officialOnly()) return;
   await supabase
     .from("whatsapp_sessions")
     .update({ status: "connecting", qr: null, updated_at: new Date().toISOString() })
@@ -23,9 +33,16 @@ export async function connectSession(sessionId: string): Promise<void> {
 
 export async function disconnectSession(sessionId: string): Promise<void> {
   const supabase = await createClient();
+  const { data: s } = await supabase.from("whatsapp_sessions").select("connect_method").eq("id", sessionId).maybeSingle();
   await supabase
     .from("whatsapp_sessions")
-    .update({ status: "disconnected", qr: null, phone: null, updated_at: new Date().toISOString() })
+    .update({
+      status: "disconnected",
+      qr: null,
+      // Official sessions keep their number/ids so reconnecting doesn't require re-onboarding.
+      ...(s?.connect_method === "official" ? {} : { phone: null }),
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", sessionId);
   revalidatePath("/settings");
 }

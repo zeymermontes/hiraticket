@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { skydropxQuote, skydropxCreate, enviosperrosQuote, enviosperrosCreate, type ShipAddress, type ShipParcel, type ShipRate } from "@/lib/shipping";
 import { encryptBody } from "@/lib/msgcrypto";
+import { flushCloudOutbox } from "@/lib/cloud-outbox";
 
 /** Per-provider config sanity check (fields the adapters can't work without). */
 function cfgReady(provider: string, cfg: Record<string, string> | null): boolean {
@@ -139,6 +140,7 @@ export async function notifyTracking(orderId: string, shipmentId: string): Promi
     direction: "out", type: "text", body: encryptBody(businessId, body), author_id: user?.id ?? null, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+  await flushCloudOutbox(businessId);
   revalidatePath("/chat");
   return { ok: true };
 }

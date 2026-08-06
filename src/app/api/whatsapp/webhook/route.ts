@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { ingestCloudEvent } from "@/lib/cloud-ingest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,17 +51,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = JSON.parse(raw) as WebhookBody;
-    // WhatsApp batches events: entry[] → changes[] → value.{messages|statuses}.
+    // WhatsApp batches events: entry[] → changes[] → value. Each change routes by the
+    // phone_number_id inside its value (see src/lib/cloud-ingest.ts). Processed inline —
+    // ingest never throws, and per-event work is small enough to stay under Meta's timeout.
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
-        const value = change.value;
-        const phoneNumberId = value?.metadata?.phone_number_id;
-        // TODO(coexistence): map phoneNumberId → business_id, then upsert inbound messages /
-        // apply status updates into `messages` (mirroring the whatsmeow worker's schema).
-        // Kept as a no-op for now so the handshake + delivery pipe is verifiable end-to-end.
-        void phoneNumberId;
-        void value.messages;
-        void value.statuses;
+        await ingestCloudEvent(change.field ?? "", change.value);
       }
     }
   } catch {
@@ -83,15 +79,10 @@ function verifySignature(raw: string, header: string | null): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// Minimal shape of the fields we read (Meta sends much more).
+// Minimal shape of the fields we read (Meta sends much more). The value's real shape depends on
+// change.field and is parsed inside cloud-ingest.
 type WebhookBody = {
   entry?: Array<{
-    changes?: Array<{
-      value: {
-        metadata?: { phone_number_id?: string; display_phone_number?: string };
-        messages?: unknown[];
-        statuses?: unknown[];
-      };
-    }>;
+    changes?: Array<{ field?: string; value: unknown }>;
   }>;
 };

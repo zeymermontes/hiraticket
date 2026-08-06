@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { encryptSecret } from "@/lib/secrets";
+import { subscribeAppToWaba, registerPhone, getPhoneNumberInfo } from "@/lib/whatsapp-cloud";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Finishes the Meta Embedded Signup (coexistence) flow started in the browser. The client sends the
-// short-lived auth `code` plus the WABA / phone ids; we exchange the code for a business token.
+// short-lived auth `code` plus the WABA / phone ids; we exchange the code for a business token,
+// subscribe the WABA to our app (webhooks), register the number for Cloud API, and persist the
+// session as connect_method='official' — from then on the webhook ingests and cloud-outbox sends.
 //
 // NOTE: this endpoint lives under /api/whatsapp, which middleware treats as public (for the Meta
 // webhook), so we enforce the session HERE — only a logged-in user may onboard a number.
-//
-// TODO(coexistence): after the exchange, subscribe the WABA to our app, register/enable the number
-// for coexistence, and persist a whatsapp_sessions row (new 'official' connect method). For now we
-// verify the round-trip works and return the ids so the flow is testable end-to-end.
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const {
@@ -55,7 +55,64 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "exchange_error" }, { status: 502 });
   }
 
-  // Round-trip verified. Persistence + WABA subscription is the next milestone.
-  console.log("[embedded-signup] onboarded", { user: user.id, wabaId, phoneNumberId, hasToken: Boolean(token) });
-  return NextResponse.json({ ok: true, waba_id: wabaId, phone_number_id: phoneNumberId });
+  // The ids arrive via the ES iframe's postMessage; without them we can't route webhooks.
+  if (!wabaId || !phoneNumberId) {
+    return NextResponse.json({ ok: false, error: "missing_ids" }, { status: 400 });
+  }
+
+  // Wire the WABA to our app. Without this subscription Meta never delivers webhooks, so a
+  // failure here is fatal (the session would look connected but stay silent).
+  const warnings: string[] = [];
+  const sub = await subscribeAppToWaba(wabaId, token);
+  if (!sub.ok) {
+    return NextResponse.json({ ok: false, error: "subscribe_failed", detail: sub.error }, { status: 502 });
+  }
+  // Enable Cloud API messaging on the number. On coexistence numbers this can fail if the owner
+  // already has a different two-step PIN — keep going and surface it (inbound still works).
+  const reg = await registerPhone(phoneNumberId, token);
+  if (!reg.ok) warnings.push(`register: ${reg.error}`);
+
+  const info = await getPhoneNumberInfo(phoneNumberId, token);
+  const phone =
+    info.ok && info.data.display_phone_number ? "+" + info.data.display_phone_number.replace(/\D/g, "") : null;
+
+  const { data: member } = await supabase
+    .from("business_members")
+    .select("business_id")
+    .eq("user_id", user.id)
+    .limit(1)
+    .maybeSingle();
+  if (!member) return NextResponse.json({ ok: false, error: "no_business" }, { status: 400 });
+  const businessId = member.business_id as string;
+
+  // Upsert the official session (one per business). RLS "members manage wa" covers this client.
+  const now = new Date().toISOString();
+  const patch = {
+    phone,
+    status: "connected",
+    waba_id: wabaId,
+    phone_number_id: phoneNumberId,
+    cloud_token: encryptSecret(token),
+    qr: null,
+    pairing_code: null,
+    last_seen: now,
+    updated_at: now,
+  };
+  const { data: existing } = await supabase
+    .from("whatsapp_sessions")
+    .select("id")
+    .eq("business_id", businessId)
+    .eq("connect_method", "official")
+    .maybeSingle();
+  const write = existing
+    ? await supabase.from("whatsapp_sessions").update(patch).eq("id", existing.id)
+    : await supabase
+        .from("whatsapp_sessions")
+        .insert({ business_id: businessId, label: "WhatsApp oficial", connect_method: "official", ...patch });
+  if (write.error) {
+    return NextResponse.json({ ok: false, error: "persist_failed", detail: write.error.message }, { status: 500 });
+  }
+
+  console.log("[embedded-signup] onboarded", { user: user.id, businessId, wabaId, phoneNumberId, warnings });
+  return NextResponse.json({ ok: true, waba_id: wabaId, phone_number_id: phoneNumberId, phone, warnings });
 }

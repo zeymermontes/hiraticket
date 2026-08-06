@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 import { encryptBody } from "@/lib/msgcrypto";
 import { ensureTag } from "@/lib/tags";
 import { markOrderPaid } from "@/lib/payments";
+import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
 async function actorCtx() {
@@ -99,6 +100,8 @@ export async function runStageAutomations(orderId: string, businessId: string, s
             next_retry_at: sendAfter ?? null,
           });
           await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+          // Official sessions: send now if due; staggered ones drain on later flushes (webhook ticks).
+          if (!sendAfter) await flushCloudOutbox(businessId);
         }
       }
     } else if (a.action_type === "transfer_area" && payload.area) {

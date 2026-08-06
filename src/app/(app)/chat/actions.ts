@@ -7,6 +7,7 @@ import { getConversationDetail, type ConvDetail } from "@/lib/chat";
 import { encryptBody, decryptBody } from "@/lib/msgcrypto";
 import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
 import { ensureTag } from "@/lib/tags";
+import { flushCloudOutbox, sendCloudReactionFor } from "@/lib/cloud-outbox";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -63,7 +64,7 @@ export async function sendMessage(convId: string, text: string, replyTo?: string
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", convId);
-
+  await flushCloudOutbox(businessId); // official sessions send here; whatsmeow ignores it
 }
 
 /** Start a new 1:1 conversation: find-or-create the contact by phone, ensure an open conversation,
@@ -100,6 +101,7 @@ export async function startConversation(phone: string, firstMessage: string): Pr
     body: encryptBody(businessId, text), author_id: userId, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
+  await flushCloudOutbox(businessId);
   return { ok: true, convId: conv.id };
 }
 
@@ -124,7 +126,9 @@ export async function emptyChatTrash(businessId: string): Promise<{ deleted: num
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
 export async function retryMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();
+  const { data: m } = await supabase.from("messages").select("business_id").eq("id", messageId).maybeSingle();
   await supabase.from("messages").update({ state: "queued", send_attempts: 0, next_retry_at: null }).eq("id", messageId).eq("direction", "out").in("state", ["failed", "sending"]);
+  if (m?.business_id) await flushCloudOutbox(m.business_id as string);
 }
 
 /** Edit an outbound message (worker re-sends an edit to WhatsApp). */
@@ -147,6 +151,8 @@ export async function reactToMessage(messageId: string, emoji: string): Promise<
   const toggleOff = mine?.emoji === emoji;
   const next = toggleOff ? others : [...others, { emoji, by: "agent" }];
   await supabase.from("messages").update({ reactions: next, pending_op: "react", react_emoji: toggleOff ? "" : emoji }).eq("id", messageId);
+  // Official sessions have no worker: send the reaction through the Cloud API right away.
+  await sendCloudReactionFor(messageId, toggleOff ? "" : emoji);
 }
 
 /** Delete an outbound message for everyone (worker revokes it). */
@@ -169,6 +175,7 @@ export async function forwardMessage(messageId: string, targetConvId: string): P
     media_url: m.media_url, media_mime: m.media_mime, media_name: m.media_name,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", targetConvId);
+  await flushCloudOutbox(businessId);
 }
 
 /** Send a sticker the business already has (picked from the tray): reuse the stored WebP path so the
@@ -184,6 +191,7 @@ export async function sendSticker(convId: string, path: string): Promise<void> {
     media_url: path, media_mime: STICKER_MIME,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+  await flushCloudOutbox(businessId);
 }
 
 /** Save a sticker to favorites with an optional name + tags (or update those if already saved).
@@ -234,6 +242,7 @@ export async function sendMediaMessage(
     meta: input.thumb ? { thumb: input.thumb } : null,
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+  await flushCloudOutbox(businessId);
 }
 
 async function setConvStatusImpl(
@@ -286,6 +295,7 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
         const body = String(tpl.body).replace(/\{\{name\}\}/g, first).replace(/\{\{order_number\}\}/g, "").replace(/\{\{total\}\}/g, "");
         await supabase.from("messages").insert({ business_id: businessId, conversation_id: convId, direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued" });
         await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+        await flushCloudOutbox(businessId);
       }
     } else if (a.action_type === "transfer_area" && payload.area) {
       const { data: ar } = await supabase.from("areas").select("route_to").eq("id", payload.area).maybeSingle();

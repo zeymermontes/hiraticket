@@ -112,6 +112,59 @@ export function deleteTemplate(wabaId: string, token: string, name: string) {
   });
 }
 
+// Subscribe our app to the WABA's webhooks — without this Meta never calls /api/whatsapp/webhook
+// for the onboarded number. Idempotent; called right after the Embedded Signup code exchange.
+export function subscribeAppToWaba(wabaId: string, token: string) {
+  return graph<{ success: boolean }>(`${wabaId}/subscribed_apps`, token, { method: "POST" });
+}
+
+// Register the number for Cloud API messaging. Coexistence numbers keep working on the phone's
+// Business app; this enables the API side. The pin is the two-step verification PIN (created here
+// if the number has none). May fail if the owner set a different PIN — surface, don't block.
+export function registerPhone(phoneNumberId: string, token: string, pin = "000000") {
+  return graph<{ success: boolean }>(`${phoneNumberId}/register`, token, {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+  });
+}
+
+export function getPhoneNumberInfo(phoneNumberId: string, token: string) {
+  return graph<{ display_phone_number?: string; verified_name?: string }>(
+    `${phoneNumberId}?fields=display_phone_number,verified_name`,
+    token,
+  );
+}
+
+// Send any /messages payload (text/media/sticker/reaction…). The caller builds the typed part;
+// we add the envelope. Returns the wamid Meta assigned (stored as messages.wa_id).
+export function sendCloudPayload(
+  phoneNumberId: string,
+  token: string,
+  to: string,
+  payload: Record<string, unknown>,
+) {
+  return graph<{ messages: { id: string }[] }>(`${phoneNumberId}/messages`, token, {
+    method: "POST",
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, ...payload }),
+  });
+}
+
+// Inbound media: Meta sends only a media id; resolve it to a short-lived CDN URL…
+export function getMediaInfo(mediaId: string, token: string) {
+  return graph<{ url: string; mime_type?: string; file_size?: number }>(`${mediaId}`, token);
+}
+
+// …then download the bytes (the CDN URL also requires the bearer token).
+export async function downloadMedia(url: string, token: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 // Reads the shared test credentials (used by the App Review demo panel). Empty until set in env.
 export function cloudTestCreds() {
   return {

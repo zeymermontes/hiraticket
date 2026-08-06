@@ -232,10 +232,13 @@ end $$;`); err != nil {
 func (m *Manager) pollSessions(ctx context.Context) {
 	for {
 		alive := map[string]bool{}
+		// connect_method='official' rows are Cloud API sessions (webhook + web app dispatch) —
+		// never bring up a whatsmeow client for them, it would overwrite their status with a QR.
 		rows, err := m.db.QueryContext(ctx,
 			`SELECT id, business_id, status, connect_method, phone, device_jid
 			   FROM whatsapp_sessions
-			  WHERE status IN ('connecting','qr','connected','reconnecting')`)
+			  WHERE status IN ('connecting','qr','connected','reconnecting')
+			    AND COALESCE(connect_method,'qr') <> 'official'`)
 		if err == nil {
 			for rows.Next() {
 				var s session

@@ -8,6 +8,7 @@ import { getMyBusiness, getOrdersPage, getOrderIds, type OrderQuery, type Orders
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 import { encryptBody } from "@/lib/msgcrypto";
 import { markOrderPaid } from "@/lib/payments";
+import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
@@ -68,6 +69,7 @@ export async function chargeOrder(orderId: string): Promise<void> {
     direction: "out", type: "text", body: encryptBody(order.business_id as string, body), author_id: user?.id ?? null, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+  await flushCloudOutbox(order.business_id as string);
   revalidatePath("/chat");
   revalidatePath("/orders");
 }

@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type FiscalData } from "@/lib/invoicing";
 import { encryptBody } from "@/lib/msgcrypto";
+import { flushCloudOutbox } from "@/lib/cloud-outbox";
 
 /** The contact's saved tax profile (recurring customers), or null. */
 export async function getFiscalProfile(contactId: string): Promise<FiscalData | null> {
@@ -105,6 +106,7 @@ export async function notifyInvoice(orderId: string, invoiceId: string): Promise
     direction: "out", type: "text", body: encryptBody(businessId, body), author_id: user?.id ?? null, state: "queued",
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+  await flushCloudOutbox(businessId);
   revalidatePath("/chat");
   return { ok: true };
 }

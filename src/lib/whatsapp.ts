@@ -7,7 +7,7 @@ export interface WaSession {
   phone: string | null;
   status: "disconnected" | "qr" | "connecting" | "connected" | "reconnecting";
   qr: string | null;
-  connect_method: "qr" | "pairing";
+  connect_method: "qr" | "pairing" | "official";
   pairing_code: string | null;
   last_seen: string | null;
 }

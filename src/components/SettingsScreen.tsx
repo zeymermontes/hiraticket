@@ -34,7 +34,8 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const router = useRouter();
   const [, start] = useTransition();
-  const [method, setMethod] = useState<"qr" | "pairing">(session.connect_method);
+  const official = session.connect_method === "official";
+  const [method, setMethod] = useState<"qr" | "pairing">(session.connect_method === "official" ? "qr" : session.connect_method);
   const [phone, setPhone] = useState(session.phone ?? "");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
 
@@ -48,10 +49,17 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
         <Icon name={live ? "whatsapp" : "wifioff"} size={20} />
       </span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row gap-2"><strong>{session.label}</strong>{primary && <Pill color="slate">{lang === "es" ? "Principal" : "Primary"}</Pill>}<Pill color={st.color} dot>{st[lang]}</Pill></div>
+        <div className="row gap-2"><strong>{session.label}</strong>{official && <Pill color="green">{lang === "es" ? "API oficial" : "Official API"}</Pill>}{primary && <Pill color="slate">{lang === "es" ? "Principal" : "Primary"}</Pill>}<Pill color={st.color} dot>{st[lang]}</Pill></div>
         <div className="t-sm muted mono">{session.phone ?? (lang === "es" ? "Sin número vinculado" : "No number linked")}</div>
+        {official && (
+          <div className="t-xs muted" style={{ marginTop: 4, maxWidth: 340 }}>
+            {lang === "es"
+              ? "Conectado por la API de Meta (coexistence): tu número sigue funcionando en el teléfono."
+              : "Connected via Meta's API (coexistence): the number keeps working on your phone."}
+          </div>
+        )}
 
-        {idle && (
+        {idle && !official && (
           <div className="col gap-2" style={{ marginTop: 10, maxWidth: 320 }}>
             <div className="seg" style={{ width: "fit-content" }}>
               <button className={method === "qr" ? "on" : ""} onClick={() => { setMethod("qr"); run(() => setConnectMethod(session.id, "qr")); }}>
@@ -95,8 +103,8 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
           <button className="btn btn-sm btn-outline" onClick={() => run(() => disconnectSession(session.id))}><Icon name="x" size={14} />{lang === "es" ? "Desconectar" : "Disconnect"}</button>
         ) : (
           <button className="btn btn-sm btn-primary"
-            onClick={() => run(async () => { if (method === "pairing") await setConnectMethod(session.id, "pairing", phone); await connectSession(session.id); })}>
-            <Icon name="qr" size={14} />{lang === "es" ? "Conectar" : "Connect"}
+            onClick={() => run(async () => { if (!official && method === "pairing") await setConnectMethod(session.id, "pairing", phone); await connectSession(session.id); })}>
+            <Icon name={official ? "whatsapp" : "qr"} size={14} />{lang === "es" ? "Conectar" : "Connect"}
           </button>
         )}
         <button className="iconbtn sm" title={lang === "es" ? "Eliminar número" : "Delete number"}
@@ -168,7 +176,11 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             ))}
           </div>
           <div className="ws-block-body col gap-3">
-            {showOfficial && (
+            {/* Official (Cloud API) sessions render for everyone; the ES connect box only until one is live. */}
+            {sessions.filter((s) => s.connect_method === "official").map((s, i) => (
+              <SessionCard key={s.id} session={s} primary={i === 0} />
+            ))}
+            {showOfficial && !sessions.some((s) => s.connect_method === "official" && s.status === "connected") && (
               <div className="col gap-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
                 <div className="row gap-2">
                   <Icon name="whatsapp" size={16} />
@@ -185,7 +197,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             )}
             {showOfficial && <WaCloudTester />}
             {!showOfficial && sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
-            {!showOfficial && sessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
+            {!showOfficial && sessions.filter((s) => s.connect_method !== "official").map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             {!showOfficial && (
               <div className="t-xs muted">
                 {lang === "es"
