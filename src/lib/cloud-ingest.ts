@@ -109,7 +109,7 @@ async function ensureConversation(
 
   let { data: contact } = await supabase
     .from("contacts")
-    .select("id")
+    .select("id, name")
     .eq("business_id", businessId)
     .eq("phone", normalized)
     .maybeSingle();
@@ -117,9 +117,12 @@ async function ensureConversation(
     const ins = await supabase
       .from("contacts")
       .insert({ business_id: businessId, name: name || normalized, phone: normalized })
-      .select("id")
+      .select("id, name")
       .single();
     contact = ins.data;
+  } else if (name && (contact.name === normalized || contact.name === phoneDigits)) {
+    // Placeholder (phone-as-name) → adopt the WhatsApp profile name; never clobber a custom name.
+    await supabase.from("contacts").update({ name }).eq("id", contact.id);
   }
   if (!contact) return null;
 
