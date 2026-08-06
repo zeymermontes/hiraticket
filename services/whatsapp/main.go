@@ -174,6 +174,10 @@ end $$;`); err != nil {
 	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists muted boolean not null default false`); err != nil {
 		logger.Warnf("add muted column: %v", err)
 	}
+	// Threads belong to the business number that served them (0078). Idempotent.
+	if _, err := db.ExecContext(ctx, `alter table conversations add column if not exists number_phone text`); err != nil {
+		logger.Warnf("add number_phone column: %v", err)
+	}
 	// Schedule-based flows (off-hours / holiday auto-reply): per-business timezone + per-flow config. Idempotent.
 	if _, err := db.ExecContext(ctx, `alter table businesses add column if not exists timezone text not null default 'America/Mexico_City'`); err != nil {
 		logger.Warnf("add timezone column: %v", err)
@@ -672,6 +676,10 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 			m.exec(ctx, `UPDATE whatsapp_sessions
 				SET status='connected', qr=NULL, pairing_code=NULL, phone=$1, device_jid=$2, last_seen=now(), updated_at=now()
 				WHERE id=$3`, phone, jid, s.ID)
+			// Claim legacy threads (number_phone still NULL) for this number: whatsmeow tenants keep
+			// their whole list across reconnects. Official (Cloud API) onboarding never claims —
+			// a new number starts with a clean inbox by design.
+			m.exec(ctx, `UPDATE conversations SET number_phone=$1 WHERE business_id=$2 AND number_phone IS NULL`, phone, s.BusinessID)
 			m.log.Infof("connected %s as %s", s.ID, phone)
 			// Presence per the business's show_typing toggle (available → receive typing + appear
 			// online; unavailable → stay private but no typing indicators).
@@ -792,13 +800,15 @@ func (m *Manager) handleCall(ctx context.Context, s session, client *whatsmeow.C
 	} else if err != nil {
 		return
 	}
+	ph := bizPhone(client)
 	err = m.db.QueryRowContext(ctx,
 		`SELECT id, unread FROM conversations WHERE business_id=$1 AND contact_id=$2
-		  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread)
+		    AND (number_phone IS NULL OR number_phone=$3)
+		  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID, ph).Scan(&convID, &unread)
 	if err == sql.ErrNoRows {
 		if err = m.db.QueryRowContext(ctx,
-			`INSERT INTO conversations (business_id, contact_id, status, unread) VALUES ($1,$2,'open',0) RETURNING id`,
-			s.BusinessID, contactID).Scan(&convID); err != nil {
+			`INSERT INTO conversations (business_id, contact_id, status, unread, number_phone) VALUES ($1,$2,'open',0,NULLIF($3,'')) RETURNING id`,
+			s.BusinessID, contactID, ph).Scan(&convID); err != nil {
 			m.log.Errorf("call conv insert: %v", err)
 			return
 		}
@@ -806,6 +816,7 @@ func (m *Manager) handleCall(ctx context.Context, s session, client *whatsmeow.C
 	} else if err != nil {
 		return
 	}
+	m.exec(ctx, `UPDATE conversations SET number_phone=NULLIF($1,'') WHERE id=$2 AND number_phone IS NULL`, ph, convID)
 
 	label := "📞 Llamada entrante"
 	if state == "missed" {
@@ -868,12 +879,13 @@ func (m *Manager) handleUnavailable(ctx context.Context, s session, client *what
 			if ierr := m.db.QueryRowContext(ctx, `INSERT INTO contacts (business_id, name, is_group) VALUES ($1,$2,true) RETURNING id`, s.BusinessID, subject).Scan(&contactID); ierr != nil {
 				return
 			}
-			if ierr := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject) VALUES ($1,$2,'open',0,true,$3,$4) RETURNING id`, s.BusinessID, contactID, groupJID, subject).Scan(&convID); ierr != nil {
+			if ierr := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject, number_phone) VALUES ($1,$2,'open',0,true,$3,$4,NULLIF($5,'')) RETURNING id`, s.BusinessID, contactID, groupJID, subject, bizPhone(client)).Scan(&convID); ierr != nil {
 				return
 			}
 		} else if gerr != nil {
 			return
 		}
+		m.exec(ctx, `UPDATE conversations SET number_phone=NULLIF($1,'') WHERE id=$2 AND number_phone IS NULL`, bizPhone(client), convID)
 		if !info.IsFromMe {
 			senderName = info.PushName
 			if senderName == "" {
@@ -895,14 +907,15 @@ func (m *Manager) handleUnavailable(ctx context.Context, s session, client *what
 		} else if err != nil {
 			return
 		}
-		err = m.db.QueryRowContext(ctx, `SELECT id, unread, muted FROM conversations WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved' ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted)
+		err = m.db.QueryRowContext(ctx, `SELECT id, unread, muted FROM conversations WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved' AND (number_phone IS NULL OR number_phone=$3) ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID, bizPhone(client)).Scan(&convID, &unread, &muted)
 		if err == sql.ErrNoRows {
-			if e := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread) VALUES ($1,$2,'open',0) RETURNING id`, s.BusinessID, contactID).Scan(&convID); e != nil {
+			if e := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread, number_phone) VALUES ($1,$2,'open',0,NULLIF($3,'')) RETURNING id`, s.BusinessID, contactID, bizPhone(client)).Scan(&convID); e != nil {
 				return
 			}
 		} else if err != nil {
 			return
 		}
+		m.exec(ctx, `UPDATE conversations SET number_phone=NULLIF($1,'') WHERE id=$2 AND number_phone IS NULL`, bizPhone(client), convID)
 	}
 	if muted {
 		return
@@ -948,6 +961,15 @@ func (m *Manager) handleReceipt(ctx context.Context, v *events.Receipt) {
 // partnerPhone returns the conversation partner's real phone (+digits). WhatsApp
 // now uses @lid addressing, so the phone lives in the alternate JID — prefer the
 // s.whatsapp.net address; fall back to whatever Chat carries.
+// bizPhone is the business's own number ("+521...") — stamped on conversations (number_phone, 0078)
+// so each thread belongs to the number that served it.
+func bizPhone(client *whatsmeow.Client) string {
+	if client != nil && client.Store.ID != nil {
+		return "+" + client.Store.ID.User
+	}
+	return ""
+}
+
 func partnerPhone(info types.MessageInfo) string {
 	var cands []types.JID
 	if info.IsFromMe {

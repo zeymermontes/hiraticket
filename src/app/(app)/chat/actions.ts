@@ -88,11 +88,20 @@ export async function startConversation(phone: string, firstMessage: string): Pr
   }
   if (!contact) return { ok: false, error: "contact" };
 
+  // Threads belong to the connected business number (0078): reuse only this number's conversation
+  // (or an unclaimed legacy one), and stamp whatever we end up using.
+  const { data: sess } = await supabase.from("whatsapp_sessions").select("phone").eq("business_id", businessId).eq("status", "connected").not("phone", "is", null).limit(1).maybeSingle();
+  const numberPhone = (sess?.phone as string) ?? null;
+
   // Reuse an open conversation with this contact if one exists, else create it.
-  let { data: conv } = await supabase.from("conversations").select("id").eq("business_id", businessId).eq("contact_id", contact.id).neq("status", "resolved").order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+  let convQuery = supabase.from("conversations").select("id").eq("business_id", businessId).eq("contact_id", contact.id).neq("status", "resolved");
+  if (numberPhone) convQuery = convQuery.or(`number_phone.is.null,number_phone.eq.${numberPhone}`);
+  let { data: conv } = await convQuery.order("last_message_at", { ascending: false }).limit(1).maybeSingle();
   if (!conv) {
-    const ins = await supabase.from("conversations").insert({ business_id: businessId, contact_id: contact.id, status: "open", unread: 0 }).select("id").single();
+    const ins = await supabase.from("conversations").insert({ business_id: businessId, contact_id: contact.id, status: "open", unread: 0, number_phone: numberPhone }).select("id").single();
     conv = ins.data;
+  } else if (numberPhone) {
+    await supabase.from("conversations").update({ number_phone: numberPhone }).eq("id", conv.id).is("number_phone", null);
   }
   if (!conv) return { ok: false, error: "conversation" };
 

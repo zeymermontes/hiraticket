@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MSG_PAGE } from "@/lib/types";
 import { decryptBody } from "@/lib/msgcrypto";
+import { getSessions } from "@/lib/whatsapp";
 
 const PUBLIC_MEDIA_MARKER = "/object/public/media/";
 /** Stored media_url → storage path (handles raw paths and legacy full public URLs). */
@@ -319,9 +320,18 @@ function mapConvRow(businessId: string, c: Record<string, unknown>, legacy: bool
   } as ConvListItem;
 }
 
+/** The number the business is connected as right now, or null. Threads are scoped to it (0078):
+ *  connected → only this number's conversations are listed; disconnected → everything shows.
+ *  getSessions is React-cache()d, so this piggybacks on the fetch the layout already does. */
+async function connectedNumberPhone(businessId: string): Promise<string | null> {
+  const sessions = await getSessions(businessId);
+  return sessions.find((s) => s.status === "connected" && s.phone)?.phone ?? null;
+}
+
 /** One window of the chat list, filtered and counted in Postgres. */
 export async function getConversationListPage(businessId: string, f: ConvQuery = {}): Promise<ConvListPage> {
   const supabase = await createClient();
+  const connPhone = await connectedNumberPhone(businessId);
   const nowISO = new Date().toISOString();
   const staleCutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const trash = f.status === "trash";
@@ -340,8 +350,9 @@ export async function getConversationListPage(businessId: string, f: ConvQuery =
   if (needle && !contactIds.length && !extraIds.length) return { rows: [], total: 0 };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const applyFilters = <T extends Record<string, any>>(b: T): T => {
+  const applyFilters = <T extends Record<string, any>>(b: T, withNum: boolean): T => {
     let x = b.eq("business_id", businessId);
+    if (withNum && connPhone) x = x.eq("number_phone", connPhone); // threads of the connected number only (0078)
     if (f.tab === "mine" && f.meId) x = x.eq("assignee_id", f.meId);
     if (f.tab === "unassigned") x = x.is("assignee_id", null);
     if (f.areaId) x = x.eq("area_id", f.areaId);
@@ -367,23 +378,29 @@ export async function getConversationListPage(businessId: string, f: ConvQuery =
     return x;
   };
 
-  const run = (cols: string) =>
-    applyFilters(supabase.from("conversations").select(cols, { count: "exact" }))
+  const run = (cols: string, withNum: boolean) =>
+    applyFilters(supabase.from("conversations").select(cols, { count: "exact" }), withNum)
       .order("last_message_at", { ascending: false })
       .limit(Math.min(Math.max(f.limit ?? 40, 1), 500));
 
-  // Preferred: the preview lives on the conversation row (kept in sync by the 0060 trigger).
-  let { data, error, count } = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_LAST}, ${CONV_JOINS}`);
-  if (error) ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_LAST}, ${CONV_JOINS}`));
+  const attempt = async (withNum: boolean) => {
+    // Preferred: the preview lives on the conversation row (kept in sync by the 0060 trigger).
+    let r = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_LAST}, ${CONV_JOINS}`, withNum);
+    if (r.error) r = await run(`${CONV_BASE}, ${CONV_LAST}, ${CONV_JOINS}`, withNum);
+    // 0060 not applied yet → derive the preview from an embed. Correct, but it pulls the matched
+    // conversations' whole history; apply 0060 to get off this path.
+    let legacy = false;
+    if (r.error) {
+      legacy = true;
+      r = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_JOINS}, ${CONV_EMB}`, withNum);
+      if (r.error) r = await run(`${CONV_BASE}, ${CONV_JOINS}, ${CONV_EMB}`, withNum);
+    }
+    return { ...r, legacy };
+  };
 
-  // 0060 not applied yet → derive the preview from an embed. Correct, but it pulls the matched
-  // conversations' whole history; apply 0060 to get off this path.
-  let legacy = false;
-  if (error) {
-    legacy = true;
-    ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_OPT}, ${CONV_JOINS}, ${CONV_EMB}`));
-    if (error) ({ data, error, count } = await run(`${CONV_BASE}, ${CONV_JOINS}, ${CONV_EMB}`));
-  }
+  let res = await attempt(Boolean(connPhone));
+  if (res.error && connPhone) res = await attempt(false); // 0078 not applied yet → unfiltered list
+  const { data, error, count, legacy } = res;
   if (error) throw new Error(error.message);
 
   const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map((c) => mapConvRow(businessId, c, legacy));
@@ -402,13 +419,17 @@ export async function getChatListCounts(
   businessId: string, meId: string, opts?: { areaId?: string; archived?: boolean; tab?: ConvTab },
 ): Promise<ChatListCounts> {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("chat_list_counts", {
+  const base = {
     p_business: businessId,
     p_me: meId,
     p_area: opts?.areaId ?? null,
     p_archived: opts?.archived ?? false,
     p_tab: opts?.tab ?? "all",
-  });
+  };
+  const connPhone = await connectedNumberPhone(businessId);
+  let { data, error } = await supabase.rpc("chat_list_counts", connPhone ? { ...base, p_phone: connPhone } : base);
+  // 0078 not applied yet (old 5-arg RPC) → count without the number scope.
+  if (error && connPhone) ({ data, error } = await supabase.rpc("chat_list_counts", base));
   if (error || !data) return EMPTY_COUNTS; // 0062 not applied → the chips just read 0 rather than breaking the list
   return { ...EMPTY_COUNTS, ...(data as Partial<ChatListCounts>) };
 }

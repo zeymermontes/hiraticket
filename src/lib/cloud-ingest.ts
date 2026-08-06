@@ -100,10 +100,11 @@ function profileNames(value: CloudValue): Record<string, string> {
 
 async function ensureConversation(
   supabase: Admin,
-  businessId: string,
+  session: CloudSession,
   phoneDigits: string,
   name?: string,
 ): Promise<{ convId: string; muted: boolean; status: string } | null> {
+  const businessId = session.businessId;
   const normalized = "+" + phoneDigits;
 
   let { data: contact } = await supabase
@@ -122,19 +123,29 @@ async function ensureConversation(
   }
   if (!contact) return null;
 
-  // Reuse the contact's most recent conversation — even a resolved one (the worker reopens it).
-  let { data: conv } = await supabase
+  // Reuse the contact's most recent conversation OF THIS NUMBER — even a resolved one (the worker
+  // reopens it). Strictly scoped by number_phone (0078): a freshly onboarded number never adopts
+  // another number's threads, so switching numbers starts with a clean inbox.
+  let query = supabase
     .from("conversations")
     .select("id, muted, status")
     .eq("business_id", businessId)
-    .eq("contact_id", contact.id)
+    .eq("contact_id", contact.id);
+  if (session.phone) query = query.eq("number_phone", session.phone);
+  let { data: conv } = await query
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
   if (!conv) {
     const ins = await supabase
       .from("conversations")
-      .insert({ business_id: businessId, contact_id: contact.id, status: "open", unread: 0 })
+      .insert({
+        business_id: businessId,
+        contact_id: contact.id,
+        status: "open",
+        unread: 0,
+        number_phone: session.phone,
+      })
       .select("id, muted, status")
       .single();
     conv = ins.data;
@@ -175,7 +186,7 @@ async function ingestMessage(
     .maybeSingle();
   if (dupe) return;
 
-  const conv = await ensureConversation(supabase, session.businessId, peerDigits, opts.names[peerDigits]);
+  const conv = await ensureConversation(supabase, session, peerDigits, opts.names[peerDigits]);
   if (!conv) return;
   if (opts.live && conv.muted) return; // worker parity: muted conversations drop the message entirely
 
