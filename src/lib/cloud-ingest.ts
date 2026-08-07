@@ -32,6 +32,12 @@ type CloudMsg = {
   location?: { latitude?: number; longitude?: number; name?: string; address?: string };
   contacts?: unknown[];
   reaction?: { message_id?: string; emoji?: string };
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string; description?: string };
+  };
+  button?: { text?: string; payload?: string };
   context?: { id?: string };
   history_context?: { from_me?: boolean };
 };
@@ -282,6 +288,17 @@ async function parseContent(supabase: Admin, session: CloudSession, msg: CloudMs
     const body = msg.text?.body ?? "";
     if (!body) return null;
     return { type: "text", body, ...none };
+  }
+
+  // Taps on interactive replies (list/button) and on template quick-reply buttons arrive as their
+  // own types — surface them as plain text (the tapped option IS what the customer said).
+  if (msg.type === "interactive" && msg.interactive) {
+    const pick = msg.interactive.button_reply ?? msg.interactive.list_reply;
+    if (!pick?.title) return null;
+    return { type: "text", body: pick.title, ...none, meta: { wa_reply: { id: pick.id ?? null } } };
+  }
+  if (msg.type === "button" && msg.button?.text) {
+    return { type: "text", body: msg.button.text, ...none, meta: { wa_reply: { payload: msg.button.payload ?? null } } };
   }
 
   if (msg.type === "location" && msg.location) {

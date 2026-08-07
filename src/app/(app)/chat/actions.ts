@@ -8,6 +8,9 @@ import { encryptBody, decryptBody } from "@/lib/msgcrypto";
 import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
 import { ensureTag } from "@/lib/tags";
 import { flushCloudOutbox, sendCloudReactionFor } from "@/lib/cloud-outbox";
+import { officialSessionOf } from "@/lib/cloud-session";
+import { listTemplates } from "@/lib/whatsapp-cloud";
+import { VAR_RE } from "@/lib/template-rules";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -130,6 +133,66 @@ export async function emptyChatTrash(businessId: string): Promise<{ deleted: num
   // Contacts are intentionally NOT touched.
   await supabase.from("conversations").delete().in("id", ids);
   return { deleted: ids.length };
+}
+
+export interface WaTemplateOption {
+  name: string;
+  language: string;
+  body: string;
+  header: string | null;
+  footer: string | null;
+  varCount: number;
+}
+
+/** Approved Meta templates of this business's official WABA — for the closed-24h-window composer.
+ *  Empty for whatsmeow businesses (they have no window and no WABA). */
+export async function getWaTemplates(): Promise<WaTemplateOption[]> {
+  const biz = await getMyBusiness();
+  if (!biz) return [];
+  const session = await officialSessionOf(biz.id);
+  if (!session) return [];
+  const res = await listTemplates(session.wabaId, session.token);
+  if (!res.ok) return [];
+  return res.data.data
+    .filter((t) => t.status === "APPROVED")
+    .map((t) => {
+      const body = t.components?.find((c) => c.type === "BODY")?.text ?? "";
+      const header = t.components?.find((c) => c.type === "HEADER" && (c.format ?? "TEXT") === "TEXT")?.text ?? null;
+      const footer = t.components?.find((c) => c.type === "FOOTER")?.text ?? null;
+      const vars = new Set(Array.from(body.matchAll(VAR_RE)).map((m) => Number(m[1])));
+      return { name: t.name, language: t.language, body, header, footer, varCount: vars.size };
+    })
+    .filter((t) => t.body);
+}
+
+/** Send an approved template into the conversation (the only way to reach a customer once the 24h
+ *  window closed). Stores the rendered text for display; cloud-outbox sends the real template. */
+export async function sendWaTemplate(
+  convId: string,
+  tpl: { name: string; language: string; body: string },
+  params: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  if (!businessId) return { ok: false, error: "conversation" };
+  const session = await officialSessionOf(businessId);
+  if (!session) return { ok: false, error: "no-official-session" };
+
+  const rendered = tpl.body.replace(VAR_RE, (_, n) => params[Number(n) - 1] ?? "");
+  const { error } = await supabase.from("messages").insert({
+    business_id: businessId,
+    conversation_id: convId,
+    direction: "out",
+    type: "text",
+    body: encryptBody(businessId, rendered),
+    author_id: userId,
+    state: "queued",
+    meta: { template: { name: tpl.name, lang: tpl.language, params } },
+  });
+  if (error) return { ok: false, error: error.message };
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
+  await flushCloudOutbox(businessId);
+  return { ok: true };
 }
 
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */

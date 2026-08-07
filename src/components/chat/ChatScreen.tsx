@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
 import { Spinner } from "@/components/Spinner";
+import { WaTemplateModal } from "@/components/chat/WaTemplateModal";
 import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
@@ -96,6 +97,10 @@ function skeletonDetail(c: ConvListItem): ConvDetail {
     typing_until: c.typing_until,
     is_group: c.is_group,
     muted: c.muted,
+    // Optimista: mientras carga el detalle real, asumimos ventana abierta (el último mensaje pudo
+    // ser entrante); el fetch la corrige en cuanto llega.
+    last_inbound_at: c.last_message_at,
+    wa_official: false,
     messages: [], notes: [], events: [], orders: [],
   };
 }
@@ -1842,8 +1847,21 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   function startEdit(mm: ChatMessage) { setEditing(mm); setReplyTo(null); setText(mm.body ?? ""); }
   function startReply(mm: ChatMessage) { setReplyTo(mm); setEditing(null); }
 
+  // Ventana de 24 h de la API oficial: solo se puede escribir libre si el cliente escribió en las
+  // últimas 24 h; cerrada → únicamente plantillas aprobadas. whatsmeow y grupos no tienen ventana.
+  const [tplOpen, setTplOpen] = useState(false);
+  const [nowMin, setNowMin] = useState(() => Date.now());
+  useEffect(() => { const iv = setInterval(() => setNowMin(Date.now()), 60_000); return () => clearInterval(iv); }, []);
+  const lastInboundAt = useMemo(() => {
+    let last = detail.last_inbound_at ? Date.parse(detail.last_inbound_at) : 0;
+    for (const m of msgs) if (m.direction === "in") last = Math.max(last, Date.parse(m.created_at));
+    return last;
+  }, [detail.last_inbound_at, msgs]);
+  const waBlocked = detail.wa_official && !detail.is_group && !(lastInboundAt && lastInboundAt + 24 * 3600_000 > nowMin);
+
   function doSend() {
     const body = text.trim();
+    if (waBlocked) { setTplOpen(true); return; }
     if (!body) return;
     if (editing) {
       // Realtime echo (liveMessages) reflects the edit — no full refresh needed.
@@ -2018,6 +2036,19 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       </div>
 
       <div className="composer">
+        {waBlocked && (
+          <div className="row gap-3" style={{ padding: "10px 12px", background: "var(--amber-bg, var(--surface-2))", border: "1px solid var(--amber-bd, var(--border))", borderRadius: "var(--r-md)", marginBottom: 6, alignItems: "center" }}>
+            <Icon name="clock" size={16} />
+            <div className="grow t-sm">
+              {lang === "es"
+                ? "La ventana de 24 h está cerrada: WhatsApp solo permite iniciar con una plantilla aprobada. Cuando el cliente responda, el chat libre se reabre."
+                : "The 24h window is closed: WhatsApp only allows starting with an approved template. Once the customer replies, free chat reopens."}
+            </div>
+            <button className="btn btn-sm btn-primary" style={{ flex: "none" }} onClick={() => setTplOpen(true)}>
+              <Icon name="send" size={14} />{lang === "es" ? "Enviar plantilla" : "Send template"}
+            </button>
+          </div>
+        )}
         {(replyTo || editing) && (
           <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6 }}>
             <Icon name={editing ? "edit" : "swap"} size={14} />
@@ -2025,6 +2056,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <button className="iconbtn sm" onClick={() => { setEditing(null); setReplyTo(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
           </div>
         )}
+        {!waBlocked && (
         <div className="composer-box">
           <div className="composer-input">
             <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Escribe un mensaje… ( / para plantillas)" : "Type a message… ( / for templates)"} value={text}
@@ -2164,7 +2196,18 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
         </div>
+        )}
       </div>
+
+      {tplOpen && (
+        <WaTemplateModal
+          convId={detail.id}
+          onClose={() => setTplOpen(false)}
+          onSent={(body) => {
+            setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
+          }}
+        />
+      )}
 
       {staged.length > 0 && (
         <div className="modal-wrap">

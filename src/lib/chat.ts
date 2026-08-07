@@ -149,6 +149,10 @@ export interface ConvDetail {
   typing_until: string | null;
   is_group: boolean; // WhatsApp group chat (chat-only — no orders)
   muted: boolean; // "stop listening" — incoming messages are dropped by the worker
+  /** Última entrada del cliente — ancla de la ventana de 24 h de la API oficial (null = nunca). */
+  last_inbound_at: string | null;
+  /** El negocio está conectado por la API oficial (Cloud) → aplica la ventana de 24 h. */
+  wa_official: boolean;
   messages: ChatMessage[];
   notes: ConvNote[];
   events: ConvEvent[];
@@ -503,7 +507,7 @@ export async function getConversationDetail(
   const supabase = await createClient();
 
   const convCols = (opt: string) =>
-    `id, status, assignee_id, contact_id, unread, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
+    `id, business_id, status, assignee_id, contact_id, unread, hidden, snoozed_until, ${opt}area:areas(name,color), contact:contacts(id,name,phone,tags,avatar_url,created_at)`;
   let convRaw, convErr;
   ({ data: convRaw, error: convErr } = await supabase.from("conversations").select(convCols("typing_until, is_group, muted, locked_to, ")).eq("id", convId).maybeSingle());
   if (convErr) ({ data: convRaw } = await supabase.from("conversations").select(convCols("")).eq("id", convId).maybeSingle());
@@ -511,9 +515,17 @@ export async function getConversationDetail(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const conv = convRaw as any; // dynamic select() string defeats column inference
 
-  const [messages, { data: notes }, { data: events }, { data: orders }] =
+  const [messages, { data: lastIn }, { data: notes }, { data: events }, { data: orders }] =
     await Promise.all([
       getConversationMessages(convId),
+      supabase
+        .from("messages")
+        .select("created_at")
+        .eq("conversation_id", convId)
+        .eq("direction", "in")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
       supabase
         .from("notes")
         .select("id, body, author_id, created_at")
@@ -542,6 +554,10 @@ export async function getConversationDetail(
     typing_until: ((conv as { typing_until?: string | null }).typing_until) ?? null,
     is_group: ((conv as { is_group?: boolean }).is_group) ?? false,
     muted: ((conv as { muted?: boolean }).muted) ?? false,
+    last_inbound_at: (lastIn?.created_at as string) ?? null,
+    wa_official: (await getSessions(conv.business_id as string)).some(
+      (s) => s.status === "connected" && s.connect_method === "official",
+    ),
     messages: (messages ?? []) as ChatMessage[],
     notes: (notes ?? []) as ConvNote[],
     events: (events ?? []) as ConvEvent[],

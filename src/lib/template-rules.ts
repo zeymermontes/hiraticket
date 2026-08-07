@@ -18,7 +18,7 @@ const BODY_MAX = 1024;
 const HEADER_MAX = 60;
 const FOOTER_MAX = 60;
 const NAME_RE = /^[a-z0-9_]{1,512}$/;
-const VAR_RE = /\{\{\s*(\d+)\s*\}\}/g;
+export const VAR_RE = /\{\{\s*(\d+)\s*\}\}/g;
 
 // Variable numbers in the order they appear.
 export function extractVars(text: string): number[] {

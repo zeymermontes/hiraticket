@@ -22,6 +22,7 @@ type QueuedRow = {
   media_mime: string | null;
   media_name: string | null;
   reply_to: string | null;
+  meta: { template?: { name: string; lang: string; params?: string[] } } | null;
   conversation: {
     is_group: boolean | null;
     contact: { phone: string | null } | null;
@@ -38,7 +39,7 @@ export async function flushCloudOutbox(businessId: string): Promise<void> {
   const { data } = await supabase
     .from("messages")
     .select(
-      "id, conversation_id, type, body, media_url, media_mime, media_name, reply_to, " +
+      "id, conversation_id, type, body, media_url, media_mime, media_name, reply_to, meta, " +
         "conversation:conversations!inner(is_group, contact:contacts(phone))",
     )
     .eq("business_id", businessId)
@@ -85,7 +86,21 @@ async function sendOne(supabase: Admin, session: CloudSession, businessId: strin
     return;
   }
 
-  const payload = await buildPayload(supabase, m, body);
+  // Template sends (24h window closed) carry their spec in meta.template; the stored body is the
+  // rendered text for display only — Meta receives the template name + parameters.
+  const tpl = m.meta?.template;
+  const payload = tpl
+    ? {
+        type: "template",
+        template: {
+          name: tpl.name,
+          language: { code: tpl.lang },
+          ...(tpl.params?.length
+            ? { components: [{ type: "body", parameters: tpl.params.map((t) => ({ type: "text", text: t })) }] }
+            : {}),
+        },
+      }
+    : await buildPayload(supabase, m, body);
   if (!payload) {
     await fail(`type '${m.type}' is not supported on the official API yet`);
     return;
