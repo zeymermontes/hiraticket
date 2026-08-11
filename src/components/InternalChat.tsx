@@ -193,6 +193,22 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     return () => { clearTimeout(typingTO.current); stop(); chanRef.current = null; };
   }, [businessId, refreshThreads, refreshMsgs, meId]);
 
+  // Resync al recuperar el foco (espejo del chat de clientes): una pestaña dormida >30 s pudo
+  // perder eventos aunque el canal siga "vivo" — una pasada de hilos + mensajes al volver.
+  useEffect(() => {
+    let hiddenAt = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+      if (!hiddenAt || Date.now() - hiddenAt < 30_000) return;
+      hiddenAt = 0;
+      clearTimeout(t);
+      t = setTimeout(() => { refreshThreads(); refreshMsgs(selRef.current); }, 400);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [refreshThreads, refreshMsgs]);
+
   // Drop the optimistic bubble once the real row lands (msgs grows) or on channel switch.
   useEffect(() => { setExtra([]); }, [sel, msgs.length]);
   // Cambiar de canal no debe arrastrar un envío a medias del anterior.

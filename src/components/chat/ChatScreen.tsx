@@ -962,6 +962,33 @@ export function ChatScreen({
     return () => { clearTimeout(tl); clearTimeout(tm); clearTimeout(th); clearTimeout(down); stop(); };
   }, [businessId]);
 
+  // Resync al recuperar el foco: una pestaña dormida puede perder eventos aunque el canal siga
+  // "vivo" (los navegadores estrangulan sockets y timers en segundo plano) — y entonces los chats
+  // nuevos "aparecen horas después" al primer refetch casual. Umbral de 30 s para que alt-tabear
+  // no dispare nada, y debounce por si visibilitychange parpadea. Costo: una pasada de lista +
+  // mensajes por regreso real a la pestaña — lo mismo que UN evento realtime.
+  useEffect(() => {
+    let hiddenAt = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+      if (!hiddenAt || Date.now() - hiddenAt < 30_000) return;
+      hiddenAt = 0;
+      clearTimeout(t);
+      t = setTimeout(() => {
+        if (isBuildStale()) return; // BuildSkewGuard recarga; sondear un build viejo solo quema servidor
+        refetchListRef.current();
+        const id = detailIdRef.current;
+        if (id) {
+          liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {});
+          liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {});
+        }
+      }, 400);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [businessId]);
+
   // Safety-net poll — DISABLED. We rely on realtime for live updates and show a "reload" banner when
   // the channel drops (cheaper than steady background polling). Kept here, gated behind the flag, so
   // it can be turned back on (e.g. per-business) without rewriting it. When enabled it's adaptive:
