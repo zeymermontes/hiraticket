@@ -323,12 +323,17 @@ end $$;`); err != nil {
 		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
 	}
 
-	logger.Infof("worker booting (build: pool5+phone-retry+heartbeat)")
+	// El identificador decía "pool5" cuando el pool ya eran 7: un build fijo escrito a mano miente
+	// en cuanto algo cambia, y con eso no se puede saber qué versión está corriendo de verdad. Ahora
+	// imprime los valores REALES, que es justo lo que hace falta al mirar un worker que se reinicia.
+	logger.Infof("worker arrancando: pool=%d adjuntos=%d envios=%d memoria=%dMiB backfill=%v",
+		maxConns, mediaConcurrency, outboundConcurrency, memMiB, os.Getenv("THUMB_BACKFILL") == "1")
 	go m.pollSessions(ctx)
 	go m.pollOutbound(ctx)
 	go m.pollContacts(ctx)
 	go m.pollOps(ctx)
 	go m.pollHeartbeat(ctx)
+	go m.pollMemory(ctx)
 	// Apagado salvo THUMB_BACKFILL=1, y termina solo al no quedar fotos sin miniatura.
 	go m.backfillThumbs(ctx)
 
@@ -538,18 +543,30 @@ func (m *Manager) syncPresence(ctx context.Context, businessID string, client *w
 // ningún despliegue de por medio: no había ni un solo número registrado.
 var memWatermark uint64
 
-func (m *Manager) pollHeartbeat(ctx context.Context) {
+// pollMemory saca una lectura de memoria cada 5 segundos, desde el primer segundo de vida.
+//
+// Va aparte del heartbeat y NO cada 30 s por una razón aprendida a golpes: el worker estaba
+// muriendo a los 30-90 segundos de arrancar y el heartbeat no alcanzaba a escribir ni una línea, así
+// que los reinicios no dejaban ningún rastro de memoria —- justo el dato que hacía falta. Una
+// muestra cada 5 s garantiza que, muera cuando muera, quede la curva de cómo llegó hasta ahí.
+func (m *Manager) pollMemory(ctx context.Context) {
+	mib := func(b uint64) uint64 { return b / (1 << 20) }
 	for {
-		time.Sleep(30 * time.Second)
-
+		time.Sleep(5 * time.Second)
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
 		if ms.HeapAlloc > memWatermark {
 			memWatermark = ms.HeapAlloc
 		}
-		mib := func(b uint64) uint64 { return b / (1 << 20) }
-		m.log.Infof("mem: heap=%dMiB pico=%dMiB sistema=%dMiB goroutines=%d adjuntos_en_vuelo=%d",
-			mib(ms.HeapAlloc), mib(memWatermark), mib(ms.Sys), runtime.NumGoroutine(), len(m.mediaSem))
+		m.log.Infof("mem: heap=%dMiB pico=%dMiB sistema=%dMiB gc=%d goroutines=%d adjuntos=%d",
+			mib(ms.HeapAlloc), mib(memWatermark), mib(ms.Sys), ms.NumGC, runtime.NumGoroutine(), len(m.mediaSem))
+	}
+}
+
+func (m *Manager) pollHeartbeat(ctx context.Context) {
+	for {
+		time.Sleep(30 * time.Second)
+
 		// Keep presence in sync with the show_typing toggle (applies runtime changes) and keep the
 		// "online" status fresh so typing notifications keep flowing.
 		m.mu.Lock()
@@ -828,6 +845,30 @@ func (m *Manager) start(ctx context.Context, s session) {
 	}()
 
 	client.AddEventHandler(func(evt interface{}) {
+		// Se filtra ANTES de encolar. El que importa es *events.HistorySync: WhatsApp manda el
+		// historial del teléfono en trozos que whatsmeow baja, descomprime entero en memoria y
+		// convierte en un árbol de protobuf —- para una cuenta con historial son cientos de MB, y
+		// pueden venir hasta 32 trozos en fila. Nosotros no lo usamos para NADA: construimos el
+		// historial de los mensajes en vivo. Encolarlo era pagar toda esa memoria para tirarla, y
+		// además retenerla en la cola mientras tanto.
+		switch v := evt.(type) {
+		case *events.Connected, *events.PairSuccess, *events.ChatPresence, *events.LoggedOut,
+			*events.Disconnected, *events.StreamReplaced, *events.Message,
+			*events.UndecryptableMessage, *events.Receipt, *events.CallOffer,
+			*events.CallOfferNotice, *events.CallTerminate, *events.CallReject:
+			// son los que handleEvent atiende
+		case *events.HistorySync:
+			// Se registra el tamaño porque es justo el dato que falta para saber si esto es lo que
+			// está tirando al worker, y se devuelve la memoria al sistema en cuanto se suelta.
+			m.log.Warnf("descartado history sync: tipo=%s progreso=%d conversaciones=%d",
+				v.Data.GetSyncType(), v.Data.GetProgress(), len(v.Data.GetConversations()))
+			v.Data = nil
+			debug.FreeOSMemory()
+			return
+		default:
+			return // cualquier otro evento no se atiende: no tiene sentido ni encolarlo
+		}
+
 		select {
 		case queue <- evt:
 			return
