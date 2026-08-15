@@ -9,7 +9,6 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"os"
-	"runtime/debug"
 	"time"
 )
 
@@ -174,12 +173,21 @@ func downscale(src image.Image, maxPx int) image.Image {
 // tumbar el worker y con él la sesión de WhatsApp de todos los negocios.
 const thumbMaxPixels = 12 * 1000 * 1000
 
-// backfillBatch: cuántas por ronda. Chico a propósito —- esto compite con atender mensajes, y no
-// hay ninguna prisa en terminar.
-const backfillBatch = 8
+// backfillBatch: cuántas por ronda. Dos, no ocho: cada una se baja entera y se decodifica a RGBA, y
+// esto compite por la memoria con los mensajes de verdad. No hay ninguna prisa en terminar.
+const backfillBatch = 2
 
 // backfillEvery: pausa entre rondas.
 const backfillEvery = 30 * time.Second
+
+// backfillWarmup: cuánto tiene que llevar vivo el worker antes de tocar la primera foto.
+//
+// Es la protección que faltaba. Si el worker está en un bucle de caídas, nunca llega a estos cinco
+// minutos y el rescate NO corre —- se aparta solo justo cuando lo último que hace falta es trabajo
+// pesado de más. Y si el propio rescate es lo que está tirando al worker, el bucle se rompe en vez
+// de realimentarse, que es exactamente lo que pasó: la variable quedó encendida en producción y el
+// rescate volvía a arrancar en cada reinicio.
+const backfillWarmup = 5 * time.Minute
 
 // backfillThumbs le genera miniatura a los mensajes de imagen que ya están guardados y no la tienen.
 //
@@ -191,14 +199,15 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 	if os.Getenv("THUMB_BACKFILL") != "1" {
 		return
 	}
-	m.log.Infof("thumb backfill: arrancando (THUMB_BACKFILL=1)")
+	m.log.Infof("thumb backfill: encendido (THUMB_BACKFILL=1) — espera %s antes de empezar", backfillWarmup)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(backfillWarmup):
+	}
+	m.log.Infof("thumb backfill: arrancando")
 	done, skipped := 0, 0
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backfillEvery):
-		}
 
 		rows, err := m.db.QueryContext(ctx, `
 			SELECT id, media_url, COALESCE(meta::text, '')
@@ -229,41 +238,54 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 		}
 
 		for _, j := range jobs {
-			data, _, ferr := m.fetchMedia(ctx, j.ref)
-			if ferr != nil || len(data) == 0 {
-				// El archivo ya no está (purgado, borrado a mano). Se marca con thumb vacío para no
-				// volver a intentarlo cada ronda —- si no, la consulta lo devolvería para siempre y
-				// el rescate nunca avanzaría.
-				m.exec(ctx, `UPDATE messages
-				                SET meta = COALESCE(meta, '{}'::jsonb) || '{"thumb":"","thumbv":2}'::jsonb,
-				                    media_size = COALESCE(media_size, 0)
-				              WHERE id = $1`, j.id)
-				skipped++
-				continue
-			}
-			t := ""
-			if cfg, _, cerr := image.DecodeConfig(bytes.NewReader(data)); cerr == nil && cfg.Width*cfg.Height <= thumbMaxPixels {
-				t = makeThumb(data)
-			} else if cerr == nil {
-				m.log.Infof("thumb backfill: %s saltada, %dx%d es demasiado para decodificar aquí", j.id, cfg.Width, cfg.Height)
-			}
-			// Aunque la miniatura salga "" se escribe: deja constancia de que ya se intentó. Y de paso
-			// se llena media_size, que en los mensajes viejos venía nulo (la columna llegó con 0067):
-			// sin el tamaño la interfaz no sabe que la foto es pesada y la carga entera en la burbuja.
-			m.exec(ctx, `UPDATE messages
-			                SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text, 'thumbv', 2),
-			                    media_size = COALESCE(media_size, $3)
-			              WHERE id = $1`, j.id, t, int64(len(data)))
-			if t != "" {
-				done++
-			} else {
-				skipped++
-			}
-			data = nil
+			// Cada foto pasa por el mismo tope global que los adjuntos de verdad: el rescate es
+			// trabajo de relleno y no tiene por qué competir de tú a tú con un mensaje que alguien
+			// está esperando. withMedia además devuelve la memoria al sistema al terminar CADA una,
+			// en vez de acumular la ronda entera en el heap.
+			m.withMedia(ctx, func() {
+				if m.backfillOne(ctx, j.id, j.ref) {
+					done++
+				} else {
+					skipped++
+				}
+			})
 		}
-		// La memoria de decodificar se devuelve al sistema en vez de quedar en el heap de Go: en una
-		// instancia de 512 MB esa diferencia importa.
-		debug.FreeOSMemory()
 		m.log.Infof("thumb backfill: %d generadas, %d saltadas", done, skipped)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backfillEvery):
+		}
 	}
+}
+
+// backfillOne genera la miniatura de una sola foto y devuelve si salió. Va aparte para que withMedia
+// la envuelva: así el permiso —- y la devolución de memoria al sistema —- son POR FOTO, no por ronda.
+func (m *Manager) backfillOne(ctx context.Context, id, ref string) bool {
+	data, _, ferr := m.fetchMedia(ctx, ref)
+	if ferr != nil || len(data) == 0 {
+		// El archivo ya no está (purgado, borrado a mano). Se marca con thumb vacío para no volver a
+		// intentarlo cada ronda —- si no, la consulta lo devolvería para siempre y el rescate nunca
+		// avanzaría.
+		m.exec(ctx, `UPDATE messages
+		                SET meta = COALESCE(meta, '{}'::jsonb) || '{"thumb":"","thumbv":2}'::jsonb,
+		                    media_size = COALESCE(media_size, 0)
+		              WHERE id = $1`, id)
+		return false
+	}
+	// makeThumb ya se salta sola lo que no cabe decodificar; aquí solo se registra cuál y por qué,
+	// que si no se pierde el rastro de las que quedaron sin miniatura.
+	if cfg, _, cerr := image.DecodeConfig(bytes.NewReader(data)); cerr == nil && cfg.Width*cfg.Height > thumbMaxPixels {
+		m.log.Infof("thumb backfill: %s saltada, %dx%d es demasiado para decodificar aquí", id, cfg.Width, cfg.Height)
+	}
+	t := makeThumb(data)
+	// Aunque la miniatura salga "" se escribe: deja constancia de que ya se intentó. Y de paso se
+	// llena media_size, que en los mensajes viejos venía nulo (la columna llegó con 0067): sin el
+	// tamaño la interfaz no sabe que la foto es pesada y la carga entera en la burbuja.
+	m.exec(ctx, `UPDATE messages
+	                SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('thumb', $2::text, 'thumbv', 2),
+	                    media_size = COALESCE(media_size, $3)
+	              WHERE id = $1`, id, t, int64(len(data)))
+	return t != ""
 }
