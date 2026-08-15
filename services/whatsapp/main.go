@@ -88,12 +88,19 @@ const mediaConcurrency = 2
 
 // withMedia corre fn con un permiso del tope de adjuntos. Devuelve false si el contexto murió antes
 // de conseguirlo (no llegó a correr).
-func (m *Manager) withMedia(ctx context.Context, fn func()) bool {
+//
+// La etiqueta se registra a propósito. El log decía "adjuntos=1" sin decir CUÁL, y con eso no se
+// puede saber si lo que tiene tomado el permiso es un mensaje que sale, uno que entra o una descarga
+// bajo demanda —- que es exactamente lo que hacía falta averiguar cuando el worker moría con un
+// adjunto en vuelo desde el primer segundo de cada arranque.
+func (m *Manager) withMedia(ctx context.Context, label string, fn func()) bool {
 	select {
 	case m.mediaSem <- struct{}{}:
 	case <-ctx.Done():
 		return false
 	}
+	m.log.Infof("adjunto: %s — empieza", label)
+	started := time.Now()
 	defer func() {
 		<-m.mediaSem
 		// Devuelve al sistema la memoria que costó el adjunto en vez de dejarla en el heap de Go.
@@ -101,18 +108,22 @@ func (m *Manager) withMedia(ctx context.Context, fn func()) bool {
 		// un heap que ya no se necesita pero sigue reservado cuenta igual para el OOM. Cuesta un GC
 		// completo, pero comparado con bajar y subir un archivo es ruido.
 		debug.FreeOSMemory()
+		m.log.Infof("adjunto: %s — termina (%s)", label, time.Since(started).Round(time.Millisecond))
 	}()
 	fn()
 	return true
 }
 
-// maxOutboundMediaBytes: tope de lo que se manda como adjunto. Los límites del propio WhatsApp son
-// más bajos que esto salvo para documentos (100 MB), y un documento de 100 MB necesita más de 200 MB
-// de RAM entre los bytes y su copia cifrada —- se lleva la instancia entera por delante.
+// maxMediaBytes: tope de CUALQUIER adjunto que el worker cargue en memoria —- salga, entre o se baje
+// bajo demanda. Los límites del propio WhatsApp son más bajos salvo para documentos (100 MB), y un
+// documento de 100 MB necesita más de 200 MB de RAM entre los bytes y su copia cifrada: se lleva la
+// instancia entera por delante.
 //
 // Fallar ESE mensaje con un motivo escrito es estrictamente mejor que tumbar el worker y con él la
-// sesión de WhatsApp de todos los negocios.
-const maxOutboundMediaBytes = 48 * 1024 * 1024
+// sesión de WhatsApp de todos los negocios. El tope se aplica ANTES de leer los bytes (readCapped),
+// no después: comprobarlo sobre lo ya cargado es no comprobarlo, porque el proceso muere durante la
+// lectura.
+const maxMediaBytes = 48 * 1024 * 1024
 
 // dbTimeout acota TODA consulta del worker. Sin él, una sola query atorada en el pooler dejaba
 // colgado para siempre el bucle de sondeo que la lanzó (el contexto es Background, no vence nunca)
@@ -706,8 +717,37 @@ func (m *Manager) fetchMedia(ctx context.Context, ref string) ([]byte, string, e
 		b, _ := io.ReadAll(resp.Body)
 		return nil, "", fmt.Errorf("media fetch %d: %s", resp.StatusCode, string(b))
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := readCapped(resp.Body, resp.ContentLength)
 	return data, resp.Header.Get("Content-Type"), err
+}
+
+// readCapped lee un cuerpo HTTP sin pasar de maxMediaBytes.
+//
+// Aquí estaba el agujero: antes era un io.ReadAll pelado y el tope de tamaño se comprobaba DESPUÉS,
+// sobre los bytes ya cargados —- o sea, nunca, porque el proceso moría durante la lectura. Y encima
+// io.ReadAll crece duplicando el buffer: para leer 300 MB reserva 1, 2, 4… 256, 512 MB. Eso explica
+// por qué el log mostraba sistema=630MiB con el heap en 232MiB: lo que reventaba no era lo que se
+// guardaba, era el buffer creciendo.
+//
+// Con Content-Length se reserva de una vez el tamaño exacto (sin duplicaciones), y si no viene se
+// lee con un tope duro. En ningún caso se pasa del límite.
+func readCapped(r io.Reader, contentLength int64) ([]byte, error) {
+	if contentLength > maxMediaBytes {
+		return nil, fmt.Errorf("%w (%d MB)", errMediaTooBig, contentLength/(1024*1024))
+	}
+	var buf bytes.Buffer
+	if contentLength > 0 {
+		buf.Grow(int(contentLength))
+	}
+	// maxMediaBytes+1 para poder distinguir "justo en el límite" de "se pasó".
+	n, err := buf.ReadFrom(io.LimitReader(r, maxMediaBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if n > maxMediaBytes {
+		return nil, errMediaTooBig
+	}
+	return buf.Bytes(), nil
 }
 
 func httpGet(ctx context.Context, url string) ([]byte, string, error) {
@@ -720,7 +760,7 @@ func httpGet(ctx context.Context, url string) ([]byte, string, error) {
 	if resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("get %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := readCapped(resp.Body, resp.ContentLength)
 	return data, resp.Header.Get("Content-Type"), err
 }
 
@@ -1531,7 +1571,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		} else {
 			// Bajar, subir y miniaturizar va bajo el tope global de adjuntos: es donde el worker
 			// gasta la memoria, y sin tope varios adjuntos a la vez se comen los 512 MB.
-			m.withMedia(ctx, func() {
+			m.withMedia(ctx, fmt.Sprintf("entrante %s (%s, %d bytes)", waID, mtype, size), func() {
 				data, derr := client.DownloadAny(ctx, msg)
 				if derr != nil {
 					m.log.Errorf("media download: %v", derr)
@@ -1677,11 +1717,32 @@ func (m *Manager) fetchDeferredMedia(ctx context.Context, client *whatsmeow.Clie
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='bad-pointer' WHERE id=$1`, id)
 		return
 	}
+
+	// Estos son, por definición, los archivos más pesados que toca el worker: se difirieron por
+	// pasar de 20 MB. Si el tamaño guardado ya no cabe, se falla SIN bajarlo.
+	var size sql.NullInt64
+	_ = m.db.QueryRowContext(ctx, `SELECT media_size FROM messages WHERE id=$1`, id).Scan(&size)
+	if size.Valid && size.Int64 > maxMediaBytes {
+		m.log.Errorf("deferred media %s: %d MB no cabe en esta instancia", id, size.Int64/(1024*1024))
+		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='too-big' WHERE id=$1`, id)
+		return
+	}
+
+	// El pending_op se limpia ANTES de bajar nada, y esto es lo que rompe el bucle.
+	//
+	// Antes solo se limpiaba al terminar, así que si el worker moría durante la descarga —- justo lo
+	// que pasa con un archivo enorme—, al reiniciar encontraba la misma petición intacta y volvía a
+	// intentarlo. Arrancar, bajar, morir, arrancar: un solo archivo dejaba al worker en un bucle del
+	// que no salía solo, y se llevaba por delante la sesión de WhatsApp de TODOS los negocios.
+	//
+	// Ahora un intento que mata al proceso deja la marca de interrumpido y no se repite: el usuario
+	// vuelve a tocar "descargar" si lo quiere, y mientras tanto el worker vive.
+	m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='interrumpido' WHERE id=$1`, id)
 	// Es el adjunto más pesado que maneja el worker (por definición: se difirió por pasar de 20 MB),
 	// así que es el que más necesita esperar turno bajo el tope global.
 	var data []byte
 	var err error
-	if !m.withMedia(ctx, func() {
+	if !m.withMedia(ctx, "descarga bajo demanda "+id, func() {
 		data, err = client.DownloadMediaWithPath(ctx, p.DirectPath, p.FileEncSHA2, p.FileSHA, p.MediaKey, mediaTypeOf(p.Kind), mmsTypeOf(p.Kind), true)
 	}) {
 		return
@@ -2121,7 +2182,7 @@ func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Cl
 	// memoria. El texto no pasa por aquí, así que sigue saliendo en paralelo sin esperar turno.
 	var msg *waE2E.Message
 	var berr error
-	if !m.withMedia(ctx, func() { msg, berr = m.buildOutboundMedia(ctx, client, o) }) {
+	if !m.withMedia(ctx, fmt.Sprintf("saliente %s (%s)", o.id, o.mtype), func() { msg, berr = m.buildOutboundMedia(ctx, client, o) }) {
 		return nil, ctx.Err()
 	}
 	return msg, berr
@@ -2137,7 +2198,7 @@ func (m *Manager) buildOutboundMedia(ctx context.Context, client *whatsmeow.Clie
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxOutboundMediaBytes {
+	if len(data) > maxMediaBytes {
 		return nil, fmt.Errorf("%w (%d MB)", errMediaTooBig, len(data)/(1024*1024))
 	}
 	mime := firstNonEmpty(o.mmime, ctype, "application/octet-stream")

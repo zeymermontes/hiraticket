@@ -242,7 +242,7 @@ func (m *Manager) backfillThumbs(ctx context.Context) {
 			// trabajo de relleno y no tiene por qué competir de tú a tú con un mensaje que alguien
 			// está esperando. withMedia además devuelve la memoria al sistema al terminar CADA una,
 			// en vez de acumular la ronda entera en el heap.
-			m.withMedia(ctx, func() {
+			m.withMedia(ctx, "miniatura del historial "+j.id, func() {
 				if m.backfillOne(ctx, j.id, j.ref) {
 					done++
 				} else {
