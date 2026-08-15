@@ -3,18 +3,38 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { showOfficialWhatsApp } from "@/lib/whatsapp-official";
 
-// Official-flow (allowlisted) accounts must never link numbers through the unofficial whatsmeow
-// bridge — ban risk, and App Review reviewers must not be able to trigger it. The UI hides these
-// controls; this guard enforces it even if the actions are invoked directly.
-async function officialOnly(): Promise<boolean> {
-  return showOfficialWhatsApp();
+// Un negocio en el camino oficial (Cloud API) nunca debe enlazar números por el puente NO oficial
+// de whatsmeow — riesgo de baneo —, y los revisores de App Review no deben poder dispararlo. La UI
+// esconde estos controles; el guarda lo hace cumplir aunque las acciones se invoquen directamente.
+//
+// Se comprueba por NEGOCIO y no solo por el correo de quien pulsa. Antes solo miraba el allowlist,
+// y el riesgo es del negocio, no de la persona: un compañero de la misma empresa que no estuviera
+// en la lista sí veía el flujo de QR y podía añadirle un número unofficial a una empresa ya
+// oficial, que es exactamente lo que este guarda existe para impedir.
+//
+// El allowlist se conserva como segunda condición porque cubre un caso que el negocio no puede: un
+// revisor todavía NO tiene sesión oficial cuando entra a probar, y aun así no debe poder tocar
+// whatsmeow.
+async function blockUnofficial(businessId?: string | null): Promise<boolean> {
+  if (await showOfficialWhatsApp()) return true;
+  if (!businessId) return false;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("whatsapp_sessions")
+    .select("id")
+    .eq("business_id", businessId)
+    .eq("connect_method", "official")
+    .limit(1)
+    .maybeSingle();
+  return !!data;
 }
 
 /** Ask the worker to (re)connect this session — it will publish a QR. Official (Cloud API)
  *  sessions have no worker: connecting them is just flipping the flag back on (webhook resumes). */
 export async function connectSession(sessionId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: s } = await supabase.from("whatsapp_sessions").select("connect_method").eq("id", sessionId).maybeSingle();
+  const { data: s } = await supabase
+    .from("whatsapp_sessions").select("connect_method, business_id").eq("id", sessionId).maybeSingle();
   if (s?.connect_method === "official") {
     await supabase
       .from("whatsapp_sessions")
@@ -23,7 +43,7 @@ export async function connectSession(sessionId: string): Promise<void> {
     revalidatePath("/settings");
     return;
   }
-  if (await officialOnly()) return;
+  if (await blockUnofficial(s?.business_id as string | undefined)) return;
   await supabase
     .from("whatsapp_sessions")
     .update({ status: "connecting", qr: null, updated_at: new Date().toISOString() })
@@ -52,7 +72,7 @@ export async function disconnectSession(sessionId: string): Promise<void> {
 const MAX_WHATSAPP_SESSIONS = 1;
 
 export async function addSession(businessId: string, label: string): Promise<void> {
-  if (await officialOnly()) return;
+  if (await blockUnofficial(businessId)) return;
   const supabase = await createClient();
   const { count } = await supabase
     .from("whatsapp_sessions").select("id", { count: "exact", head: true }).eq("business_id", businessId);
@@ -74,8 +94,12 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function setConnectMethod(
   sessionId: string, method: "qr" | "pairing", phone?: string,
 ): Promise<void> {
-  if (await officialOnly()) return;
   const supabase = await createClient();
+  // El negocio se saca de la propia sesión: esta acción solo recibe el sessionId, y el guarda
+  // necesita saber a qué empresa pertenece para ver si ya es oficial.
+  const { data: s } = await supabase
+    .from("whatsapp_sessions").select("business_id").eq("id", sessionId).maybeSingle();
+  if (await blockUnofficial(s?.business_id as string | undefined)) return;
   await supabase
     .from("whatsapp_sessions")
     .update({ connect_method: method, phone: method === "pairing" ? (phone?.trim() || null) : undefined })
