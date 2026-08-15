@@ -49,7 +49,12 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
         <Icon name={live ? "whatsapp" : "wifioff"} size={20} />
       </span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row gap-2"><strong>{session.label}</strong>{official && <Pill color="green">{lang === "es" ? "API oficial" : "Official API"}</Pill>}{primary && <Pill color="slate">{lang === "es" ? "Principal" : "Primary"}</Pill>}<Pill color={st.color} dot>{st[lang]}</Pill></div>
+        <div className="row gap-2"><strong>{session.label}</strong>{official
+          ? <Pill color="green">{lang === "es" ? "API oficial" : "Official API"}</Pill>
+          // Antes solo el oficial decía su vía, así que un número por QR no se distinguía de nada:
+          // había que deducirlo por ausencia. Ahora cada número dice por dónde está conectado.
+          : <Pill color="amber">{lang === "es" ? "No oficial (QR)" : "Unofficial (QR)"}</Pill>
+        }{primary && <Pill color="slate">{lang === "es" ? "Principal" : "Primary"}</Pill>}<Pill color={st.color} dot>{st[lang]}</Pill></div>
         <div className="t-sm muted mono">{session.phone ?? (lang === "es" ? "Sin número vinculado" : "No number linked")}</div>
         {official && (
           <div className="t-xs muted" style={{ marginTop: 4, maxWidth: 340 }}>
@@ -127,6 +132,12 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
   const router = useRouter();
   const [, start] = useTransition();
 
+  // Las dos vías de conexión, separadas una sola vez: se consultan en cuatro sitios de esta pantalla
+  // (el distintivo de la cabecera, las tarjetas oficiales, el aviso de "ya hay un número por QR" y
+  // la lista no oficial) y repetir el filtro en cada uno es justo como se acaban desincronizando.
+  const officialSessions = sessions.filter((s) => s.connect_method === "official");
+  const bridgeSessions = sessions.filter((s) => s.connect_method !== "official");
+
   // Notification sound mute (per-browser preference).
   const [muted, setMuted] = useState(false);
   useEffect(() => { try { setMuted(localStorage.getItem("ht_muteNotif") === "1"); } catch {} }, []);
@@ -164,6 +175,19 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
           <div className="ws-block-head">
             <Icon name="whatsapp" size={16} />
             <h4 className="grow">{lang === "es" ? "Conexión de WhatsApp" : "WhatsApp connection"}</h4>
+            {/* Por qué vía está conectada la organización. No se decía en ninguna parte, y hace
+                falta saberlo ANTES de conectar Meta API: en cuanto el negocio tiene número oficial
+                ya no se pueden añadir números por QR (el guarda de settings/actions.ts lo impide),
+                así que descubrirlo al intentarlo es tarde. */}
+            {sessions.length > 0 && (
+              <Pill color={officialSessions.length > 0 ? "green" : "amber"}>
+                {officialSessions.length > 0 && bridgeSessions.length > 0
+                  ? (lang === "es" ? "Meta API + QR" : "Meta API + QR")
+                  : officialSessions.length > 0
+                    ? (lang === "es" ? "Usa Meta API" : "Using Meta API")
+                    : (lang === "es" ? "Usa QR (no oficial)" : "Using QR (unofficial)")}
+              </Pill>
+            )}
             {/* Official-flow (allowlisted) accounts must never link via the unofficial bridge —
                 hide the whatsmeow UI entirely (ban risk + App Review reviewers must not see it). */}
             {!showOfficial && (sessions.length === 0 ? (
@@ -177,10 +201,31 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
           </div>
           <div className="ws-block-body col gap-3">
             {/* Official (Cloud API) sessions render for everyone; the ES connect box only until one is live. */}
-            {sessions.filter((s) => s.connect_method === "official").map((s, i) => (
+            {officialSessions.map((s, i) => (
               <SessionCard key={s.id} session={s} primary={i === 0} />
             ))}
-            {showOfficial && !sessions.some((s) => s.connect_method === "official" && s.status === "connected") && (
+            {/* En una cuenta del allowlist la UI de whatsmeow se esconde ENTERA, así que un número
+                ya vinculado por QR era completamente invisible: se podía conectar Meta API sin
+                saber que el negocio ya tenía uno. Aquí se muestra solo como información —- sin
+                ningún control, que es lo que el camino oficial no debe poder tocar. */}
+            {showOfficial && bridgeSessions.length > 0 && (
+              <div className="col gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
+                <div className="row gap-2">
+                  <Icon name="wifioff" size={15} />
+                  <strong>{lang === "es" ? "Esta cuenta ya tiene un número por QR" : "This account already has a QR-linked number"}</strong>
+                  <Pill color="amber">{lang === "es" ? "No oficial" : "Unofficial"}</Pill>
+                </div>
+                <div className="t-sm muted mono">
+                  {bridgeSessions.map((s) => s.phone ?? s.label).join(", ")}
+                </div>
+                <div className="t-xs muted">
+                  {lang === "es"
+                    ? "Se muestra solo como información: los controles de la vinculación por QR no están disponibles en una cuenta del camino oficial."
+                    : "Shown for information only: QR-linking controls aren't available on an official-path account."}
+                </div>
+              </div>
+            )}
+            {showOfficial && !officialSessions.some((s) => s.status === "connected") && (
               <div className="col gap-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
                 <div className="row gap-2">
                   <Icon name="whatsapp" size={16} />
@@ -197,7 +242,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             )}
             {showOfficial && <WaCloudTester />}
             {!showOfficial && sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
-            {!showOfficial && sessions.filter((s) => s.connect_method !== "official").map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
+            {!showOfficial && bridgeSessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
             {!showOfficial && (
               <div className="t-xs muted">
                 {lang === "es"
