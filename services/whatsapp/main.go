@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -531,9 +532,24 @@ func (m *Manager) syncPresence(ctx context.Context, businessID string, client *w
 
 // pollHeartbeat periodically logs how many outbound messages are stuck, so a recurring problem
 // (queued not draining, anything 'failed') is visible without guessing.
+// memWatermark recuerda el pico visto, para que el log diga si la memoria sube sin parar (fuga o
+// mensaje envenenado que se reintenta) o si solo da picos y baja (un adjunto grande puntual). Esa
+// distinción es exactamente la que no se pudo hacer cuando el worker empezó a morir por OOM sin
+// ningún despliegue de por medio: no había ni un solo número registrado.
+var memWatermark uint64
+
 func (m *Manager) pollHeartbeat(ctx context.Context) {
 	for {
 		time.Sleep(30 * time.Second)
+
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		if ms.HeapAlloc > memWatermark {
+			memWatermark = ms.HeapAlloc
+		}
+		mib := func(b uint64) uint64 { return b / (1 << 20) }
+		m.log.Infof("mem: heap=%dMiB pico=%dMiB sistema=%dMiB goroutines=%d adjuntos_en_vuelo=%d",
+			mib(ms.HeapAlloc), mib(memWatermark), mib(ms.Sys), runtime.NumGoroutine(), len(m.mediaSem))
 		// Keep presence in sync with the show_typing toggle (applies runtime changes) and keep the
 		// "online" status fresh so typing notifications keep flowing.
 		m.mu.Lock()
@@ -1454,7 +1470,11 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		if size > 0 {
 			mediaSize = int64(size)
 		}
-		if dl != nil && size >= bigMediaBytes {
+		// size == 0 significa que WhatsApp no declaró el tamaño, y entonces bajarlo es apostar a
+		// ciegas: si resulta enorme, se lleva la instancia por delante. Se difiere igual que los
+		// pesados —- el usuario lo abre con un toque cuando lo necesite— en vez de arriesgar el
+		// worker por un archivo que ni sabemos cuánto pesa.
+		if dl != nil && (size >= bigMediaBytes || size == 0) {
 			mediaPtr = jsonStr(map[string]interface{}{
 				"direct_path":  dl.GetDirectPath(),
 				"media_key":    dl.GetMediaKey(),
@@ -1462,7 +1482,11 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				"file_enc_sha": dl.GetFileEncSHA256(),
 				"kind":         kind,
 			})
-			m.log.Infof("media %s deferred (%d bytes) — se bajará bajo demanda", waID, size)
+			if size == 0 {
+				m.log.Infof("media %s diferida: WhatsApp no declaró el tamaño", waID)
+			} else {
+				m.log.Infof("media %s deferred (%d bytes) — se bajará bajo demanda", waID, size)
+			}
 		} else {
 			// Bajar, subir y miniaturizar va bajo el tope global de adjuntos: es donde el worker
 			// gasta la memoria, y sin tope varios adjuntos a la vez se comen los 512 MB.
