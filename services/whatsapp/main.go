@@ -34,7 +34,7 @@ import (
 	"time"
 	_ "time/tzdata" // embed the IANA tz database so business timezones resolve on distroless
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
@@ -66,9 +66,19 @@ type Manager struct {
 	clients   map[string]*whatsmeow.Client // sessionID -> client
 	byBiz     map[string]*whatsmeow.Client // businessID -> client
 	sessBiz   map[string]string            // sessionID -> businessID
+	evtDone   map[string]chan struct{}     // sessionID -> cerrado al soltar la sesión (para la cola de eventos)
 	replaced  map[string]time.Time         // sessionID -> don't reconnect until (after StreamReplaced)
 	supaURL   string                       // Supabase URL (for media storage REST)
 	supaKey   string                       // service-role key
+}
+
+// dbTimeout acota TODA consulta del worker. Sin él, una sola query atorada en el pooler dejaba
+// colgado para siempre el bucle de sondeo que la lanzó (el contexto es Background, no vence nunca)
+// y el worker se quedaba mudo —- sin mandar nada y sin dar señal de error.
+const dbTimeout = 25 * time.Second
+
+func withDBTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, dbTimeout)
 }
 
 func main() {
@@ -100,8 +110,19 @@ func main() {
 	// One small SHARED pool for the worker AND whatsmeow's sqlstore. The Supabase Session pooler
 	// caps total clients (~15) and a deploy briefly doubles instances, so stay lean and recycle
 	// idle connections. (Previously sqlstore.New opened a second, uncapped pool → pool exhaustion.)
-	db.SetMaxOpenConns(5)
-	db.SetMaxIdleConns(2)
+	//
+	// 5 se quedó corto al mandar en paralelo: los sondeos, el sqlstore de whatsmeow (que consulta
+	// en CADA descifrado) y los envíos se peleaban por las mismas conexiones y todo se encolaba.
+	//
+	// 7 y no más porque un despliegue solapa dos instancias un momento: 2 × 7 = 14 sigue por debajo
+	// del tope del pooler (~15). Queda configurable porque ese techo lo pone el pooler y no el
+	// worker: si el pooler empieza a rechazar conexiones, baja DB_MAX_CONNS sin tocar el código.
+	maxConns := 7
+	if v, err := strconv.Atoi(os.Getenv("DB_MAX_CONNS")); err == nil && v > 0 {
+		maxConns = v
+	}
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(3)
 	db.SetConnMaxLifetime(5 * time.Minute)
 	db.SetConnMaxIdleTime(60 * time.Second)
 
@@ -190,9 +211,54 @@ end $$;`); err != nil {
 		logger.Warnf("add locked_to column: %v", err)
 	}
 
+	// Momento en que ESTE worker reclamó un envío. El rescate de envíos colgados tiene que medir
+	// desde aquí y no desde created_at: un mensaje que esperó en la cola más que el plazo ya nacía
+	// vencido en cuanto se reclamaba, así que el siguiente barrido lo re-encolaba mientras el envío
+	// seguía en vuelo —- y al cliente le llegaba dos veces por WhatsApp mientras la app mostraba uno.
+	if _, err := db.ExecContext(ctx, `alter table messages add column if not exists claimed_at timestamptz`); err != nil {
+		logger.Warnf("add claimed_at column: %v", err)
+	}
+
+	// Índices de las rutas calientes del worker (ver 0079). Los sondeos corren cada 2-4 segundos
+	// PARA SIEMPRE, así que sin índice cada vuelta era un recorrido completo de `messages` —- la
+	// tabla más grande y la única que nunca se purga. Por eso el worker se degradaba solo con el
+	// tiempo, sin que cambiara nada más.
+	//
+	// CONCURRENTLY a propósito: construirlos en caliente sobre una tabla grande bloquearía la
+	// escritura de mensajes. Y en segundo plano porque aun así tardan: el worker tiene que empezar
+	// a mandar y recibir desde el primer segundo, no cuando termine de indexar. Se crean aquí (y no
+	// solo en la migración) para que un despliegue no dependa de que alguien corriera el SQL.
+	go func() {
+		for _, q := range []string{
+			// pollOutbound: la cola de salida.
+			`create index concurrently if not exists messages_outbox_idx on public.messages (created_at)
+			   where direction='out' and state='queued'`,
+			// pollOutbound: la reja de "no adelantes a un mensaje anterior de la misma conversación".
+			`create index concurrently if not exists messages_outbox_conv_idx on public.messages (conversation_id, created_at)
+			   where direction='out' and state in ('queued','sending')`,
+			// pollOutbound: rescate de envíos colgados.
+			`create index concurrently if not exists messages_outbox_stuck_idx on public.messages (claimed_at)
+			   where direction='out' and state='sending'`,
+			// pollHeartbeat: el recuento de fallidos.
+			`create index concurrently if not exists messages_outbox_failed_idx on public.messages (created_at)
+			   where direction='out' and state='failed'`,
+			// pollContacts: las peticiones de "traer nombre y foto".
+			`create index concurrently if not exists contacts_fetch_requested_idx on public.contacts (fetch_requested)
+			   where fetch_requested is not null`,
+		} {
+			if _, err := db.ExecContext(ctx, q); err != nil {
+				// Si CONCURRENTLY se cae a medias deja el índice en estado inválido y el
+				// `if not exists` de la próxima vuelta lo dará por hecho. El aviso es para poder
+				// verlo: se arregla con un DROP INDEX y volver a crearlo.
+				logger.Warnf("hot-path index (revisa si quedó inválido): %v", err)
+			}
+		}
+		logger.Infof("hot-path indexes listos")
+	}()
+
 	// Recover messages a previous instance claimed (state='sending') but never finished, so they
 	// get retried instead of being stuck under the clock icon forever.
-	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'`); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE messages SET state='queued', claimed_at=NULL WHERE direction='out' AND state='sending'`); err != nil {
 		logger.Warnf("requeue stale sending: %v", err)
 	}
 
@@ -201,6 +267,7 @@ end $$;`); err != nil {
 		clients:  map[string]*whatsmeow.Client{},
 		byBiz:    map[string]*whatsmeow.Client{},
 		sessBiz:  map[string]string{},
+		evtDone:  map[string]chan struct{}{},
 		replaced: map[string]time.Time{},
 		supaURL:  strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		supaKey:  os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
@@ -238,11 +305,16 @@ func (m *Manager) pollSessions(ctx context.Context) {
 		alive := map[string]bool{}
 		// connect_method='official' rows are Cloud API sessions (webhook + web app dispatch) —
 		// never bring up a whatsmeow client for them, it would overwrite their status with a QR.
-		rows, err := m.db.QueryContext(ctx,
+		qctx, cancel := withDBTimeout(ctx)
+		rows, err := m.db.QueryContext(qctx,
 			`SELECT id, business_id, status, connect_method, phone, device_jid
 			   FROM whatsapp_sessions
 			  WHERE status IN ('connecting','qr','connected','reconnecting')
 			    AND COALESCE(connect_method,'qr') <> 'official'`)
+		if err != nil {
+			cancel()
+			m.log.Errorf("sessions query: %v", err)
+		}
 		if err == nil {
 			for rows.Next() {
 				var s session
@@ -258,6 +330,7 @@ func (m *Manager) pollSessions(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			cancel()
 			m.reap(ctx, alive)
 		}
 		time.Sleep(4 * time.Second)
@@ -298,15 +371,29 @@ func (m *Manager) reap(ctx context.Context, alive map[string]bool) {
 	}
 }
 
+// outboundConcurrency: cuántos mensajes se mandan a la vez. La reja de orden de la consulta deja
+// como mucho UN mensaje elegible por conversación, así que el lote son siempre conversaciones
+// distintas y mandarlas en paralelo no altera el orden de ninguna.
+//
+// El tope existe por memoria: cada adjunto se baja entero a RAM para volver a subirlo a WhatsApp,
+// y la instancia tiene 512 MB.
+const outboundConcurrency = 4
+
 func (m *Manager) pollOutbound(ctx context.Context) {
 	for {
-		// Self-heal: requeue any 'sending' claim that hung (e.g. a send that never returned).
-		m.exec(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending' AND created_at < now() - interval '2 minutes'`)
+		// Rescate de un envío que se colgó (p.ej. un send que nunca volvió). Se mide desde
+		// claimed_at —- cuándo lo reclamamos— y NO desde created_at: con created_at, un mensaje que
+		// llevaba más de dos minutos esperando en la cola ya nacía vencido en el momento de
+		// reclamarlo, así que la vuelta siguiente lo re-encolaba con el envío todavía en vuelo y el
+		// cliente lo recibía dos veces por WhatsApp mientras la app mostraba uno solo.
+		m.exec(ctx, `UPDATE messages SET state='queued' WHERE direction='out' AND state='sending'
+			AND claimed_at IS NOT NULL AND claimed_at < now() - interval '3 minutes'`)
 		// In-order delivery: only send a message once every EARLIER outbound message in the same
 		// conversation has left the queue (sent), so a retry/backoff on one can't let a later one
 		// jump ahead. A message that permanently 'failed' (gave up) no longer blocks the rest.
-		rows, err := m.db.QueryContext(ctx,
-			`SELECT m.id, m.business_id, m.conversation_id, m.body, m.type, m.media_url, m.media_mime, m.media_name, m.reply_to, m.meta, m.send_attempts
+		qctx, cancel := withDBTimeout(ctx)
+		rows, err := m.db.QueryContext(qctx,
+			`SELECT m.id, m.business_id, m.conversation_id, m.body, m.type, m.media_url, m.media_mime, m.media_name, m.reply_to, m.meta, m.send_attempts, COALESCE(m.wa_id,'')
 			   FROM messages m
 			  WHERE m.direction='out' AND m.state='queued' AND (m.next_retry_at IS NULL OR m.next_retry_at <= now())
 			    AND NOT EXISTS (
@@ -320,14 +407,14 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 			for rows.Next() {
 				var o outMsg
 				var body, murl, mmime, mname, replyTo, meta sql.NullString
-				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &meta, &o.attempts) == nil {
+				if rows.Scan(&o.id, &o.biz, &o.conv, &body, &o.mtype, &murl, &mmime, &mname, &replyTo, &meta, &o.attempts, &o.waID) == nil {
 					o.body = decryptBody(o.biz, body.String) // stored encrypted at rest; WhatsApp needs plaintext
 					// Guard: an encrypted body we can't decrypt (MESSAGE_SECRET_KEY missing/mismatched)
 					// must NOT go out as an empty or garbled message — fail it loudly instead. It can
 					// be retried from the app once the env is fixed.
 					if isEncryptedBody(body.String) && o.body == "" {
 						m.log.Errorf("cannot decrypt outbound %s — MESSAGE_SECRET_KEY missing or does not match the web app's; marking failed", o.id)
-						m.exec(ctx, `UPDATE messages SET state='failed' WHERE id=$1`, o.id)
+						m.exec(ctx, `UPDATE messages SET state='failed', fail_reason='cannot decrypt body' WHERE id=$1`, o.id)
 						continue
 					}
 					o.murl = murl.String
@@ -339,17 +426,39 @@ func (m *Manager) pollOutbound(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			cancel()
+			// En serie, un solo número inalcanzable dejaba parados detrás de él a todos los demás
+			// negocios: SendMessage espera el acuse hasta 45 s, y los adjuntos además se bajan y se
+			// resuben dentro de la misma vuelta. Este worker atiende a TODOS los negocios, así que
+			// era un cuello de botella global.
+			var wg sync.WaitGroup
+			var smu sync.Mutex
 			sent := 0
+			slots := make(chan struct{}, outboundConcurrency)
 			for _, o := range pending {
-				if m.sendOutbound(ctx, o) {
-					sent++
-				}
+				wg.Add(1)
+				go func(o outMsg) {
+					defer wg.Done()
+					slots <- struct{}{}
+					defer func() { <-slots }()
+					if m.sendOutbound(ctx, o) {
+						smu.Lock()
+						sent++
+						smu.Unlock()
+					}
+				}(o)
 			}
+			wg.Wait()
 			// If we delivered something, loop again right away to send the next in-order
 			// message per conversation instead of waiting a full interval.
 			if sent > 0 {
 				continue
 			}
+		} else {
+			cancel()
+			// Antes esto era un `if err == nil` sin rama else: si la consulta de la cola fallaba,
+			// el worker dejaba de mandar mensajes sin decir absolutamente nada.
+			m.log.Errorf("outbound queue query: %v", err)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -426,8 +535,13 @@ func (m *Manager) pollHeartbeat(ctx context.Context) {
 					// Self-heal: a 'failed' with send_attempts=0 was never actually attempted by us
 					// (e.g. a stale second worker / glitch marked it). Re-queue so the live session
 					// genuinely tries it. The atomic claim prevents any double-send.
-					if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', next_retry_at=NULL
-						WHERE direction='out' AND state='failed' AND send_attempts=0 AND created_at > now() - interval '10 minutes'`); err == nil {
+					//
+					// fail_reason IS NULL acota el rescate a esos casos ajenos: los que SÍ fallamos
+					// nosotros a propósito (sin teléfono, cuerpo indescifrable, JID de grupo malo)
+					// dejan motivo escrito, y antes se re-encolaban cada 30 s durante diez minutos
+					// para volver a fallar exactamente igual.
+					if res, err := m.db.ExecContext(ctx, `UPDATE messages SET state='queued', next_retry_at=NULL, claimed_at=NULL
+						WHERE direction='out' AND state='failed' AND send_attempts=0 AND fail_reason IS NULL AND created_at > now() - interval '10 minutes'`); err == nil {
 						if n, _ := res.RowsAffected(); n > 0 {
 							m.log.Infof("re-queued %d failed-with-0-attempts message(s) for a real send", n)
 						}
@@ -543,8 +657,13 @@ func firstNonEmpty(vals ...string) string {
 // pollContacts fulfils on-demand "fetch name & photo" requests from the app.
 func (m *Manager) pollContacts(ctx context.Context) {
 	for {
-		rows, err := m.db.QueryContext(ctx,
+		qctx, cancel := withDBTimeout(ctx)
+		rows, err := m.db.QueryContext(qctx,
 			`SELECT id, business_id, phone FROM contacts WHERE fetch_requested IS NOT NULL LIMIT 20`)
+		if err != nil {
+			cancel()
+			m.log.Errorf("contacts fetch query: %v", err)
+		}
 		if err == nil {
 			type c struct{ id, biz, phone string }
 			var list []c
@@ -557,6 +676,7 @@ func (m *Manager) pollContacts(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			cancel()
 			for _, x := range list {
 				m.fetchContactInfo(ctx, x.id, x.biz, x.phone)
 			}
@@ -614,12 +734,49 @@ func (m *Manager) start(ctx context.Context, s session) {
 	}
 
 	client := whatsmeow.NewClient(device, m.log)
+	done := make(chan struct{})
 	m.mu.Lock()
 	m.clients[s.ID] = client
 	m.sessBiz[s.ID] = s.BusinessID
+	m.evtDone[s.ID] = done
 	m.mu.Unlock()
 
-	client.AddEventHandler(func(evt interface{}) { m.handleEvent(ctx, s, client, evt) })
+	// whatsmeow atiende los nodos del socket DE UNO EN UNO por cliente y espera hasta cinco
+	// minutos a que cada manejador termine antes de pasar al siguiente (handlerQueueLoop). Nuestro
+	// manejador habla con Postgres y, para los adjuntos, con dos CDNs: hacerlo ahí adentro
+	// significaba que una sola foto de 8 MB dejaba parados detrás de ella TODOS los mensajes,
+	// acuses y avisos de "escribiendo" de ese número. Eso es lo que se sentía como "va lentísimo"
+	// y como "los mensajes llegan tardísimo o no llegan".
+	//
+	// El evento se pasa a nuestra propia cola: el socket vuelve al instante y el orden se conserva
+	// porque hay un único consumidor por sesión.
+	queue := make(chan interface{}, 512)
+	go func() {
+		for {
+			select {
+			case evt := <-queue:
+				m.handleEvent(ctx, s, client, evt)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	client.AddEventHandler(func(evt interface{}) {
+		select {
+		case queue <- evt:
+			return
+		default:
+		}
+		// Cola llena: el consumidor va muy atrás. Se bloquea en vez de descartar —- perder un
+		// mensaje entrante es peor que ir lento, y bloquear aquí es exactamente lo que pasaba
+		// antes de tener cola.
+		m.log.Warnf("session %s: cola de eventos llena (%d) — el consumidor va atrasado", s.ID, cap(queue))
+		select {
+		case queue <- evt:
+		case <-done:
+		}
+	})
 
 	if client.Store.ID == nil {
 		// Not logged in yet — QR or pairing code.
@@ -731,7 +888,7 @@ func (m *Manager) handleEvent(ctx context.Context, s session, client *whatsmeow.
 	case *events.UndecryptableMessage:
 		m.handleUnavailable(ctx, s, client, v)
 	case *events.Receipt:
-		m.handleReceipt(ctx, v)
+		m.handleReceipt(ctx, s.BusinessID, v)
 	case *events.CallOffer:
 		m.handleCall(ctx, s, client, v.BasicCallMeta, "ringing")
 	case *events.CallOfferNotice:
@@ -937,7 +1094,15 @@ func (m *Manager) handleUnavailable(ctx context.Context, s session, client *what
 }
 
 // handleReceipt advances outbound message ticks to delivered/read.
-func (m *Manager) handleReceipt(ctx context.Context, v *events.Receipt) {
+//
+// El business_id va en el WHERE por una razón muy concreta: el único índice que existe sobre wa_id
+// es (business_id, wa_id), así que buscar SOLO por wa_id obligaba a Postgres a recorrer la tabla
+// `messages` entera. Y los acuses son, con diferencia, el evento más frecuente de WhatsApp: era un
+// recorrido completo de la tabla más grande por cada palomita de cada negocio, y encima dentro del
+// hilo que despacha los mensajes entrantes. De ahí venía buena parte de la lentitud general.
+//
+// Los ids van en un solo UPDATE (= ANY) en vez de uno por id: un acuse trae varios de golpe.
+func (m *Manager) handleReceipt(ctx context.Context, businessID string, v *events.Receipt) {
 	var state string
 	switch v.Type {
 	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
@@ -947,12 +1112,21 @@ func (m *Manager) handleReceipt(ctx context.Context, v *events.Receipt) {
 	default:
 		return
 	}
+	if len(v.MessageIDs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(v.MessageIDs))
 	for _, id := range v.MessageIDs {
-		if state == "read" {
-			m.exec(ctx, `UPDATE messages SET state='read' WHERE wa_id=$1 AND direction='out'`, string(id))
-		} else {
-			m.exec(ctx, `UPDATE messages SET state='delivered' WHERE wa_id=$1 AND direction='out' AND state <> 'read'`, string(id))
-		}
+		ids = append(ids, string(id))
+	}
+	// El filtro por estado evita reescribir filas que ya están en ese estado: cada UPDATE inútil
+	// es una fila entera al WAL en la tabla que más se actualiza.
+	if state == "read" {
+		m.exec(ctx, `UPDATE messages SET state='read'
+			WHERE business_id=$1 AND wa_id = ANY($2) AND direction='out' AND state <> 'read'`, businessID, pq.Array(ids))
+	} else {
+		m.exec(ctx, `UPDATE messages SET state='delivered'
+			WHERE business_id=$1 AND wa_id = ANY($2) AND direction='out' AND state NOT IN ('read','delivered')`, businessID, pq.Array(ids))
 	}
 }
 
@@ -1437,16 +1611,9 @@ func hhmmToMin(s string) int {
 // runScheduleAutomations sends an off-hours / holiday auto-reply when an inbound 1:1 message lands
 // outside business hours or on a configured holiday — throttled per conversation by cooldown_hours.
 func (m *Manager) runScheduleAutomations(ctx context.Context, businessID, convID string) {
-	// Resolve the business timezone; fall back to a sane default if missing/invalid.
-	tz := "America/Mexico_City"
-	_ = m.db.QueryRowContext(ctx, `SELECT coalesce(timezone, 'America/Mexico_City') FROM businesses WHERE id=$1`, businessID).Scan(&tz)
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		m.log.Warnf("bad timezone %q for business %s: %v", tz, businessID, err)
-		loc = time.UTC
-	}
-	now := time.Now().In(loc)
-
+	// Los flujos se consultan ANTES que la zona horaria: esto corre en cada mensaje entrante y la
+	// inmensa mayoría de los negocios no tiene ningún flujo de horario configurado, así que pedir
+	// primero la zona era una ida y vuelta a la base por mensaje que no servía para nada.
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT id, trigger_type, action_payload, trigger_config
 		   FROM automations
@@ -1480,6 +1647,19 @@ func (m *Manager) runScheduleAutomations(ctx context.Context, businessID, convID
 		flows = append(flows, flow{id: id, ttype: ttype, template: payload.Template, cfg: cfg})
 	}
 	rows.Close()
+	if len(flows) == 0 {
+		return
+	}
+
+	// Resolve the business timezone; fall back to a sane default if missing/invalid.
+	tz := "America/Mexico_City"
+	_ = m.db.QueryRowContext(ctx, `SELECT coalesce(timezone, 'America/Mexico_City') FROM businesses WHERE id=$1`, businessID).Scan(&tz)
+	loc, lerr := time.LoadLocation(tz)
+	if lerr != nil {
+		m.log.Warnf("bad timezone %q for business %s: %v", tz, businessID, lerr)
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
 
 	for _, f := range flows {
 		match := false
@@ -1643,6 +1823,7 @@ func (m *Manager) handleProtocol(ctx context.Context, s session, pm *waE2E.Proto
 
 type outMsg struct {
 	id, biz, conv, body, mtype, murl, mmime, mname, replyTo, meta string
+	waID                                                          string // id propio, fijado al reclamar y reutilizado en cada reintento
 	attempts                                                      int
 }
 
@@ -1685,7 +1866,9 @@ func (m *Manager) retryOrFail(ctx context.Context, o outMsg, reason string) {
 		backoff = 90
 	}
 	m.log.Warnf("send %s failed (attempt %d, retry in %ds): %s", o.id, next, backoff, reason)
-	m.exec(ctx, `UPDATE messages SET state='queued', send_attempts=$2, next_retry_at=now() + ($3 || ' seconds')::interval WHERE id=$1`, o.id, next, backoff)
+	// claimed_at se limpia al soltar el mensaje: si no, el rescate de envíos colgados lo contaría
+	// como "reclamado hace rato" y lo re-encolaría por su cuenta además del reintento.
+	m.exec(ctx, `UPDATE messages SET state='queued', claimed_at=NULL, send_attempts=$2, next_retry_at=now() + ($3 || ' seconds')::interval WHERE id=$1`, o.id, next, backoff)
 }
 
 // sendOutbound returns true only if the message was actually sent (so the poll loop can drain
@@ -1700,9 +1883,22 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 		return false
 	}
 
+	// Un id de mensaje propio, guardado ANTES de mandarlo y reutilizado en cada reintento. Resuelve
+	// dos cosas a la vez:
+	//   - WhatsApp descarta por id el reenvío de algo que ya le había llegado. Antes, si el acuse
+	//     se perdía (SendMessage devuelve error aunque el mensaje sí haya salido), el reintento le
+	//     llegaba al cliente como un mensaje repetido mientras la app mostraba uno solo o "falló".
+	//   - El eco que WhatsApp nos devuelve de nuestro propio mensaje ya encuentra la fila por wa_id
+	//     y no crea una segunda. Antes, si el eco llegaba antes de que guardáramos el wa_id, el
+	//     chat mostraba el mensaje duplicado.
+	waID := o.waID
+	if waID == "" {
+		waID = string(client.GenerateMessageID())
+	}
+
 	// Claim atomically so a restart can't double-send.
 	res, err := m.db.ExecContext(ctx,
-		`UPDATE messages SET state='sending' WHERE id=$1 AND state='queued'`, o.id)
+		`UPDATE messages SET state='sending', claimed_at=now(), wa_id=$2 WHERE id=$1 AND state='queued'`, o.id, waID)
 	if err != nil {
 		return false
 	}
@@ -1761,12 +1957,18 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 		attachContext(waMsg, ci)
 	}
 
-	resp, err := client.SendMessage(ctx, jid, waMsg)
+	// El plazo por defecto de whatsmeow para esperar el acuse son 75 s. Con envíos en paralelo ya no
+	// bloquea a los demás, pero 45 s basta: más allá de eso el reintento (idempotente, mismo id) es
+	// mejor que seguir ocupando el hueco.
+	resp, err := client.SendMessage(ctx, jid, waMsg, whatsmeow.SendRequestExtra{
+		ID:      types.MessageID(waID),
+		Timeout: 45 * time.Second,
+	})
 	if err != nil {
 		m.retryOrFail(ctx, o, err.Error())
 		return false
 	}
-	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2, send_attempts=0, next_retry_at=NULL WHERE id=$1`, o.id, resp.ID)
+	m.exec(ctx, `UPDATE messages SET state='sent', wa_id=$2, send_attempts=0, next_retry_at=NULL, claimed_at=NULL WHERE id=$1`, o.id, resp.ID)
 	m.log.Infof("sent %s (%s) → %s", o.id, o.mtype, jid)
 	return true
 }
@@ -1886,9 +2088,14 @@ func attachContext(msg *waE2E.Message, ci *waE2E.ContextInfo) {
 // pollOps processes edit/delete requests (pending_op) from the app.
 func (m *Manager) pollOps(ctx context.Context) {
 	for {
-		rows, err := m.db.QueryContext(ctx,
+		qctx, cancel := withDBTimeout(ctx)
+		rows, err := m.db.QueryContext(qctx,
 			`SELECT id, business_id, conversation_id, body, wa_id, pending_op, COALESCE(react_emoji,''), direction, COALESCE(media_ptr::text,'')
 			   FROM messages WHERE pending_op IS NOT NULL AND wa_id IS NOT NULL LIMIT 30`)
+		if err != nil {
+			cancel()
+			m.log.Errorf("pending ops query: %v", err)
+		}
 		if err == nil {
 			type op struct{ id, biz, conv, body, waID, op, react, dir, ptr string }
 			var ops []op
@@ -1906,6 +2113,7 @@ func (m *Manager) pollOps(ctx context.Context) {
 				}
 			}
 			rows.Close()
+			cancel()
 			for _, o := range ops {
 				m.processOp(ctx, o.id, o.biz, o.conv, o.body, o.waID, o.op, o.react, o.dir, o.ptr)
 			}
@@ -2022,8 +2230,17 @@ func (m *Manager) applyReaction(ctx context.Context, biz, targetWaID, emoji, by 
 // ---------- helpers ----------
 
 func (m *Manager) exec(ctx context.Context, q string, args ...interface{}) {
-	if _, err := m.db.ExecContext(ctx, q, args...); err != nil {
-		m.log.Errorf("exec: %v", err)
+	qctx, cancel := withDBTimeout(ctx)
+	defer cancel()
+	if _, err := m.db.ExecContext(qctx, q, args...); err != nil {
+		// La consulta se recorta en el log para poder distinguir QUÉ escritura se perdió: un
+		// INSERT de mensaje entrante que falla aquí es un mensaje que nunca aparece en el chat, y
+		// antes se veía igual que cualquier otro error.
+		short := strings.Join(strings.Fields(q), " ")
+		if len(short) > 90 {
+			short = short[:90] + "…"
+		}
+		m.log.Errorf("exec [%s]: %v", short, err)
 	}
 }
 
@@ -2036,6 +2253,13 @@ func (m *Manager) drop(sessionID, businessID string) {
 	m.mu.Lock()
 	delete(m.clients, sessionID)
 	delete(m.sessBiz, sessionID)
+	// Cierra la cola de eventos de la sesión para que su consumidor termine. Se borra del mapa
+	// dentro del mismo candado: drop puede llamarse dos veces (LoggedOut y luego reap) y cerrar un
+	// canal ya cerrado revienta el proceso.
+	if d := m.evtDone[sessionID]; d != nil {
+		close(d)
+		delete(m.evtDone, sessionID)
+	}
 	if m.byBiz[businessID] != nil {
 		delete(m.byBiz, businessID)
 	}
