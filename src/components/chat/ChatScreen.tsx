@@ -2818,7 +2818,23 @@ function PendingMedia({ m }: { m: ChatMessage }) {
   const es = lang === "es";
   const [asked, setAsked] = useState(false);
   const expired = m.media_fetch_error === "expired";
-  const failed = !!m.media_fetch_error && !expired;
+  // "too-big": el archivo existe pero no cabe en la memoria del worker. Va aparte de un fallo
+  // normal porque volver a pulsar "Descargar" NUNCA va a funcionar —- ofrecer el botón sería
+  // mandar a la gente a reintentar en bucle algo que siempre falla.
+  const tooBig = m.media_fetch_error === "too-big";
+  const failed = !!m.media_fetch_error && !expired && !tooBig;
+
+  if (tooBig) {
+    return (
+      <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px", color: "var(--text-faint)", fontSize: 12.5 }}>
+        <Icon name="file" size={15} />
+        <span>
+          {m.media_name || (es ? "Archivo" : "File")} · {fmtBytes(m.media_size)} ·{" "}
+          {es ? "demasiado grande, ábrelo en tu teléfono" : "too large, open it on your phone"}
+        </span>
+      </span>
+    );
+  }
 
   if (expired) {
     return (
