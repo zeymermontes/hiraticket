@@ -123,6 +123,9 @@ func (m *Manager) withMedia(ctx context.Context, label string, fn func()) bool {
 // sesión de WhatsApp de todos los negocios. El tope se aplica ANTES de leer los bytes (readCapped),
 // no después: comprobarlo sobre lo ya cargado es no comprobarlo, porque el proceso muere durante la
 // lectura.
+//
+// DEBE COINCIDIR con MAX_MEDIA_FETCH_BYTES de src/lib/chat.ts: el chat usa ese valor para decir
+// "ábrelo en tu teléfono" mirando el tamaño guardado, sin ofrecer un botón que aquí va a fallar.
 const maxMediaBytes = 48 * 1024 * 1024
 
 // dbTimeout acota TODA consulta del worker. Sin él, una sola query atorada en el pooler dejaba

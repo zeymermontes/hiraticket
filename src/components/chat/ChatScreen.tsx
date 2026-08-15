@@ -10,6 +10,7 @@ import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts } from "@/lib/chat";
+import { MAX_MEDIA_FETCH_BYTES } from "@/lib/chat";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { OrderDrawer } from "@/components/OrderDrawer";
@@ -2818,11 +2819,24 @@ function PendingMedia({ m }: { m: ChatMessage }) {
   const es = lang === "es";
   const [asked, setAsked] = useState(false);
   const expired = m.media_fetch_error === "expired";
-  // "too-big": el archivo existe pero no cabe en la memoria del worker. Va aparte de un fallo
-  // normal porque volver a pulsar "Descargar" NUNCA va a funcionar —- ofrecer el botón sería
-  // mandar a la gente a reintentar en bucle algo que siempre falla.
-  const tooBig = m.media_fetch_error === "too-big";
+  // El archivo existe pero no cabe en la memoria del worker. Se decide por el TAMAÑO, que ya viene
+  // guardado, y no solo por el error de un intento previo: para un archivo de 238 MB el resultado
+  // se sabe de antemano, así que no hay por qué ofrecer un botón, hacer esperar y luego enseñar un
+  // fallo. Y volver a pulsarlo nunca funcionaría.
+  const tooBig = m.media_fetch_error === "too-big" || (m.media_size ?? 0) > MAX_MEDIA_FETCH_BYTES;
   const failed = !!m.media_fetch_error && !expired && !tooBig;
+
+  // `expired` va antes que `tooBig`: es un hecho comprobado de un intento real, mientras que
+  // "demasiado grande" es una deducción por el tamaño. Si un archivo enorme además caducó, el
+  // motivo útil es que caducó.
+  if (expired) {
+    return (
+      <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px", color: "var(--text-faint)", fontSize: 12.5 }}>
+        <Icon name="file" size={15} />
+        <span>{m.media_name || (es ? "Archivo" : "File")} · {es ? "caducó en WhatsApp, pídelo de nuevo" : "expired on WhatsApp, ask for it again"}</span>
+      </span>
+    );
+  }
 
   if (tooBig) {
     return (
@@ -2832,15 +2846,6 @@ function PendingMedia({ m }: { m: ChatMessage }) {
           {m.media_name || (es ? "Archivo" : "File")} · {fmtBytes(m.media_size)} ·{" "}
           {es ? "demasiado grande, ábrelo en tu teléfono" : "too large, open it on your phone"}
         </span>
-      </span>
-    );
-  }
-
-  if (expired) {
-    return (
-      <span className="row gap-2" style={{ alignItems: "center", padding: "6px 4px", color: "var(--text-faint)", fontSize: 12.5 }}>
-        <Icon name="file" size={15} />
-        <span>{m.media_name || (es ? "Archivo" : "File")} · {es ? "caducó en WhatsApp, pídelo de nuevo" : "expired on WhatsApp, ask for it again"}</span>
       </span>
     );
   }
