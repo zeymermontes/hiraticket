@@ -10,7 +10,10 @@ import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts } from "@/lib/chat";
-import { MAX_MEDIA_FETCH_BYTES } from "@/lib/chat";
+// Desde @/lib/mediaLimits y NO desde @/lib/chat: chat.ts arrastra server-only/next/headers, y un
+// import de VALOR desde este componente de cliente los metería en el bundle del navegador. El
+// `import type` de arriba no lo hace porque se borra al compilar.
+import { MAX_MEDIA_FETCH_BYTES } from "@/lib/mediaLimits";
 import type { Area, Stage } from "@/lib/business";
 import { CustomerOverlay } from "@/components/chat/CustomerOverlay";
 import { OrderDrawer } from "@/components/OrderDrawer";

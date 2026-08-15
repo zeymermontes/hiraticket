@@ -124,7 +124,7 @@ func (m *Manager) withMedia(ctx context.Context, label string, fn func()) bool {
 // no después: comprobarlo sobre lo ya cargado es no comprobarlo, porque el proceso muere durante la
 // lectura.
 //
-// DEBE COINCIDIR con MAX_MEDIA_FETCH_BYTES de src/lib/chat.ts: el chat usa ese valor para decir
+// DEBE COINCIDIR con MAX_MEDIA_FETCH_BYTES de src/lib/mediaLimits.ts: el chat usa ese valor para decir
 // "ábrelo en tu teléfono" mirando el tamaño guardado, sin ofrecer un botón que aquí va a fallar.
 const maxMediaBytes = 48 * 1024 * 1024
 

@@ -105,14 +105,6 @@ export interface ChatMessage {
   sender_jid: string | null;  // group only: stable key the UI hashes for the sender's color
 }
 
-/** Tope de lo que el worker puede bajar de WhatsApp: carga el archivo entero en memoria y la
- *  instancia tiene 512 MB. DEBE COINCIDIR con maxMediaBytes de services/whatsapp/main.go.
- *
- *  Vive aquí para que el chat pueda decir "ábrelo en tu teléfono" mirando el tamaño que ya tiene
- *  guardado, en vez de ofrecer un botón, esperar el intento y enseñar un error: para un archivo de
- *  238 MB el resultado se sabe de antemano. */
-export const MAX_MEDIA_FETCH_BYTES = 48 * 1024 * 1024;
-
 export interface ConvNote {
   id: string;
   body: string;
