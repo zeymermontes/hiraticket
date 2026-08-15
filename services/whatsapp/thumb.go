@@ -37,8 +37,21 @@ const thumbQuality = 70
 // makeThumb devuelve un data URI JPEG con la miniatura de una imagen, o "" si no se pudo.
 // Nunca devuelve error: una miniatura es una mejora, no un requisito —- si falla, el mensaje se
 // guarda igual y simplemente carga como antes.
+//
+// El tope de píxeles se comprueba AQUÍ ADENTRO, no en quien llama. Antes vivía solo en el rescate
+// del historial y la ruta en vivo —- la que corre con cada foto que entra —- decodificaba sin
+// límite: una foto de 24 MP son ~96 MB de RGBA de golpe en un contenedor de 512 MB. Ese era un
+// camino directo al OOM, y encima uno que se dispara con lo que mande cualquier cliente.
 func makeThumb(data []byte) string {
 	if len(data) == 0 {
+		return ""
+	}
+	// DecodeConfig lee solo la cabecera: dice cuánto va a costar antes de gastarlo.
+	cfg, _, cerr := image.DecodeConfig(bytes.NewReader(data))
+	if cerr != nil {
+		return "" // formato que no sabemos leer (webp, heic, tiff…)
+	}
+	if cfg.Width*cfg.Height > thumbMaxPixels {
 		return ""
 	}
 	src, _, err := image.Decode(bytes.NewReader(data))
@@ -153,9 +166,13 @@ func downscale(src image.Image, maxPx int) image.Image {
 // thumbMaxPixels: tope de píxeles a decodificar. Decodificar deja la imagen en RGBA, 4 bytes por
 // píxel, así que una foto de 24 MP son ~96 MB de memoria. En un contenedor de 512 MB corriendo
 // whatsmeow eso es la diferencia entre una miniatura y que el worker muera por OOM y se caiga la
-// sesión de WhatsApp. 20 MP cubre cualquier foto de teléfono; lo que pase de ahí se salta y se
-// registra en el log, para que quede constancia y no parezca que funcionó.
-const thumbMaxPixels = 20 * 1000 * 1000
+// sesión de WhatsApp. Lo que pase de ahí se salta.
+//
+// 12 MP y no 20: una instancia de 512 MB no aguanta 80 MB de RGBA compitiendo con los adjuntos que
+// entran y salen. 12 MP cubre la foto de cualquier teléfono (4032x3024 son 12.2 MP y entran
+// justas); las que pasen de ahí se quedan sin miniatura, que es un problema mucho menor que
+// tumbar el worker y con él la sesión de WhatsApp de todos los negocios.
+const thumbMaxPixels = 12 * 1000 * 1000
 
 // backfillBatch: cuántas por ronda. Chico a propósito —- esto compite con atender mensajes, y no
 // hay ninguna prisa en terminar.

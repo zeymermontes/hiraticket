@@ -68,9 +68,50 @@ type Manager struct {
 	sessBiz   map[string]string            // sessionID -> businessID
 	evtDone   map[string]chan struct{}     // sessionID -> cerrado al soltar la sesión (para la cola de eventos)
 	replaced  map[string]time.Time         // sessionID -> don't reconnect until (after StreamReplaced)
+	mediaSem  chan struct{}                // tope global de adjuntos en vuelo (ver mediaConcurrency)
 	supaURL   string                       // Supabase URL (for media storage REST)
 	supaKey   string                       // service-role key
 }
+
+// mediaConcurrency: cuántos adjuntos se manipulan a la vez EN TODO EL WORKER, sumando los que
+// entran y los que salen.
+//
+// Cada adjunto se maneja entero en memoria: bajarlo son sus bytes, subirlo a WhatsApp son esos
+// bytes MÁS la copia cifrada, y una imagen que entra además se decodifica a RGBA para la miniatura.
+// Un solo archivo puede costar más de 100 MB de pico en una instancia de 512 MB, así que el número
+// de adjuntos simultáneos es lo que decide si el worker vive o lo mata el OOM.
+//
+// El tope es global a propósito: no sirve limitarlo por negocio cuando la memoria es una sola y la
+// comparten todos. Los mensajes de texto no pasan por aquí, así que siguen saliendo en paralelo.
+const mediaConcurrency = 2
+
+// withMedia corre fn con un permiso del tope de adjuntos. Devuelve false si el contexto murió antes
+// de conseguirlo (no llegó a correr).
+func (m *Manager) withMedia(ctx context.Context, fn func()) bool {
+	select {
+	case m.mediaSem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	defer func() {
+		<-m.mediaSem
+		// Devuelve al sistema la memoria que costó el adjunto en vez de dejarla en el heap de Go.
+		// Render mata el proceso por su memoria TOTAL, no por lo que Go considere "en uso", así que
+		// un heap que ya no se necesita pero sigue reservado cuenta igual para el OOM. Cuesta un GC
+		// completo, pero comparado con bajar y subir un archivo es ruido.
+		debug.FreeOSMemory()
+	}()
+	fn()
+	return true
+}
+
+// maxOutboundMediaBytes: tope de lo que se manda como adjunto. Los límites del propio WhatsApp son
+// más bajos que esto salvo para documentos (100 MB), y un documento de 100 MB necesita más de 200 MB
+// de RAM entre los bytes y su copia cifrada —- se lleva la instancia entera por delante.
+//
+// Fallar ESE mensaje con un motivo escrito es estrictamente mejor que tumbar el worker y con él la
+// sesión de WhatsApp de todos los negocios.
+const maxOutboundMediaBytes = 48 * 1024 * 1024
 
 // dbTimeout acota TODA consulta del worker. Sin él, una sola query atorada en el pooler dejaba
 // colgado para siempre el bucle de sondeo que la lanzó (el contexto es Background, no vence nunca)
@@ -92,9 +133,13 @@ func main() {
 		fmt.Println("WARNING: MESSAGE_SECRET_KEY is not set — encrypted outbound messages will be marked failed instead of sent")
 	}
 	// Tell Go the container's memory ceiling so the GC stays aggressive near the limit instead of
-	// letting the heap grow into an OOM kill (Go can't read the cgroup limit on its own). Default to
-	// ~450MiB for a 512MB instance; override with MEM_LIMIT_MIB.
-	memMiB := int64(450)
+	// letting the heap grow into an OOM kill (Go can't read the cgroup limit on its own).
+	//
+	// 380 y no 450: Render mide la memoria TOTAL del proceso, y este límite solo cubre lo que Go
+	// administra. Las pilas, el runtime y lo que reserva el TLS de las conexiones van por fuera, así
+	// que dejar solo 62 MiB de margen para todo eso era optimista —- y el OOM llegaba antes de que
+	// el GC llegara a ponerse nervioso. Se ajusta con MEM_LIMIT_MIB.
+	memMiB := int64(380)
 	if v, err := strconv.ParseInt(os.Getenv("MEM_LIMIT_MIB"), 10, 64); err == nil && v > 0 {
 		memMiB = v
 	}
@@ -269,6 +314,7 @@ end $$;`); err != nil {
 		sessBiz:  map[string]string{},
 		evtDone:  map[string]chan struct{}{},
 		replaced: map[string]time.Time{},
+		mediaSem: make(chan struct{}, mediaConcurrency),
 		supaURL:  strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		supaKey:  os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 	}
@@ -750,7 +796,10 @@ func (m *Manager) start(ctx context.Context, s session) {
 	//
 	// El evento se pasa a nuestra propia cola: el socket vuelve al instante y el orden se conserva
 	// porque hay un único consumidor por sesión.
-	queue := make(chan interface{}, 512)
+	// 64 y no más: el buffer es por sesión y guarda mensajes ya descifrados, que pueden traer la
+	// miniatura de WhatsApp dentro. Con muchos números conectados, un buffer generoso multiplicado
+	// por sesión es memoria que esta instancia no tiene.
+	queue := make(chan interface{}, 64)
 	go func() {
 		for {
 			select {
@@ -1414,24 +1463,35 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				"kind":         kind,
 			})
 			m.log.Infof("media %s deferred (%d bytes) — se bajará bajo demanda", waID, size)
-		} else if data, derr := client.DownloadAny(ctx, msg); derr == nil && len(data) > 0 {
-			path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, waID, extFromMime(mmime))
-			if u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream")); uerr == nil {
-				mediaURL = u
-			} else {
-				m.log.Errorf("media upload: %v", uerr)
-			}
-			// Miniatura propia SIEMPRE que tengamos los bytes, aunque WhatsApp haya mandado la suya:
-			// la de WhatsApp es una estampilla (~34x60 px) y en la burbuja se ve destrozada —- fue
-			// exactamente el "se ve muy muy mal". La suya queda solo de respaldo para los diferidos
-			// (>20MB), donde no hay bytes con qué generar la nuestra.
-			if mtype == "image" {
-				if t := makeThumb(data); t != "" {
-					meta = withThumbJSON(meta, t)
+		} else {
+			// Bajar, subir y miniaturizar va bajo el tope global de adjuntos: es donde el worker
+			// gasta la memoria, y sin tope varios adjuntos a la vez se comen los 512 MB.
+			m.withMedia(ctx, func() {
+				data, derr := client.DownloadAny(ctx, msg)
+				if derr != nil {
+					m.log.Errorf("media download: %v", derr)
+					return
 				}
-			}
-		} else if derr != nil {
-			m.log.Errorf("media download: %v", derr)
+				if len(data) == 0 {
+					return
+				}
+				path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, waID, extFromMime(mmime))
+				if u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream")); uerr == nil {
+					mediaURL = u
+				} else {
+					m.log.Errorf("media upload: %v", uerr)
+				}
+				// Miniatura propia SIEMPRE que tengamos los bytes, aunque WhatsApp haya mandado la
+				// suya: la de WhatsApp es una estampilla (~34x60 px) y en la burbuja se ve
+				// destrozada —- fue exactamente el "se ve muy muy mal". La suya queda solo de
+				// respaldo para los diferidos (>20MB), donde no hay bytes con qué generar la
+				// nuestra. makeThumb se salta sola las fotos demasiado grandes para decodificar.
+				if mtype == "image" {
+					if t := makeThumb(data); t != "" {
+						meta = withThumbJSON(meta, t)
+					}
+				}
+			})
 		}
 	}
 	body := text
@@ -1552,7 +1612,15 @@ func (m *Manager) fetchDeferredMedia(ctx context.Context, client *whatsmeow.Clie
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='bad-pointer' WHERE id=$1`, id)
 		return
 	}
-	data, err := client.DownloadMediaWithPath(ctx, p.DirectPath, p.FileEncSHA2, p.FileSHA, p.MediaKey, mediaTypeOf(p.Kind), mmsTypeOf(p.Kind), true)
+	// Es el adjunto más pesado que maneja el worker (por definición: se difirió por pasar de 20 MB),
+	// así que es el que más necesita esperar turno bajo el tope global.
+	var data []byte
+	var err error
+	if !m.withMedia(ctx, func() {
+		data, err = client.DownloadMediaWithPath(ctx, p.DirectPath, p.FileEncSHA2, p.FileSHA, p.MediaKey, mediaTypeOf(p.Kind), mmsTypeOf(p.Kind), true)
+	}) {
+		return
+	}
 	if err != nil || len(data) == 0 {
 		// El caso frecuente es que WhatsApp ya lo purgó. Se distingue para que la UI pueda decir
 		// "caducó, pídelo de nuevo" en vez de un error genérico.
@@ -1939,6 +2007,13 @@ func (m *Manager) sendOutbound(ctx context.Context, o outMsg) bool {
 
 	waMsg, err := m.buildOutboundMessage(ctx, client, o)
 	if err != nil {
+		if errors.Is(err, errMediaTooBig) {
+			// Falla directo y con motivo visible: reintentar seis veces solo repetiría el pico de
+			// memoria, y el usuario merece saber por qué no salió en vez de ver el relojito.
+			m.log.Errorf("send %s: %v", o.id, err)
+			m.exec(ctx, `UPDATE messages SET state='failed', fail_reason=$2 WHERE id=$1`, o.id, err.Error())
+			return false
+		}
 		m.retryOrFail(ctx, o, "build: "+err.Error())
 		return false
 	}
@@ -1977,9 +2052,28 @@ func (m *Manager) buildOutboundMessage(ctx context.Context, client *whatsmeow.Cl
 	if o.mtype == "text" || o.murl == "" {
 		return &waE2E.Message{Conversation: proto.String(o.body)}, nil
 	}
+	// El adjunto —- bajarlo de storage, cifrarlo y subirlo a WhatsApp —- va bajo el tope global de
+	// memoria. El texto no pasa por aquí, así que sigue saliendo en paralelo sin esperar turno.
+	var msg *waE2E.Message
+	var berr error
+	if !m.withMedia(ctx, func() { msg, berr = m.buildOutboundMedia(ctx, client, o) }) {
+		return nil, ctx.Err()
+	}
+	return msg, berr
+}
+
+// errMediaTooBig marca un adjunto que no cabe en la instancia. Se distingue del resto de errores
+// porque NO tiene sentido reintentarlo: el archivo no va a encoger, y cada reintento repite el pico
+// de memoria que tumba el worker.
+var errMediaTooBig = errors.New("adjunto demasiado grande para mandarlo desde esta instancia")
+
+func (m *Manager) buildOutboundMedia(ctx context.Context, client *whatsmeow.Client, o outMsg) (*waE2E.Message, error) {
 	data, ctype, err := m.fetchMedia(ctx, o.murl)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxOutboundMediaBytes {
+		return nil, fmt.Errorf("%w (%d MB)", errMediaTooBig, len(data)/(1024*1024))
 	}
 	mime := firstNonEmpty(o.mmime, ctype, "application/octet-stream")
 	caption := strOrNil(o.body)
