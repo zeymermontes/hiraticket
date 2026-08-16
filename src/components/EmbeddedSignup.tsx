@@ -81,7 +81,18 @@ export function EmbeddedSignup({ appId, configId }: { appId: string; configId: s
         const code = response?.authResponse?.code;
         if (!code) {
           setBusy(false);
-          setMsg({ kind: "err", text: lang === "es" ? "Conexión cancelada." : "Connection cancelled." });
+          // Decir solo "cancelada" es engañoso: el mismo camino se recorre cuando Meta rechaza el
+          // login sin que nadie cancele nada —- típicamente porque la app de Meta está sin publicar,
+          // y entonces solo entran las cuentas con rol en la app (admin, desarrollador, tester).
+          // El SDK no distingue los dos casos: cerrar el diálogo devuelve lo mismo que un error
+          // dentro de él. Así que se nombran ambos, con la pista textual que el usuario acaba de
+          // ver en el popup —- que es lo único que permite saber cuál de los dos fue.
+          setMsg({
+            kind: "err",
+            text: lang === "es"
+              ? "No se completó la conexión. Si viste “Función no disponible”, la app de Meta aún no está publicada: pide que te agreguen como tester o espera a que se publique."
+              : "The connection wasn't completed. If you saw “Feature unavailable”, the Meta app isn't published yet: ask to be added as a tester, or wait until it's published.",
+          });
           return;
         }
         fetch("/api/whatsapp/embedded-signup", {
