@@ -109,7 +109,7 @@ async function ensureConversation(
   session: CloudSession,
   phoneDigits: string,
   name?: string,
-): Promise<{ convId: string; muted: boolean; status: string } | null> {
+): Promise<{ convId: string; muted: boolean; status: string; unread: number; lastAt: string | null } | null> {
   const businessId = session.businessId;
   const normalized = "+" + phoneDigits;
 
@@ -137,7 +137,7 @@ async function ensureConversation(
   // another number's threads, so switching numbers starts with a clean inbox.
   let query = supabase
     .from("conversations")
-    .select("id, muted, status")
+    .select("id, muted, status, unread, last_message_at")
     .eq("business_id", businessId)
     .eq("contact_id", contact.id);
   if (session.phone) query = query.eq("number_phone", session.phone);
@@ -155,12 +155,33 @@ async function ensureConversation(
         unread: 0,
         number_phone: session.phone,
       })
-      .select("id, muted, status")
+      .select("id, muted, status, unread, last_message_at")
       .single();
     conv = ins.data;
   }
   if (!conv) return null;
-  return { convId: conv.id as string, muted: Boolean(conv.muted), status: (conv.status as string) ?? "open" };
+  return {
+    convId: conv.id as string,
+    muted: Boolean(conv.muted),
+    status: (conv.status as string) ?? "open",
+    unread: (conv.unread as number) ?? 0,
+    lastAt: (conv.last_message_at as string | null) ?? null,
+  };
+}
+
+/** ¿Ya salió una respuesta nuestra DESPUÉS de este momento? Un evento que Meta reentrega tarde
+ *  puede ser de un mensaje que el agente ya contestó; volver a marcarlo no leído (o reabrir el
+ *  chat) sería inventarle trabajo pendiente. Índice (conversation_id, created_at desc) de 0026. */
+async function repliedAfter(supabase: Admin, convId: string, ts: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", convId)
+    .eq("direction", "out")
+    .gt("created_at", ts)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data);
 }
 
 // ---------- messages ----------
@@ -231,22 +252,28 @@ async function ingestMessage(
   });
 
   if (opts.live) {
+    // Meta reentrega con la marca de tiempo ORIGINAL: tras un despliegue, un reinicio o un webhook
+    // lento, un evento de hace horas puede aterrizar ahora. Guardarlo está bien —- en el hilo se ve
+    // a su hora real—, pero NO puede reescribir el presente de la conversación. Sin esto,
+    // last_message_at retrocedía: el chat pasaba a leerse "hace 5 h" y se re-ordenaba aunque lo
+    // hubieran contestado hace un rato, y el unread/reabrir lo resucitaba ya respondido. De ahí el
+    // reporte de "se recarga y aparecen chats de horas atrás". El reloj solo avanza, y los efectos
+    // de "queda algo pendiente" se saltan si ya salió una respuesta después de ese mensaje.
+    const prev = conv.lastAt ?? "";
+    const late = Boolean(prev) && ts < prev;
+    const patch: Record<string, unknown> = {};
+    if (!late) patch.last_message_at = ts;
     if (outbound) {
-      await supabase.from("conversations").update({ unread: 0, last_message_at: ts }).eq("id", conv.convId);
-    } else {
+      // Un eco tardío no borra el no leído de un mensaje del cliente que llegó después.
+      if (!late && conv.unread > 0) patch.unread = 0;
+    } else if (!late || !(await repliedAfter(supabase, conv.convId, ts))) {
       // Same side-effects as the worker: bump unread, surface the conversation, reopen resolved.
-      const { data: cur } = await supabase.from("conversations").select("unread").eq("id", conv.convId).maybeSingle();
-      await supabase
-        .from("conversations")
-        .update({
-          unread: ((cur?.unread as number) ?? 0) + 1,
-          last_message_at: ts,
-          hidden: false,
-          snoozed_until: null,
-          ...(conv.status === "resolved" ? { status: "open" } : {}),
-        })
-        .eq("id", conv.convId);
+      patch.unread = conv.unread + 1;
+      patch.hidden = false;
+      patch.snoozed_until = null;
+      if (conv.status === "resolved") patch.status = "open";
     }
+    if (Object.keys(patch).length) await supabase.from("conversations").update(patch).eq("id", conv.convId);
   } else {
     // History backfill: never touch unread/status, only keep last_message_at moving forward.
     const { data: cur } = await supabase.from("conversations").select("last_message_at").eq("id", conv.convId).maybeSingle();
