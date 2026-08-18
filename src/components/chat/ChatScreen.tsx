@@ -120,6 +120,10 @@ function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
   return [...map.values()].sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
 }
 
+/** Ver el <script> que acompaña al hilo: lo deja pegado abajo antes del primer pintado. */
+const PIN_BOTTOM_JS =
+  "(function(){var p=function(){var t=document.getElementById('chat-thread');if(t)t.scrollTop=t.scrollHeight;};p();document.addEventListener('DOMContentLoaded',p,{once:true});})()";
+
 const _metaCache = new Map<string, LinkMeta>();
 /** Open-Graph preview card for the first link in a message. onReady fires when the card (or its
  *  image) appears so the thread can stay pinned to the bottom instead of "popping". */
@@ -1742,7 +1746,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const scrollAction = useRef<"bottom" | "preserve" | "follow">("bottom");
   const prevHeight = useRef(0);
 
-  useEffect(() => {
+  // useLayoutEffect y no useEffect: al cambiar de chat, con useEffect el navegador alcanzaba a
+  // pintar un cuadro con los mensajes del chat anterior (y su scroll) antes del cambio de lista.
+  useLayoutEffect(() => {
     if (lastConvRef.current !== detail.id) {
       lastConvRef.current = detail.id;
       scrollAction.current = "bottom";
@@ -1963,7 +1969,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
       </div>
 
-      <div className="thread thread-wa-tint scroll" ref={endRef} onScroll={onThreadScroll}>
+      <div id="chat-thread" className="thread thread-wa-tint scroll" ref={endRef} onScroll={onThreadScroll}>
         {loadingOlder && <div className="t-xs muted" style={{ textAlign: "center", padding: "8px 0" }}>{lang === "es" ? "Cargando mensajes…" : "Loading messages…"}</div>}
         {rows.map((row, i) => {
           const created = row.kind === "album" ? row.created_at : row.m.created_at;
@@ -2065,6 +2071,15 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           </div>
         )}
       </div>
+      {/* El HTML del servidor se pinta ANTES de que hidrate React, y el navegador lo pinta desde
+          arriba: por eso al recargar se veía un instante la parte de arriba del hilo y luego
+          saltaba al final. Este script corre mientras el navegador parsea (el hilo ya está
+          completo justo arriba) y deja el scroll abajo antes del primer pintado. Se repite en
+          DOMContentLoaded porque durante el parseo el composer todavía no existe y la altura del
+          hilo aún no es la definitiva. React no reejecuta scripts en el render de cliente, así
+          que esto solo actúa en la carga del servidor —- los cambios de chat los sigue
+          resolviendo el useLayoutEffect de abajo. */}
+      <script dangerouslySetInnerHTML={{ __html: PIN_BOTTOM_JS }} />
 
       <div className="composer">
         {waBlocked && (
