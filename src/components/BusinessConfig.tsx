@@ -5,6 +5,7 @@ import { Icon } from "@/components/Icon";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type PillColor, tagColor } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { ReorderList } from "@/components/ReorderList";
@@ -12,7 +13,7 @@ import {
   createArea, updateArea, deleteArea, createStage, updateStage, deleteStage, reorderStages, updateBusinessProfile, setCustomFields, updatePaymentConfig, deleteTagFromCatalog,
 } from "@/app/(app)/business/actions";
 import type { TagCatalogItem } from "@/lib/tags";
-import type { Branch, BankAccount } from "@/lib/types";
+import type { Branch, BankAccount, PayPromoPlacement } from "@/lib/types";
 import { DAY_ORDER, DAY_LABEL, defaultHours, normalizeHours, type DayHours } from "@/lib/hours";
 
 const rid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "id-" + Math.random().toString(36).slice(2));
@@ -52,6 +53,7 @@ const TIMEZONES = [
 export function BusinessConfig({
   businessId, businessName, stages, areas, agents, tags = [], vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
   payBranchEnabled, payTransferEnabled, branches: branches0, bankAccounts: bankAccounts0, invoiceAddTax, invoiceTaxRate, manualMarginPct,
+  payPromoUrl, payPromoPlacement,
 }: {
   businessId: string;
   businessName: string;
@@ -74,6 +76,8 @@ export function BusinessConfig({
   invoiceAddTax: boolean;
   invoiceTaxRate: number;
   manualMarginPct: number;
+  payPromoUrl: string | null;
+  payPromoPlacement: PayPromoPlacement;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -90,6 +94,39 @@ export function BusinessConfig({
   const saveBranches = (next: Branch[]) => { setBranches(next); start(() => updatePaymentConfig(businessId, { branches: next }).then(() => {})); };
   const saveAccounts = (next: BankAccount[]) => { setAccounts(next); start(() => updatePaymentConfig(businessId, { bank_accounts: next }).then(() => {})); };
   const patchBranch = (id: string, p: Partial<Branch>) => saveBranches(branches.map((b) => (b.id === id ? { ...b, ...p } : b)));
+  // Imagen promocional del link de pago (0080). Se sube al bucket público 'media' —- la ve gente
+  // sin sesión —- y solo se guarda la URL. Copia local para que la vista previa cambie al momento.
+  const [promoUrl, setPromoUrl] = useState<string | null>(payPromoUrl);
+  const [promoPlacement, setPromoPlacement] = useState<PayPromoPlacement>(payPromoPlacement);
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [promoErr, setPromoErr] = useState<string | null>(null);
+  const promoInput = useRef<HTMLInputElement>(null);
+  // Se avisa si el guardado falla en vez de dejar el botón "guardado" a mentiras (p. ej. la
+  // migración 0080 todavía sin correr: la columna no existe y Supabase devuelve error).
+  const savePromo = (patch: { pay_promo_url?: string | null; pay_promo_placement?: PayPromoPlacement }) =>
+    start(() => updatePaymentConfig(businessId, patch).then((r) => {
+      setPromoErr(r.ok ? null : (lang === "es" ? "No se pudo guardar el cambio." : "Couldn't save the change."));
+    }));
+  const setPlacement = (p: PayPromoPlacement) => { setPromoPlacement(p); savePromo({ pay_promo_placement: p }); };
+  async function uploadPromo(file: File) {
+    if (!file.type.startsWith("image/")) { setPromoErr(lang === "es" ? "Elige una imagen." : "Pick an image file."); return; }
+    if (file.size > 5 * 1024 * 1024) { setPromoErr(lang === "es" ? "La imagen pesa más de 5 MB." : "The image is over 5 MB."); return; }
+    setPromoErr(null); setPromoBusy(true);
+    try {
+      const supabase = createClient();
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const path = `promo/${businessId}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
+      if (error) { setPromoErr(lang === "es" ? "No se pudo subir la imagen." : "Couldn't upload the image."); return; }
+      const url = supabase.storage.from("media").getPublicUrl(path).data.publicUrl;
+      setPromoUrl(url);
+      // Subir una imagen y dejarla apagada no tendría sentido: si estaba en 'off', se enciende.
+      const place: PayPromoPlacement = promoPlacement === "off" ? "below" : promoPlacement;
+      setPromoPlacement(place);
+      savePromo({ pay_promo_url: url, pay_promo_placement: place });
+    } finally { setPromoBusy(false); }
+  }
+  const removePromo = () => { setPromoUrl(null); setPromoPlacement("off"); savePromo({ pay_promo_url: null, pay_promo_placement: "off" }); };
   const patchAccount = (id: string, p: Partial<BankAccount>) => saveAccounts(accounts.map((a) => (a.id === id ? { ...a, ...p } : a)));
   const setBranchDay = (id: string, wd: number, patch: Partial<DayHours>) => {
     const b = branches.find((x) => x.id === id);
@@ -295,6 +332,53 @@ export function BusinessConfig({
                 <div className="t-xs muted">{lang === "es" ? "Cobro con proveedor externo." : "Charge via an external provider."}</div>
               </div>
               <Pill color="slate">{lang === "es" ? "Próximamente" : "Coming soon"}</Pill>
+            </div>
+          </div>
+        </section>
+        )}
+
+        {/* Imagen promocional del link de pago (0080). Va en negocio y no en personal por lo mismo
+            que los pagos: en personal no hay link de pago que la muestre. */}
+        {mode !== "personal" && (
+        <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+          <div className="ws-block-head"><Icon name="sparkles" size={16} /><h4 className="grow">{lang === "es" ? "Imagen promocional" : "Promotional image"}</h4>{promoPlacement !== "off" && promoUrl && <Pill color="green">{lang === "es" ? "Visible" : "Live"}</Pill>}</div>
+          <div className="ws-block-body col gap-3">
+            <p className="muted t-sm">{lang === "es" ? "Una imagen tuya —- una promoción, un aviso, tu menú —- que el cliente ve en su link de pago, junto al ticket." : "An image of yours —- a promo, a notice, your menu —- shown to the customer on their payment link, next to the ticket."}</p>
+
+            <div className="row gap-3" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ width: 180, height: 120, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", display: "grid", placeItems: "center", overflow: "hidden", flex: "none" }}>
+                {promoUrl
+                  ? <img src={promoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                  : <span className="muted t-xs" style={{ padding: 8, textAlign: "center" }}>{lang === "es" ? "Sin imagen" : "No image"}</span>}
+              </div>
+              <div className="col gap-2">
+                <input ref={promoInput} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPromo(f); e.target.value = ""; }} />
+                <button className="btn btn-sm btn-outline" disabled={promoBusy} onClick={() => promoInput.current?.click()}>
+                  <Icon name="sparkles" size={14} />{promoBusy ? (lang === "es" ? "Subiendo…" : "Uploading…") : promoUrl ? (lang === "es" ? "Cambiar imagen" : "Replace image") : (lang === "es" ? "Subir imagen" : "Upload image")}
+                </button>
+                {promoUrl && <button className="btn btn-sm btn-outline" disabled={promoBusy} onClick={removePromo}><Icon name="trash" size={14} />{lang === "es" ? "Quitar" : "Remove"}</button>}
+                <span className="t-xs muted">{lang === "es" ? "JPG o PNG, hasta 5 MB." : "JPG or PNG, up to 5 MB."}</span>
+                {promoErr && <span className="t-xs" style={{ color: "var(--red)" }}>{promoErr}</span>}
+              </div>
+            </div>
+
+            {/* Dónde la ve el cliente. Sin imagen no hay nada que colocar, así que se desactiva. */}
+            <div className="col gap-2" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "¿Dónde la ve el cliente?" : "Where does the customer see it?"}</label>
+              <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+                {([
+                  { id: "off", title: lang === "es" ? "No mostrar" : "Don't show", desc: lang === "es" ? "La imagen se guarda por si la quieres después." : "The image is kept in case you want it later." },
+                  { id: "below", title: lang === "es" ? "Abajo del ticket" : "Below the ticket", desc: lang === "es" ? "Al final de la página, después de los métodos de pago." : "At the end of the page, after the payment methods." },
+                  { id: "popup", title: lang === "es" ? "Ventana al abrir" : "Popup on open", desc: lang === "es" ? "Aparece encima al abrir el link; el cliente la cierra y sigue." : "Pops up when the link opens; the customer closes it and continues." },
+                ] as const).map((o) => (
+                  <button key={o.id} disabled={!promoUrl && o.id !== "off"} onClick={() => setPlacement(o.id)}
+                    style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, textAlign: "left", flex: "1 1 190px",
+                      cursor: !promoUrl && o.id !== "off" ? "default" : "pointer", opacity: !promoUrl && o.id !== "off" ? 0.5 : 1,
+                      background: promoPlacement === o.id ? "var(--brand-50)" : "var(--surface)", border: "2px solid " + (promoPlacement === o.id ? "var(--brand)" : "var(--border)") }}>
+                    <span style={{ minWidth: 0 }}><span style={{ display: "block", fontWeight: 700, fontSize: 13.5 }}>{o.title}</span><span className="t-xs muted">{o.desc}</span></span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </section>

@@ -1,17 +1,24 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Icon } from "@/components/Icon";
-import type { Branch, BankAccount } from "@/lib/types";
+import type { Branch, BankAccount, PayPromoPlacement } from "@/lib/types";
 import { DAY_ORDER, DAY_LABEL, normalizeHours } from "@/lib/hours";
 import { submitPaymentProof, startCardPayment } from "@/app/pay/actions";
 
 const money = (n: number) => "$" + n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " MXN";
+/** Sin "MXN": dentro del desglose la moneda ya se dijo arriba y repetirla lo vuelve ilegible. */
+const amount = (n: number) => "$" + n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 type Method = "branch" | "transfer" | "card";
+
+/** Un renglón del pedido tal como lo ve el cliente. A propósito NO trae costo, margen ni la nota
+ *  interna del renglón —- y las mermas ni siquiera viven en esta tabla (0074, `order_waste`). */
+export type PayItem = { id: string; name: string; qty: number; unitPrice: number; subtotal: number };
 
 export function PayCheckout({
   token, businessName, contactName, code, total, balance, payStatus,
   branchEnabled, transferEnabled, cardEnabled, branches, accounts, hasPending, mpResult,
+  items, discount, discountPct, discountNote, taxRate, promoUrl, promoPlacement,
 }: {
   token: string;
   businessName: string;
@@ -27,8 +34,17 @@ export function PayCheckout({
   accounts: BankAccount[];
   hasPending: boolean;
   mpResult?: "success" | "pending" | "failure" | null;
+  items: PayItem[];
+  discount: number;
+  discountPct: number | null;
+  discountNote: string | null;
+  taxRate: number; // % de IVA congelado en el pedido; 0 = no lleva
+  promoUrl: string | null;
+  promoPlacement: PayPromoPlacement;
 }) {
   const paid = payStatus === "paid";
+  const promo = promoUrl && promoPlacement !== "off" ? promoUrl : null;
+  const [showPromo, setShowPromo] = useState(promoPlacement === "popup" && !!promo);
   const methods = ([
     branchEnabled ? "branch" : null,
     transferEnabled ? "transfer" : null,
@@ -52,6 +68,8 @@ export function PayCheckout({
           <div style={{ fontSize: 34, fontWeight: 900, marginTop: 2 }}>{money(paid ? total : balance)}</div>
           {balance < total && !paid && <div className="muted t-xs" style={{ marginTop: 2 }}>Total {money(total)}</div>}
         </div>
+
+        <ItemsBreakdown items={items} total={total} discount={discount} discountPct={discountPct} discountNote={discountNote} taxRate={taxRate} />
 
         {paid ? (
           <Banner tone="ok" icon="check" title="Este pedido ya está pagado" text="¡Gracias! No necesitas hacer nada más." />
@@ -85,7 +103,89 @@ export function PayCheckout({
           </>
         )}
 
+        {promo && promoPlacement === "below" && (
+          <div style={{ marginTop: 18, borderRadius: 16, overflow: "hidden", border: "1px solid var(--border)", background: "var(--surface)" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={promo} alt="" style={{ display: "block", width: "100%", height: "auto" }} />
+          </div>
+        )}
+
         <div className="muted t-xs" style={{ textAlign: "center", marginTop: 24 }}>Pago seguro · Hiraticket</div>
+      </div>
+
+      {promo && showPromo && <PromoPopup url={promo} onClose={() => setShowPromo(false)} />}
+    </div>
+  );
+}
+
+/** Desglose del pedido. El Total siempre es el del pedido (la cifra que se cobra); el IVA se deriva
+ *  de esa cifra —- igual que en el drawer interno —- para que las líneas siempre sumen exacto aunque
+ *  algún ajuste viejo no cuadre al centavo. Subtotal y descuento solo salen si hay algo que explicar. */
+function ItemsBreakdown({ items, total, discount, discountPct, discountNote, taxRate }: {
+  items: PayItem[]; total: number; discount: number; discountPct: number | null; discountNote: string | null; taxRate: number;
+}) {
+  if (items.length === 0) return null;
+  const base = items.reduce((s, it) => s + it.subtotal, 0);
+  const disc = Math.min(base, Math.max(0, discount || 0));
+  const tax = taxRate > 0 ? Math.max(0, total - (base - disc)) : 0;
+  const showSummary = taxRate > 0 || disc > 0;
+
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 16, padding: "14px 16px", marginBottom: 16 }}>
+      <div className="t-xs muted" style={{ textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Detalle del pedido</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {items.map((it) => (
+          <div key={it.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <span style={{ display: "block", fontWeight: 600, fontSize: 13.5, wordBreak: "break-word" }}>{it.name}</span>
+              {it.qty !== 1 && <span className="t-xs muted">{it.qty} × {amount(it.unitPrice)}</span>}
+            </span>
+            <span className="mono" style={{ fontSize: 13.5, flex: "none" }}>{amount(it.subtotal)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gap: 4, borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 10 }}>
+        {showSummary && (
+          <div style={{ display: "flex", gap: 10 }}><span className="grow t-sm muted">Subtotal</span><span className="mono t-sm">{amount(base)}</span></div>
+        )}
+        {disc > 0 && (
+          <div style={{ display: "flex", gap: 10 }}>
+            <span className="grow t-sm" style={{ color: "var(--green)" }}>Descuento{discountPct != null ? ` ${discountPct}%` : ""}{discountNote ? ` — ${discountNote}` : ""}</span>
+            <span className="mono t-sm" style={{ color: "var(--green)" }}>−{amount(disc)}</span>
+          </div>
+        )}
+        {taxRate > 0 && (
+          <div style={{ display: "flex", gap: 10 }}><span className="grow t-sm muted">IVA {taxRate}%</span><span className="mono t-sm">{amount(tax)}</span></div>
+        )}
+        <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+          <span className="grow" style={{ fontWeight: 700, fontSize: 14 }}>Total</span>
+          <span className="mono" style={{ fontWeight: 800, fontSize: 16 }}>{amount(total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Imagen promocional en ventana emergente. Se cierra con la X, tocando fuera o con Escape —- nunca
+ *  puede dejar al cliente atorado sin poder pagar. La imagen se limita a la pantalla (nada de
+ *  desbordarse en un teléfono): ancho al 100 % del contenedor y alto tope 78dvh. */
+function PromoPopup({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div onClick={onClose} role="dialog" aria-modal="true"
+      style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "min(520px, 100%)", maxHeight: "90dvh" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="" style={{ display: "block", width: "100%", maxHeight: "78dvh", objectFit: "contain", borderRadius: 14 }} />
+        <button onClick={onClose} aria-label="Cerrar"
+          style={{ position: "absolute", top: 8, right: 8, width: 32, height: 32, borderRadius: 999, border: "none", cursor: "pointer",
+            background: "rgba(0,0,0,.6)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon name="x" size={17} />
+        </button>
       </div>
     </div>
   );

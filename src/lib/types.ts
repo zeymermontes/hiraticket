@@ -50,7 +50,14 @@ export interface Business {
   /** Si esa pregunta está encendida (0076). false = nunca preguntar (un flujo que ya haya
    *  decidido por adelantado sigue aplicando igual). */
   confirm_payment_enabled?: boolean;
+  /** Imagen promocional del link de pago (0080): URL pública en el bucket 'media'. */
+  pay_promo_url?: string | null;
+  /** Dónde la ve el cliente: 'off' no se muestra, 'below' debajo del ticket, 'popup' al abrir. */
+  pay_promo_placement?: PayPromoPlacement;
 }
+
+/** Dónde aparece la imagen promocional en el link de pago (0080). */
+export type PayPromoPlacement = "off" | "below" | "popup";
 
 export interface OrderRow {
   id: string;

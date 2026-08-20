@@ -77,12 +77,13 @@ export async function setCustomFields(businessId: string, fields: string[]) {
   revalidateAll();
 }
 
-import type { Branch, BankAccount } from "@/lib/types";
+import type { Branch, BankAccount, PayPromoPlacement } from "@/lib/types";
 
-/** Update the customer-payment config (which methods are offered + branch/account lists). */
+/** Update the customer-payment config (which methods are offered + branch/account lists, and the
+ *  promo image shown on the payment link). */
 export async function updatePaymentConfig(
   businessId: string,
-  patch: { pay_branch_enabled?: boolean; pay_transfer_enabled?: boolean; branches?: Branch[]; bank_accounts?: BankAccount[] },
+  patch: { pay_branch_enabled?: boolean; pay_transfer_enabled?: boolean; branches?: Branch[]; bank_accounts?: BankAccount[]; pay_promo_url?: string | null; pay_promo_placement?: PayPromoPlacement },
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const { data, error } = await supabase.from("businesses").update(patch).eq("id", businessId).select("id");
