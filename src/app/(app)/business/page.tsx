@@ -40,7 +40,7 @@ export default async function BusinessPage() {
       invoiceAddTax={business.invoice_add_tax ?? true}
       invoiceTaxRate={business.invoice_tax_rate ?? 16}
       manualMarginPct={business.manual_margin_pct ?? 50}
-      payPromoUrl={business.pay_promo_url ?? null}
+      payPromoImages={business.pay_promo_images ?? []}
       payPromoPlacement={business.pay_promo_placement ?? "off"}
     />
   );

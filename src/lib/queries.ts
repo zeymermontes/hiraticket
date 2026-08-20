@@ -27,10 +27,10 @@ async function _getMyBusiness(): Promise<Business | null> {
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
   let { data, error } = await supabase
-    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id, confirm_payment_enabled, pay_promo_url, pay_promo_placement`)
+    .from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id, confirm_payment_enabled, pay_promo_images, pay_promo_placement`)
     .eq("id", bizId).maybeSingle();
   if (error) {
-    // pay_promo_* (0080) puede no existir aún — el resto de la cascada sigue sin ellas.
+    // pay_promo_* (0080/0081) puede no existir aún — el resto de la cascada sigue sin ellas.
     const rB = await supabase.from("businesses").select(`${BASE}, product_stages, show_typing, mode, allow_groups, timezone, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled, invoice_add_tax, invoice_tax_rate, manual_margin_pct, done_from_stage_id, confirm_payment_stage_id, confirm_payment_enabled`).eq("id", bizId).maybeSingle();
     if (!rB.error) { data = rB.data as typeof data; error = null; }
   }
@@ -76,7 +76,7 @@ async function _getMyBusiness(): Promise<Business | null> {
     invoice_tax_rate: Number(d.invoice_tax_rate ?? 16),
     manual_margin_pct: Number(d.manual_margin_pct ?? 50),
     confirm_payment_enabled: (d.confirm_payment_enabled as boolean) ?? true,
-    pay_promo_url: (d.pay_promo_url as string | null) ?? null,
+    pay_promo_images: Array.isArray(d.pay_promo_images) ? (d.pay_promo_images as Business["pay_promo_images"]) : [],
     pay_promo_placement: d.pay_promo_placement === "below" || d.pay_promo_placement === "popup" ? d.pay_promo_placement : "off",
   } as Business;
 }

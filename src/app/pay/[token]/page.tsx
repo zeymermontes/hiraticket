@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { PayCheckout, type PayItem } from "@/components/PayCheckout";
-import type { Branch, BankAccount, PayPromoPlacement } from "@/lib/types";
+import type { Branch, BankAccount, PayPromo, PayPromoPlacement } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export default async function PayPage({ params, searchParams }: { params: Promis
 
   const BIZ_BASE = "name, branches, bank_accounts, pay_branch_enabled, pay_transfer_enabled";
   const [bizRes, { data: pays }, { data: proofs }, { data: items }, mpCfg] = await Promise.all([
-    admin.from("businesses").select(`${BIZ_BASE}, pay_promo_url, pay_promo_placement`).eq("id", order.business_id).maybeSingle(),
+    admin.from("businesses").select(`${BIZ_BASE}, pay_promo_images, pay_promo_placement`).eq("id", order.business_id).maybeSingle(),
     admin.from("payments").select("amount").eq("order_id", order.id),
     admin.from("payment_proofs").select("id, status, created_at").eq("order_id", order.id).eq("status", "pending"),
     // Solo lo que el cliente puede ver: nombre, cantidad y precio. Las mermas (0074) viven en
@@ -32,7 +32,7 @@ export default async function PayPage({ params, searchParams }: { params: Promis
     admin.from("order_items").select("id, name, qty, unit_price, subtotal").eq("order_id", order.id),
     getPluginRuntimeConfig(order.business_id as string, "mercadopago"),
   ]);
-  // pay_promo_* (0080) puede no estar aplicada — sin ellas, simplemente no hay promo.
+  // pay_promo_* (0080/0081) puede no estar aplicada — sin ellas, simplemente no hay anuncios.
   const biz = (bizRes.data ?? (await admin.from("businesses").select(BIZ_BASE).eq("id", order.business_id).maybeSingle()).data) as Record<string, unknown> | null;
 
   const paid = (pays ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -46,7 +46,12 @@ export default async function PayPage({ params, searchParams }: { params: Promis
     unitPrice: Number(it.unit_price) || 0,
     subtotal: Number(it.subtotal) || 0,
   }));
-  const promoUrl = (biz?.pay_promo_url as string | null) ?? null;
+  // Un anuncio al azar por visita. El sorteo va aquí, en el servidor: la página es force-dynamic,
+  // así que cada apertura (y cada recarga) vuelve a rendirla y toca otro. Hacerlo en el cliente
+  // habría chocado con el HTML del servidor en la hidratación.
+  const promoPool = (Array.isArray(biz?.pay_promo_images) ? (biz.pay_promo_images as PayPromo[]) : [])
+    .filter((p) => p && typeof p.url === "string" && p.url.trim());
+  const promoUrl = promoPool.length ? promoPool[Math.floor(Math.random() * promoPool.length)].url : null;
   const promoPlacementRaw = biz?.pay_promo_placement as string | undefined;
 
   return (
