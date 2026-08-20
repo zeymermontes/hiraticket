@@ -9,7 +9,7 @@ import { WaTemplateModal } from "@/components/chat/WaTemplateModal";
 import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
-import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts } from "@/lib/chat";
+import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts, StoryQuote } from "@/lib/chat";
 // Desde @/lib/mediaLimits y NO desde @/lib/chat: chat.ts arrastra server-only/next/headers, y un
 // import de VALOR desde este componente de cliente los metería en el bundle del navegador. El
 // `import type` de arriba no lo hace porque se borra al compilar.
@@ -598,6 +598,56 @@ function QuotedBlock({ m }: { m: ChatMessage }) {
   const { lang } = useApp();
   const label = m.deleted ? "…" : (m.body || (m.type !== "text" ? "📎 " + m.type : ""));
   return <div className="truncate" title={lang === "es" ? "Ir al mensaje" : "Go to message"} onClick={(e) => { e.stopPropagation(); jumpToMessage(m.id); }} style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240, cursor: "pointer" }}>{label}</div>;
+}
+
+/** La historia (status) a la que contesta el mensaje, si el worker la guardó (ver `withStoryJSON`). */
+function storyOf(m: ChatMessage): StoryQuote | null {
+  const st = (m.meta as { story?: StoryQuote } | null)?.story;
+  return st && typeof st === "object" && typeof st.type === "string" ? st : null;
+}
+
+/**
+ * Cita de una respuesta a HISTORIA.
+ *
+ * Una historia no es un mensaje del hilo —- WhatsApp no las manda al chat y nosotros no las
+ * guardamos —- así que no hay a qué saltar: esta cita no navega, muestra. Sin ella el agente leía
+ * "me encanta 😍" sin la menor idea de a qué le estaban contestando.
+ *
+ * La miniatura viene en el propio meta (data URI), así que se pinta aunque la historia ya haya
+ * caducado en WhatsApp. La copia completa solo existe si se alcanzó a bajar dentro de las 24 h.
+ */
+function StoryQuoteBlock({ s, out }: { s: StoryQuote; out: boolean }) {
+  const { lang } = useApp();
+  const title = out
+    ? (lang === "es" ? "Respondiste a su historia" : "You replied to their story")
+    : (lang === "es" ? "Respondió a tu historia" : "Replied to your story");
+  const preview = s.thumb || s.url || null;
+  const inner = (
+    <>
+      {preview && s.type !== "text" && (
+        <span style={{ width: 38, height: 50, borderRadius: 5, overflow: "hidden", flex: "none", background: "rgba(0,0,0,.12)", display: "block" }}>
+          <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        </span>
+      )}
+      <span style={{ minWidth: 0 }}>
+        <span className="row gap-1" style={{ alignItems: "center", fontWeight: 700, fontSize: 11.5, color: "var(--brand-700)" }}>
+          <Icon name="sparkles" size={11} />{title}
+        </span>
+        <span className="truncate" style={{ display: "block", fontSize: 12, opacity: 0.85 }}>
+          {s.caption || (s.type === "image" ? (lang === "es" ? "Foto" : "Photo") : s.type === "video" ? (lang === "es" ? "Video" : "Video") : "—")}
+        </span>
+        {s.type !== "text" && !s.url && (
+          <span className="t-xs muted" style={{ display: "block" }}>{lang === "es" ? "La historia ya no está disponible" : "The story is no longer available"}</span>
+        )}
+      </span>
+    </>
+  );
+  const style: React.CSSProperties = { borderLeft: "3px solid var(--brand)", padding: "4px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, maxWidth: 240, display: "flex", gap: 8, alignItems: "center", textDecoration: "none", color: "inherit" };
+  // Con copia completa se abre en pestaña nueva; sin ella no hay nada que abrir y no se finge un
+  // clic que no lleva a ningún lado.
+  return s.url
+    ? <a href={s.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title={lang === "es" ? "Ver la historia" : "Open the story"} style={{ ...style, cursor: "zoom-in" }}>{inner}</a>
+    : <div style={style}>{inner}</div>;
 }
 
 function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopied }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void; onCopied?: (r: "file" | "link" | null) => void }) {
@@ -2030,6 +2080,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
                 {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
+                {storyOf(m) && <StoryQuoteBlock s={storyOf(m)!} out={out} />}
                 {m.deleted ? (
                   <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
                 ) : m.type === "location" ? <LocationBlock m={m} />

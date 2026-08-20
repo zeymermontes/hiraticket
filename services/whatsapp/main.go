@@ -1617,6 +1617,59 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		}
 	}
 
+	// Respuesta a una HISTORIA (status). Llega como un mensaje normal dentro del chat del contacto,
+	// pero su ContextInfo apunta a status@broadcast y trae la historia citada adentro. Sin esto el
+	// agente veía un "me encanta 😍" suelto, sin manera de saber a qué le estaban contestando.
+	//
+	// Las historias no se ingieren como mensajes (status@broadcast se ignora como chat), así que no
+	// hay fila a la cual apuntar con reply_to: la cita viaja dentro del propio meta del mensaje.
+	if ci != nil && strings.HasPrefix(ci.GetRemoteJID(), "status@broadcast") {
+		story := map[string]interface{}{"type": "text"}
+		if q := ci.GetQuotedMessage(); q != nil {
+			switch {
+			case q.GetImageMessage() != nil:
+				story["type"] = "image"
+				story["caption"] = q.GetImageMessage().GetCaption()
+			case q.GetVideoMessage() != nil:
+				story["type"] = "video"
+				story["caption"] = q.GetVideoMessage().GetCaption()
+			default:
+				// Historia de solo texto (la de fondo de color): el texto ES la historia.
+				story["caption"] = firstNonEmpty(q.GetConversation(), q.GetExtendedTextMessage().GetText())
+			}
+			// La historia se baja bajo el MISMO tope de memoria que cualquier adjunto, y una pesada
+			// se deja pasar: saber que respondieron a la historia ya vale por sí solo, y no vale
+			// trabar el worker por un archivo que quizá nadie abra. Ojo: una historia caduca a las
+			// 24 h en WhatsApp, así que si no se baja ahora ya no hay segunda oportunidad —- por eso
+			// no se difiere con un puntero como el resto de la media.
+			if dl, _, size := downloadableOf(q); dl != nil && size > 0 && size < bigMediaBytes {
+				m.withMedia(ctx, fmt.Sprintf("historia citada %s (%d bytes)", waID, size), func() {
+					data, derr := client.DownloadAny(ctx, q)
+					if derr != nil || len(data) == 0 {
+						m.log.Errorf("story download: %v", derr)
+						return
+					}
+					smime := firstNonEmpty(q.GetImageMessage().GetMimetype(), q.GetVideoMessage().GetMimetype(), "application/octet-stream")
+					if p, uerr := m.uploadMedia(ctx, fmt.Sprintf("%s/story/%s.%s", s.BusinessID, waID, extFromMime(smime)), data, smime); uerr == nil {
+						story["path"] = p
+						story["mime"] = smime
+					} else {
+						m.log.Errorf("story upload: %v", uerr)
+					}
+					// Miniatura propia para la cita: se pinta sin tener que firmar nada, y si la
+					// subida falló sigue siendo lo único que queda de la historia.
+					if story["type"] == "image" {
+						if t := makeThumb(data); t != "" {
+							story["thumb"] = t
+						}
+					}
+				})
+			}
+		}
+		meta = withStoryJSON(meta, story)
+		m.log.Infof("respuesta a historia %s (tipo %v)", waID, story["type"])
+	}
+
 	m.exec(ctx, `INSERT INTO messages (business_id, conversation_id, direction, type, body, state, wa_id, media_url, media_mime, media_name, forwarded, meta, reply_to, sender_name, sender_jid, media_ptr, media_size)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		s.BusinessID, convID, dir, mtype, encryptBody(s.BusinessID, body), state, waID, nullIf(mediaURL), nullIf(mmime), nullIf(mname), forwarded, nullIf(meta), replyTo, nullIf(senderName), nullIf(senderJID), mediaPtr, mediaSize)
@@ -1963,6 +2016,17 @@ func nullIf(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// withStoryJSON mete la historia citada en un `meta` ya serializado, sin pisar lo que traía
+// (una respuesta a historia puede ser a su vez una foto, con su propio w/h y miniatura).
+func withStoryJSON(metaJSON string, story map[string]interface{}) string {
+	m := map[string]interface{}{}
+	if metaJSON != "" {
+		_ = json.Unmarshal([]byte(metaJSON), &m)
+	}
+	m["story"] = story
+	return jsonStr(m)
 }
 
 func jsonStr(v interface{}) string {

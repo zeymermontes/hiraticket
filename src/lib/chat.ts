@@ -27,9 +27,16 @@ function mediaPath(u: string | null): string | null {
  * un "Ver foto" y hay que hacer clic para verla. Los 500 KB de miniaturas reemplazan varios MB de
  * originales, así que el cambio sale ganando de sobra.
  */
+/** La historia citada de una respuesta a status: se guarda en meta, no en media_url, así que se
+ *  firma aparte (ver `withStoryJSON` en el worker). */
+function storyOf(m: ChatMessage): (StoryQuote & { path?: string }) | null {
+  const st = (m.meta as { story?: StoryQuote & { path?: string } } | null)?.story;
+  return st && typeof st === "object" ? st : null;
+}
+
 /** Replace media_url paths with short-lived signed URLs (private 'media' bucket). */
 async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
-  const paths = [...new Set(messages.map((m) => mediaPath(m.media_url)).filter((p): p is string => !!p))];
+  const paths = [...new Set(messages.flatMap((m) => [mediaPath(m.media_url), mediaPath(storyOf(m)?.path ?? null)]).filter((p): p is string => !!p))];
   if (paths.length === 0) return messages;
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   try {
@@ -37,7 +44,13 @@ async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
     const { data } = await admin.storage.from("media").createSignedUrls(paths, 60 * 60 * 24 * 7);
     const signed = new Map<string, string>();
     (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
-    return messages.map((m) => {
+    return messages.map((m0) => {
+      let m = m0;
+      // La historia citada estrena `url` firmada; se deja `path` para la llave de caché, igual que
+      // con la media normal.
+      const st = storyOf(m);
+      const sp = mediaPath(st?.path ?? null);
+      if (st && sp && signed.has(sp)) m = { ...m, meta: { ...(m.meta ?? {}), story: { ...st, url: signed.get(sp)! } } };
       const p = mediaPath(m.media_url);
       // media_path viaja junto con la URL firmada: es la identidad estable del archivo y es lo que
       // el navegador usa como llave de caché, porque el token de la firma cambia en cada llamada.
@@ -75,6 +88,18 @@ export interface ConvListItem {
   typing_until: string | null; // customer is typing while this is in the future
   is_group: boolean; // WhatsApp group chat (chat-only — no orders)
   muted: boolean; // "stop listening" — incoming messages are dropped by the worker
+}
+
+/** Historia (status) citada por una respuesta. La guarda el worker en `meta.story`; las historias
+ *  no se ingieren como mensajes, así que no hay fila a la cual apuntar con `reply_to`. */
+export interface StoryQuote {
+  type: "image" | "video" | "text";
+  caption?: string;
+  /** Miniatura propia en data URI — se pinta sin firmar nada. */
+  thumb?: string;
+  /** URL firmada de la historia completa (solo si se alcanzó a bajar antes de que caducara). */
+  url?: string;
+  mime?: string;
 }
 
 export interface ChatMessage {
