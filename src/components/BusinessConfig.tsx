@@ -6,6 +6,8 @@ import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type PillColor, tagColor } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import { optimizeForWeb, fmtBytes } from "@/lib/imageOptimize";
+import { uploadWithProgress } from "@/lib/storageUpload";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { ReorderList } from "@/components/ReorderList";
@@ -41,6 +43,23 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
       )}
     </span>
   );
+}
+
+/** Tope del ARCHIVO ORIGINAL. Lo que se guarda casi siempre pesa mucho menos: se reencoda a WebP
+ *  antes de subir (ver `optimizeForWeb`). */
+const PROMO_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Una imagen en curso: se ve su fila con el avance mientras se optimiza y se sube. */
+interface PromoJob {
+  id: string;
+  name: string;
+  preview: string; // object URL del archivo elegido
+  stage: "wait" | "opt" | "up" | "done" | "err";
+  pct: number; // avance de la SUBIDA (0-100)
+  before: number; // bytes del original
+  after: number; // bytes de lo que se subió
+  converted?: boolean;
+  error?: string;
 }
 
 const TIMEZONES = [
@@ -100,7 +119,12 @@ export function BusinessConfig({
   const [promoPlacement, setPromoPlacement] = useState<PayPromoPlacement>(payPromoPlacement);
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoErr, setPromoErr] = useState<string | null>(null);
+  const [promoJobs, setPromoJobs] = useState<PromoJob[]>([]);
   const promoInput = useRef<HTMLInputElement>(null);
+  const promoJobsRef = useRef<PromoJob[]>([]);
+  promoJobsRef.current = promoJobs;
+  // Las vistas previas son object URLs: si el componente se va a media subida hay que soltarlas.
+  useEffect(() => () => { promoJobsRef.current.forEach((j) => URL.revokeObjectURL(j.preview)); }, []);
   // Se avisa si el guardado falla en vez de dejar el botón "guardado" a mentiras (p. ej. las
   // migraciones 0080/0081 sin correr: la columna no existe y Supabase devuelve error).
   const savePromo = (patch: { pay_promo_images?: PayPromo[]; pay_promo_placement?: PayPromoPlacement }) =>
@@ -108,32 +132,61 @@ export function BusinessConfig({
       setPromoErr(r.ok ? null : (lang === "es" ? "No se pudo guardar el cambio." : "Couldn't save the change."));
     }));
   const setPlacement = (p: PayPromoPlacement) => { setPromoPlacement(p); savePromo({ pay_promo_placement: p }); };
-  /** Sube una o varias imágenes de golpe y las agrega a la galería. Las que no pasan el filtro se
-   *  saltan con aviso: una foto pesada no debe tumbar a las demás del mismo intento. */
+  /** Sube una o varias imágenes de golpe y las agrega a la galería. Cada archivo lleva su propia
+   *  fila con avance, y las que fallan se quedan ahí con el motivo: una foto rota o pesada no debe
+   *  tumbar a las demás del mismo intento ni desaparecer sin explicación. */
   async function uploadPromos(files: File[]) {
-    setPromoErr(null); setPromoBusy(true);
+    setPromoErr(null);
+    setPromoBusy(true);
+    // Las filas se crean todas de una para que se vea la cola completa desde el primer momento.
+    const jobs: PromoJob[] = files.map((f) => ({
+      id: rid(), name: f.name, preview: URL.createObjectURL(f), stage: "wait", pct: 0, before: f.size, after: 0,
+    }));
+    setPromoJobs((prev) => [...prev, ...jobs]);
+    const patchJob = (id: string, p: Partial<PromoJob>) => setPromoJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...p } : j)));
+
     try {
       const supabase = createClient();
       const added: PayPromo[] = [];
-      let skipped = 0;
-      for (const file of files) {
-        if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { skipped++; continue; }
-        const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
-        const path = `promo/${businessId}-${rid()}.${ext}`;
-        const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-        if (error) { skipped++; continue; }
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const job = jobs[i];
+        if (!file.type.startsWith("image/")) { patchJob(job.id, { stage: "err", pct: 100, error: lang === "es" ? "No es una imagen." : "Not an image." }); continue; }
+        if (file.size > PROMO_MAX_BYTES) { patchJob(job.id, { stage: "err", pct: 100, error: lang === "es" ? `Pesa más de ${fmtBytes(PROMO_MAX_BYTES)}.` : `Over ${fmtBytes(PROMO_MAX_BYTES)}.` }); continue; }
+
+        patchJob(job.id, { stage: "opt" });
+        const opt = await optimizeForWeb(file);
+        patchJob(job.id, { stage: "up", pct: 0, after: opt.blob.size });
+
+        const path = `promo/${businessId}-${rid()}.${opt.ext}`;
+        const r = await uploadWithProgress(supabase, "media", path, opt.blob, opt.type, (pct) => patchJob(job.id, { pct }));
+        if (!r.ok) { patchJob(job.id, { stage: "err", pct: 100, error: lang === "es" ? "No se pudo subir." : "Upload failed." }); continue; }
+
+        patchJob(job.id, { stage: "done", pct: 100, converted: opt.converted });
         added.push({ id: rid(), url: supabase.storage.from("media").getPublicUrl(path).data.publicUrl });
       }
-      if (skipped) setPromoErr(lang === "es" ? `${skipped} archivo(s) no se subieron: deben ser imágenes de menos de 5 MB.` : `${skipped} file(s) skipped: images under 5 MB only.`);
-      if (!added.length) return;
-      const next = [...promos, ...added];
-      setPromos(next);
-      // Subir un anuncio y dejarlo apagado no tendría sentido: si estaba en 'off', se enciende.
-      const place: PayPromoPlacement = promoPlacement === "off" ? "below" : promoPlacement;
-      setPromoPlacement(place);
-      savePromo({ pay_promo_images: next, pay_promo_placement: place });
+
+      if (added.length) {
+        const next = [...promos, ...added];
+        setPromos(next);
+        // Subir un anuncio y dejarlo apagado no tendría sentido: si estaba en 'off', se enciende.
+        const place: PayPromoPlacement = promoPlacement === "off" ? "below" : promoPlacement;
+        setPromoPlacement(place);
+        savePromo({ pay_promo_images: next, pay_promo_placement: place });
+      }
+      // Las que salieron bien ya están en la galería de arriba: su fila se va sola tras un momento
+      // (el suficiente para alcanzar a leer cuánto se ahorró). Las que fallaron se quedan.
+      setTimeout(() => setPromoJobs((prev) => prev.filter((j) => {
+        const keep = j.stage === "err" || !jobs.some((x) => x.id === j.id);
+        if (!keep) URL.revokeObjectURL(j.preview);
+        return keep;
+      })), 2500);
     } finally { setPromoBusy(false); }
   }
+  const dismissJob = (id: string) => setPromoJobs((prev) => prev.filter((j) => {
+    if (j.id === id) URL.revokeObjectURL(j.preview);
+    return j.id !== id;
+  }));
   /** Quitar el último anuncio apaga la promo: no queda nada que mostrar. */
   const removePromo = (id: string) => {
     const next = promos.filter((p) => p.id !== id);
@@ -379,7 +432,37 @@ export function BusinessConfig({
                 <span className="t-xs">{promoBusy ? (lang === "es" ? "Subiendo…" : "Uploading…") : (lang === "es" ? "Agregar anuncio" : "Add ad")}</span>
               </button>
             </div>
-            <span className="t-xs muted">{lang === "es" ? "JPG o PNG, hasta 5 MB cada una. Puedes elegir varias a la vez." : "JPG or PNG, up to 5 MB each. You can pick several at once."}</span>
+            {/* Una fila por imagen en curso: se ve en qué va cada una, no solo "subiendo…". */}
+            {promoJobs.length > 0 && (
+              <div className="col gap-2">
+                {promoJobs.map((j) => {
+                  const err = j.stage === "err";
+                  // La optimización no da porcentaje (es una sola pasada de canvas), así que ocupa
+                  // el primer tramo fijo de la barra y la subida rellena el resto.
+                  const width = err ? 100 : j.stage === "wait" ? 0 : j.stage === "opt" ? 12 : j.stage === "done" ? 100 : 12 + Math.round(j.pct * 0.88);
+                  const label = err ? j.error
+                    : j.stage === "wait" ? (lang === "es" ? "En espera" : "Queued")
+                    : j.stage === "opt" ? (lang === "es" ? "Optimizando…" : "Optimizing…")
+                    : j.stage === "up" ? (lang === "es" ? `Subiendo… ${j.pct}%` : `Uploading… ${j.pct}%`)
+                    : j.converted ? `${fmtBytes(j.before)} → ${fmtBytes(j.after)}`
+                    : (lang === "es" ? "Listo" : "Done");
+                  return (
+                    <div key={j.id} className="row gap-2" style={{ alignItems: "center", padding: "8px 10px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                      <img src={j.preview} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: "cover", flex: "none", background: "var(--surface-2)" }} />
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <div className="t-xs truncate" style={{ fontWeight: 600 }}>{j.name}</div>
+                        <div style={{ height: 4, borderRadius: 99, background: "var(--surface-2)", overflow: "hidden", marginTop: 5 }}>
+                          <div style={{ height: "100%", width: `${width}%`, background: err ? "var(--red)" : j.stage === "done" ? "var(--green)" : "var(--brand)", transition: "width .18s linear" }} />
+                        </div>
+                      </div>
+                      <span className="t-xs" style={{ flex: "none", color: err ? "var(--red)" : "var(--text-faint)" }}>{label}</span>
+                      {err && <button className="iconbtn sm" title={lang === "es" ? "Descartar" : "Dismiss"} onClick={() => dismissJob(j.id)}><Icon name="x" size={13} /></button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <span className="t-xs muted">{lang === "es" ? `Imágenes de hasta ${fmtBytes(PROMO_MAX_BYTES)}; se convierten a WebP al subir para que el link cargue rápido. Puedes elegir varias a la vez.` : `Images up to ${fmtBytes(PROMO_MAX_BYTES)}; converted to WebP on upload so the link loads fast. You can pick several at once.`}</span>
             {promoErr && <span className="t-xs" style={{ color: "var(--red)" }}>{promoErr}</span>}
 
             {/* Dónde los ve el cliente. Sin anuncios no hay nada que colocar, así que se desactiva. */}
