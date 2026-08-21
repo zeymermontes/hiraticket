@@ -41,6 +41,33 @@ const themeBoot = `(function(){try{
   document.documentElement.lang=l;
 }catch(e){}})();`;
 
+/**
+ * Deja el hilo del chat pegado abajo ANTES del primer pintado.
+ *
+ * El problema original: el HTML del chat lo pinta el servidor con todos los mensajes, y el
+ * navegador lo pinta desde arriba. El salto al final vivía en un useLayoutEffect —- o sea después
+ * de hidratar React —- y ese hueco se veía como un parpadeo de la parte de arriba del hilo en cada
+ * recarga.
+ *
+ * Vive AQUÍ y no dentro de ChatScreen porque un <script> dentro de un componente cliente se vuelve
+ * a renderizar en cada interacción, y React avisa —- con razón —- de que en cliente nunca se
+ * ejecuta. El layout raíz es un componente de servidor: se escribe una vez y no se toca más.
+ *
+ * Como desde <head> el hilo todavía no existe, se espera con un MutationObserver. Se repinta en
+ * cada mutación porque durante el parseo los mensajes van llegando y la altura crece, pero pasando
+ * por requestAnimationFrame: leer scrollHeight fuerza un cálculo de layout, y hacerlo en cada nodo
+ * insertado de un hilo largo sería peor que el problema. Se suelta en DOMContentLoaded —- de ahí en
+ * adelante manda el useLayoutEffect de ChatScreen.
+ */
+const threadPinBoot = `(function(){
+  var queued=false;
+  var pin=function(){var t=document.getElementById('chat-thread');if(t)t.scrollTop=t.scrollHeight;};
+  var schedule=function(){if(queued)return;queued=true;requestAnimationFrame(function(){queued=false;pin();});};
+  var mo=new MutationObserver(schedule);
+  mo.observe(document.documentElement,{childList:true,subtree:true});
+  document.addEventListener('DOMContentLoaded',function(){pin();mo.disconnect();},{once:true});
+})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -56,6 +83,7 @@ export default function RootLayout({
             decide si las notificaciones existen o no en la mitad de los iPhone. */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
+        <script dangerouslySetInnerHTML={{ __html: threadPinBoot }} />
       </head>
       <body>{children}</body>
     </html>

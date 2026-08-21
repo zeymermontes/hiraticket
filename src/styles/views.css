@@ -560,6 +560,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
      columna implícita: la rejilla volvía a partirse en dos aunque la plantilla dijera `1fr`. Medido
      en un teléfono de 390px daba 133px + 257px. Aquí sí hace falta !important —- es un inline. */
   .chatcol.center { grid-column: 1 / -1 !important; }
+  /* El "Elige una conversación" sobra en un teléfono: sin chat abierto se ve la lista, y con uno
+     abierto se ve el hilo. Dejarlo puesto partía la pantalla en dos filas. Ojo: se apunta a
+     `.chat-pick` y no a `.chatcol.center` a secas, porque el aviso de "WhatsApp desconectado" usa
+     esas mismas clases y ese SÍ tiene que verse. */
+  .chatcol.chat-pick { display: none; }
   /* Los tiradores para redimensionar columnas no tienen sentido sin columnas que redimensionar,
      y encima roban toques en el borde de la pantalla, que es donde se hace el gesto de "atrás". */
   .col-resizer { display: none; }
@@ -737,4 +742,26 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
   /* Un input dentro de una fila flex no baja de su ancho natural salvo que se le permita, y eso
      empujaba los botones de al lado fuera de la pantalla (etapas y áreas en Negocio). */
   .inp-inline, .field { min-width: 0; }
+}
+
+/* Panel del cliente como hoja, en móvil. Reusa el MISMO componente `Workspace` que la columna de
+   escritorio, así que hereda `.ws` (que ya scrollea) y todos sus bloques. */
+@media (max-width: 768px) {
+  .ws-sheet {
+    position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
+    background: var(--bg); padding-top: var(--sa-top);
+    padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom));
+    animation: ht-sheet-up .22s var(--ease-out);
+  }
+  .ws-sheet-head {
+    flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  /* `display: flex` explícito, y no es redundante: más arriba hay un
+     `@media (max-width: 880px) { .chatcol.ctx { display: none } }` que esconde la columna del
+     cliente en pantallas estrechas —- justo lo que queremos para la COLUMNA. Dentro de la hoja ese
+     mismo elemento sí tiene que verse, así que hay que devolverle el display a mano. */
+  .ws-sheet .chatcol.ctx { display: flex; flex: 1; min-height: 0; border-right: none; }
+  /* El tirador de redimensionar no tiene columnas que redimensionar aquí. */
+  .ws-sheet .col-resizer { display: none; }
 }

@@ -121,10 +121,6 @@ function mergeMsgs(a: ChatMessage[], b: ChatMessage[]): ChatMessage[] {
   return [...map.values()].sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
 }
 
-/** Ver el <script> que acompaña al hilo: lo deja pegado abajo antes del primer pintado. */
-const PIN_BOTTOM_JS =
-  "(function(){var p=function(){var t=document.getElementById('chat-thread');if(t)t.scrollTop=t.scrollHeight;};p();document.addEventListener('DOMContentLoaded',p,{once:true});})()";
-
 const _metaCache = new Map<string, LinkMeta>();
 /** Open-Graph preview card for the first link in a message. onReady fires when the card (or its
  *  image) appears so the thread can stay pinned to the bottom instead of "popping". */
@@ -1135,6 +1131,13 @@ export function ChatScreen({
   // completa en vez de mostrar una columna que no cabe.
   const isMobile = useIsMobile();
   const [ctxVisible, setCtxVisible] = useState(true);
+  // El panel del cliente como hoja a pantalla completa en móvil. Antes ese botón abría el 360, y
+  // eso RECORTABA opciones: el 360 es "Historial completo" —- pedidos, historial y notas en
+  // pestañas —- mientras que el panel central trae además el menú de Acciones (transferir, cambiar
+  // estado, etiquetar, crear pedido) y es desde donde se abre el propio 360. En el teléfono hay que
+  // poder hacer lo mismo que en escritorio, no menos.
+  const [wsSheet, setWsSheet] = useState(false);
+  useEffect(() => { setWsSheet(false); }, [detail?.id]);
   const [ctxW, setCtxW] = useState(360);
   const [listW, setListW] = useState(300);
   useEffect(() => {
@@ -1570,17 +1573,37 @@ export function ChatScreen({
       {detail && detailInView ? (
         <>
           {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
-          {/* En móvil el panel del cliente no puede ser una columna, así que el mismo botón abre el
-              360 a pantalla completa —- que ya existía y muestra lo mismo y más. */}
+          {/* En móvil el panel del cliente no cabe como columna: el mismo botón lo abre como hoja
+              a pantalla completa, con TODO lo que tiene en escritorio. */}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected}
-            ctxVisible={ctxVisible}
-            onToggleCtx={isMobile ? () => setShow360(true) : () => setCtxVisible((v) => !v)}
+            ctxVisible={isMobile ? wsSheet : ctxVisible}
+            onToggleCtx={isMobile ? () => setWsSheet((v) => !v) : () => setCtxVisible((v) => !v)}
             onBack={closeConv}
             businessId={businessId} meId={meId} onAccepted={acceptedToMine} />
+          {isMobile && wsSheet && (
+            <div className="ws-sheet" role="dialog" aria-modal="true">
+              <div className="ws-sheet-head">
+                <button className="iconbtn" onClick={() => setWsSheet(false)} aria-label={lang === "es" ? "Volver al chat" : "Back to chat"}><Icon name="arrowl" size={20} /></button>
+                <strong className="grow truncate">{detail.contact?.name}</strong>
+              </div>
+              {/* El MISMO componente que la columna de escritorio, no una copia: así una función
+                  nueva sale en los dos lados sin trabajo extra (skill feature-surfaces). El
+                  redimensionador se anula —- en móvil no hay columnas que redimensionar. */}
+              <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products}
+                meId={meId} businessId={businessId} connected={connected} invoice={invoice}
+                shipping={shipping} invoicing={invoicing} onResizeStart={() => {}}
+                onOpen360={() => { setWsSheet(false); setShow360(true); }}
+                onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />
+            </div>
+          )}
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} onClose={() => setShow360(false)} />}
         </>
       ) : (
-        <div className="chatcol center" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
+        /* `chat-pick`: en móvil esto NO se pinta. La rejilla es de una columna, así que el
+           placeholder no se pone "al lado" de la lista —- se pone DEBAJO, en una segunda fila, y la
+           pantalla quedaba partida en dos: media lista arriba y "Elige una conversación" abajo.
+           Sin chat abierto, la lista ES la pantalla. */
+        <div className="chatcol center chat-pick" style={{ gridColumn: "2 / -1", background: "var(--bg)" }}>
           <div className="empty">
             <div className="empty-art"><Icon name="chat" /></div>
             <h3>{lang === "es" ? "Elige una conversación" : "Pick a conversation"}</h3>
@@ -2067,6 +2090,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         )}
       </div>
 
+      {/* El `id` no es decorativo: lo usa el script de arranque del layout raíz para dejar el hilo
+          pegado abajo ANTES del primer pintado, sin esperar a que hidrate React. Vive allá y no
+          aquí porque un <script> dentro de un componente cliente se vuelve a renderizar en cada
+          interacción, y React protesta —- correctamente —- de que en cliente nunca se ejecuta.
+          Ver `threadPinBoot` en src/app/layout.tsx. */}
       <div id="chat-thread" className="thread thread-wa-tint scroll" ref={endRef} onScroll={onThreadScroll}>
         {loadingOlder && <div className="t-xs muted" style={{ textAlign: "center", padding: "8px 0" }}>{lang === "es" ? "Cargando mensajes…" : "Loading messages…"}</div>}
         {rows.map((row, i) => {
@@ -2170,15 +2198,6 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           </div>
         )}
       </div>
-      {/* El HTML del servidor se pinta ANTES de que hidrate React, y el navegador lo pinta desde
-          arriba: por eso al recargar se veía un instante la parte de arriba del hilo y luego
-          saltaba al final. Este script corre mientras el navegador parsea (el hilo ya está
-          completo justo arriba) y deja el scroll abajo antes del primer pintado. Se repite en
-          DOMContentLoaded porque durante el parseo el composer todavía no existe y la altura del
-          hilo aún no es la definitiva. React no reejecuta scripts en el render de cliente, así
-          que esto solo actúa en la carga del servidor —- los cambios de chat los sigue
-          resolviendo el useLayoutEffect de abajo. */}
-      <script dangerouslySetInnerHTML={{ __html: PIN_BOTTOM_JS }} />
 
       <div className="composer">
         {waBlocked && (
