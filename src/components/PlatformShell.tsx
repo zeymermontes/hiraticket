@@ -25,7 +25,7 @@ function Header() {
 export function PlatformShell({ children }: { children: React.ReactNode }) {
   return (
     <AppProvider>
-      <div className="main" style={{ height: "100vh" }}>
+      <div className="main" style={{ height: "100dvh" }}>
         <Header />
         {children}
       </div>

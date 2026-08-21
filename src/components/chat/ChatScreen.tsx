@@ -2008,7 +2008,17 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
 
   if (!connected) {
     return (
-      <div className="chatcol center" style={{ background: "var(--bg)" }}>
+      <div className="chatcol center" style={{ background: "var(--bg)", position: "relative" }}>
+        {/* La flecha de volver TIENE que estar también aquí. Esta pantalla sustituye al hilo
+            entero —- encabezado incluido —- y en móvil la lista está escondida porque hay un chat
+            abierto: sin esto el agente se quedaba atrapado, sin ninguna forma de regresar. En
+            escritorio nunca se notó porque la lista siempre está a la vista. */}
+        {onBack && (
+          <button className="iconbtn only-mobile" onClick={onBack} aria-label={lang === "es" ? "Volver a los chats" : "Back to chats"}
+            style={{ position: "absolute", top: 10, left: 8, zIndex: 2 }}>
+            <Icon name="arrowl" size={20} />
+          </button>
+        )}
         <div className="empty">
           <div className="empty-art" style={{ background: "var(--red-bg)", borderColor: "var(--red-bd)", color: "var(--red)" }}><Icon name="wifioff" /></div>
           <h3>{lang === "es" ? "WhatsApp desconectado" : "WhatsApp disconnected"}</h3>
@@ -2033,7 +2043,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         <div className="grow" style={{ minWidth: 0 }}>
           <div className="row gap-2">
             <span style={{ fontWeight: 700 }} className="truncate">{detail.contact?.name}</span>
-            <span className="pill pill-green" style={{ height: 18, padding: "0 6px" }}><Icon name="whatsapp" size={11} />WhatsApp</span>
+            <span className="pill pill-green hide-mobile" style={{ height: 18, padding: "0 6px" }}><Icon name="whatsapp" size={11} />WhatsApp</span>
             {detail.locked_to && <span className="pill pill-amber" style={{ height: 18, padding: "0 6px" }} title={lang === "es" ? "Mantenido con un agente" : "Pinned to an agent"}><Icon name="lock" size={11} />{lang === "es" ? "Mantenido" : "Pinned"}</span>}
           </div>
           <div className="t-xs muted">{isTyping(detail.typing_until) ? <span className="typing-ind">{lang === "es" ? "escribiendo…" : "typing…"}</span> : assignee ? (lang === "es" ? "Atiende " : "Handled by ") + assignee.name : lang === "es" ? "Sin asignar" : "Unassigned"}</div>
@@ -2046,13 +2056,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         {detail.status !== "resolved" ? (
           <button className="btn btn-sm btn-outline" style={{ color: "var(--green)" }}
             onClick={() => { patch({ status: "resolved" }); start(async () => { const r = await setConvStatus(detail.id, "resolved"); flowToast(r.flows, lang); headerRefresh(); }); }}>
-            <Icon name="checks" size={14} />{lang === "es" ? "Resolver" : "Resolve"}
+            <Icon name="checks" size={14} /><span className="hide-mobile">{lang === "es" ? "Resolver" : "Resolve"}</span>
           </button>
         ) : <HeaderStatusPill detail={detail} />}
         <TransferControl detail={detail} agents={agents} areas={areas} meId={meId} onAssignedToMe={onAccepted} />
         {!detail.assignee_id && (
           <button className="btn btn-sm btn-primary" onClick={() => { onAccepted?.(detail.id); if (meId) patch({ assignee_id: meId }); start(async () => { await acceptConv(detail.id); headerRefresh(); }); }}>
-            <Icon name="check" size={14} />{lang === "es" ? "Aceptar" : "Accept"}
+            <Icon name="check" size={14} /><span className="hide-mobile">{lang === "es" ? "Aceptar" : "Accept"}</span>
           </button>
         )}
       </div>
@@ -2486,7 +2496,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
   return (
     <span style={{ display: "inline-flex" }}>
       <button ref={ref} className="btn btn-sm btn-outline" onClick={toggle}>
-        <Icon name="swap" size={14} />{lang === "es" ? "Transferir" : "Transfer"}
+        <Icon name="swap" size={14} /><span className="hide-mobile">{lang === "es" ? "Transferir" : "Transfer"}</span>
       </button>
       {open && rect && (
         <>

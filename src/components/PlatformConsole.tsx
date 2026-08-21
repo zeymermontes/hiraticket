@@ -60,7 +60,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
   const planName = (id: string) => data.plans.find((p) => p.id === id)?.name ?? id;
 
   return (
-    <div className="app" style={{ gridTemplateColumns: "200px 1fr" }}>
+    <div className="app plat-app" style={{ gridTemplateColumns: "200px 1fr" }}>
       {/* sub nav */}
       <nav className="rail" style={{ width: 200, alignItems: "stretch", padding: "14px 10px" }}>
         <div className="row gap-2" style={{ padding: "0 6px 12px" }}><div className="rail-logo" style={{ margin: 0 }}>H</div><div><div style={{ fontWeight: 800 }}>Hiraticket</div><Pill color="brand">{lang === "es" ? "Plataforma" : "Platform"}</Pill></div></div>

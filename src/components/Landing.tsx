@@ -72,6 +72,11 @@ export function Landing() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [annual, setAnnual] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  // Menú de la barra en móvil. La barra tiene marca + enlaces + ES/EN + tema + "Iniciar sesión" +
+  // "Prueba gratis": eso son ~550px de ancho MÍNIMO en una fila que no envuelve, así que en un
+  // teléfono de 390px se desbordaba y arrastraba la página entera de lado —- por eso el hero se
+  // veía cortado por la derecha. Lo que no cabe se mete aquí.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -91,8 +96,10 @@ export function Landing() {
       {/* announce */}
       <div className="announce">
         <span>{t("🎉 14 días gratis · sin tarjeta de crédito", "🎉 14-day free trial · no credit card")}</span>
-        <span className="sep">·</span>
-        <span>{t("Conecta tu WhatsApp en 2 minutos", "Connect your WhatsApp in 2 minutes")}</span>
+        {/* En un teléfono las dos frases se parten en cuatro renglones y la barra se come el alto
+            del hero. La segunda es la menos importante: se queda para pantallas anchas. */}
+        <span className="sep hide-mobile">·</span>
+        <span className="hide-mobile">{t("Conecta tu WhatsApp en 2 minutos", "Connect your WhatsApp in 2 minutes")}</span>
       </div>
 
       {/* nav */}
@@ -104,14 +111,39 @@ export function Landing() {
           <a href="#faq">FAQ</a>
         </div>
         <span style={{ flex: 1 }} />
-        <div className="seg" style={{ height: 34 }}>
+        <div className="seg hide-mobile" style={{ height: 34 }}>
           <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
           <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
         </div>
-        <button className="iconbtn" aria-label="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><Icon name={theme === "dark" ? "sun" : "moon"} size={19} /></button>
-        <Link className="btn btn-ghost" href="/login">{t("Iniciar sesión", "Sign in")}</Link>
-        <Link className="btn btn-primary" href="/login">{t("Prueba gratis", "Start free")}</Link>
-      </div></nav>
+        <button className="iconbtn hide-mobile" aria-label="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><Icon name={theme === "dark" ? "sun" : "moon"} size={19} /></button>
+        <Link className="btn btn-ghost hide-mobile" href="/login">{t("Iniciar sesión", "Sign in")}</Link>
+        {/* La única acción que sobrevive en móvil junto a la marca: es la que trae a la gente. */}
+        <Link className="btn btn-primary lnav-cta" href="/login">{t("Prueba gratis", "Start free")}</Link>
+        <button className="iconbtn only-mobile" aria-label={t("Menú", "Menu")} aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+          <Icon name={menuOpen ? "x" : "grip"} size={20} />
+        </button>
+      </div>
+
+      {/* Lo que no cabe arriba. Se despliega bajo la barra en vez de taparla entera: es una landing,
+          la gente viene a leer, no a navegar por menús. */}
+      {menuOpen && (
+        <div className="lnav-sheet">
+          <a href="#features" onClick={() => setMenuOpen(false)}>{t("Producto", "Product")}</a>
+          <a href="#pricing" onClick={() => setMenuOpen(false)}>{t("Precios", "Pricing")}</a>
+          <a href="#faq" onClick={() => setMenuOpen(false)}>FAQ</a>
+          <Link href="/login" onClick={() => setMenuOpen(false)}>{t("Iniciar sesión", "Sign in")}</Link>
+          <div className="lnav-sheet-row">
+            <div className="seg grow" style={{ height: 42 }}>
+              <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
+              <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+            </div>
+            <button className="btn btn-outline" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />{theme === "dark" ? t("Claro", "Light") : t("Oscuro", "Dark")}
+            </button>
+          </div>
+        </div>
+      )}
+      </nav>
 
       {/* hero */}
       <section className="hero"><div className="lwrap hero-grid">

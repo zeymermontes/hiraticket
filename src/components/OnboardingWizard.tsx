@@ -10,7 +10,7 @@ import { createBusiness, completeOnboarding } from "@/app/(app)/actions";
 function Shell({ children }: { children: React.ReactNode }) {
   const { lang } = useApp();
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24, gap: 14 }}>
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24, gap: 14 }}>
       <div style={{ width: "100%", maxWidth: 460, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--sh-lg)", padding: 28 }}>
         <div className="row gap-2" style={{ marginBottom: 18 }}>
           <div className="rail-logo" style={{ width: 34, height: 34, margin: 0, fontSize: 18 }}>H</div>

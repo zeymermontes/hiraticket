@@ -456,7 +456,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    MOBILE CHAT — docked beside the order drawer
    ===================================================== */
 .mchat { position: fixed; top: 0; bottom: 0; right: 560px; width: 372px; max-width: calc(100vw - 40px); z-index: 91; display: flex; align-items: center; justify-content: flex-end; padding: 22px 14px; pointer-events: none; }
-.mchat-phone { pointer-events: auto; width: 344px; height: min(760px, calc(100vh - 44px)); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 30px; box-shadow: var(--sh-lg); display: flex; flex-direction: column; overflow: hidden; animation: ht-slide-safe .26s var(--ease-out); }
+.mchat-phone { pointer-events: auto; width: 344px; height: min(760px, calc(100dvh - 44px)); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 30px; box-shadow: var(--sh-lg); display: flex; flex-direction: column; overflow: hidden; animation: ht-slide-safe .26s var(--ease-out); }
 .mchat-notch { height: 30px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--wa); position: relative; }
 .mchat-notch::before { content: ''; width: 70px; height: 6px; border-radius: 99px; background: rgba(255,255,255,.5); }
 .mchat-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--wa); color: #fff; }
@@ -495,7 +495,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
   .main { padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom)); }
 
   .topbar { padding: 0 10px; gap: 8px; padding-top: var(--sa-top); height: calc(var(--topbar-h) + var(--sa-top)); }
-  .topbar-search { max-width: none; }
+  /* `min-width: 0` no es decorativo: un hijo flex no baja de su contenido salvo que se le diga, así
+     que el buscador se quedaba a su ancho natural y empujaba el botón de crear FUERA de la
+     pantalla (medido: se salía 11px). */
+  .topbar-search { max-width: none; min-width: 0; }
   /* El botón de crear se queda solo con el ícono (su texto ya trae `hide-narrow`). */
   .topbar .btn-primary { padding: 0 12px; }
 
@@ -552,12 +555,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    ===================================================== */
 @media (max-width: 768px) {
   /* Una sola columna, y le gana al inline porque aquello solo define una variable. */
-  .chat, .chat.wide-ws, .chat.no-ctx { grid-template-columns: 1fr; }
+  .chat, .chat.wide-ws, .chat.no-ctx { grid-template-columns: minmax(0, 1fr); }
+  /* Pero el estado vacío pide `grid-column: 2 / -1` en su style inline, y eso CREA una segunda
+     columna implícita: la rejilla volvía a partirse en dos aunque la plantilla dijera `1fr`. Medido
+     en un teléfono de 390px daba 133px + 257px. Aquí sí hace falta !important —- es un inline. */
+  .chatcol.center { grid-column: 1 / -1 !important; }
   /* Los tiradores para redimensionar columnas no tienen sentido sin columnas que redimensionar,
      y encima roban toques en el borde de la pantalla, que es donde se hace el gesto de "atrás". */
   .col-resizer { display: none; }
 
-  .thread-head { padding: 9px 10px; gap: 9px; }
+  /* El encabezado del hilo lleva flecha + avatar + nombre + panel + Resolver + Transferir. En
+     390px no cabe: los botones se encimaban encima del nombre. Se aprieta el espaciado, las
+     etiquetas de los botones se van (llevan `title`) y el nombre se queda con lo que sobra. */
+  .thread-head { padding: 8px 8px; gap: 6px; }
+  .thread-head > .grow { min-width: 0; }
+  .thread-head .btn-sm { padding: 0 10px; }
   .thread { padding: 12px 12px 6px; }
   .col-head { padding: 10px 12px; }
   .composer { padding: 8px 10px; }
@@ -606,6 +618,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
   /* Las que se quedan con tabla (datos densos de administración donde importan TODAS las columnas)
      al menos fijan la primera columna, para no perder de vista de qué fila es cada dato. */
   .tablewrap.keep-table { display: block; }
+  /* El `min-width: 1040px` de `table.tbl` está pensado para tablas de doce columnas. Las que se
+     quedan con tabla tienen cinco o seis: 620px basta y se barre mucho menos de lado. */
+  .tablewrap.keep-table .tbl { min-width: 620px; }
   .tablewrap.keep-table .tbl thead th:first-child,
   .tablewrap.keep-table .tbl tbody td:first-child {
     position: sticky; left: 0; z-index: 1; background: var(--surface);
@@ -624,7 +639,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
      no le gana a un style inline, y reescribir las siete a CSS era mover mucho más de lo que este
      cambio necesita mover. */
   .page-grid {
-    grid-template-columns: 1fr !important;
+    /* `minmax(0, 1fr)` y no `1fr` a secas: `1fr` significa `minmax(auto, 1fr)`, y ese `auto` no
+       deja que la columna baje del contenido mínimo de lo que lleva dentro. Un select con una
+       opción larga o una tabla anidada inflan la columna y la rejilla se sale sola —- el clásico
+       "grid blowout". Con `minmax(0, …)` la columna sí puede encoger y el que se ajusta es el hijo. */
+    grid-template-columns: minmax(0, 1fr) !important;
     gap: 14px !important;
     padding: 0 14px 20px !important;
   }
@@ -636,9 +655,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    repeat(2..3,1fr) para las gráficas). En 390px eso son columnas de 78px. Mismo trato y misma
    razón para el !important que en `.page-grid`. */
 @media (max-width: 768px) {
-  .rep-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+  .rep-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; }
   /* Las cifras sueltas sí caben de dos en dos: un número corto con su etiqueta. */
-  .rep-grid.stats { grid-template-columns: repeat(2, 1fr) !important; }
+  .rep-grid.stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
 
 /* =====================================================
@@ -705,3 +724,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    y no en un style inline por lo mismo que las columnas del chat de clientes. */
 .chatcol.int-list { width: 300px; flex: none; }
 @media (max-width: 768px) { .chatcol.int-list { width: auto; flex: 1; min-width: 0; } }
+
+/* Rejillas anidadas con una columna de ancho FIJO escrita en el style inline. En 390px una columna
+   de 300px más su compañera no caben, y el bloque se sale solo. Misma razón que `.page-grid` para
+   el !important: no se le gana a un inline desde una hoja de estilos. */
+@media (max-width: 768px) {
+  .stack-mobile { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; }
+  /* La consola de plataforma trae su propio riel de 200px. */
+  .plat-app { grid-template-columns: minmax(0, 1fr) !important; }
+  .plat-app > nav:first-child { display: none; }
+
+  /* Un input dentro de una fila flex no baja de su ancho natural salvo que se le permita, y eso
+     empujaba los botones de al lado fuera de la pantalla (etapas y áreas en Negocio). */
+  .inp-inline, .field { min-width: 0; }
+}
