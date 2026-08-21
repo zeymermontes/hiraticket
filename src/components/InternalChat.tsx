@@ -2,6 +2,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { useConfirm } from "@/components/Confirm";
 import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -95,6 +96,11 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const [mention, setMention] = useState<{ q: string; at: number; rect: DOMRect } | null>(null);
   const [mentionSel, setMentionSel] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // Espejo de lo que hace el chat de clientes (skill chat-parity): en un teléfono se ve la lista o
+  // el hilo, nunca los dos. Se lleva con una vista propia y no vaciando `sel`, porque el canal
+  // seleccionado también manda los marcadores de leído y el resync al recuperar el foco.
+  const isMobile = useIsMobile();
+  const [mobileView, setMobileView] = useState<"list" | "thread">("list");
   const [hasMore, setHasMore] = useState(false);
   const [typingName, setTypingName] = useState<string | null>(null);
   const atBottomRef = useRef(true);
@@ -133,6 +139,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   }, []);
   const openChannel = useCallback((ch: string) => {
     setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null);
+    setMobileView("thread"); // en móvil solo cabe una columna; ver `isMobile` abajo
     try { localStorage.setItem("ht.internalCh." + businessId, ch); } catch {} // remember across tab changes
     scrollAction.current = "bottom";
     loadInternalMessages(ch).then((fresh) => { seen.current = new Set(fresh.map((m) => m.id)); setMsgs(fresh); setHasMore(fresh.length >= MSG_PAGE); }).catch(() => {});
@@ -386,7 +393,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
       {/* threads list */}
-      <div className="chatcol" style={{ width: 300, flex: "none" }}>
+      <div className={"chatcol" + (isMobile && mobileView === "thread" ? " hide-mobile" : "")}
+        style={isMobile ? { flex: 1, minWidth: 0 } : { width: 300, flex: "none" }}>
         <div className="col-head"><h1 style={{ fontSize: 18, margin: "2px 2px 6px" }}>{lang === "es" ? "Chat interno" : "Internal chat"}</h1></div>
         <div className="col-scroll scroll">
           {threads.map((t) => (
@@ -408,9 +416,15 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
       </div>
 
       {/* thread */}
-      <div className="chatcol" style={{ position: "relative", flex: 1, minWidth: 0, background: "var(--bg)" }} {...dragProps}>
+      <div className={"chatcol" + (isMobile && mobileView === "list" ? " hide-mobile" : "")}
+        style={{ position: "relative", flex: 1, minWidth: 0, background: "var(--bg)" }} {...dragProps}>
         {dragOver && <DropOverlay lang={lang} />}
         <div className="thread-head">
+          {isMobile && (
+            <button className="iconbtn" onClick={() => setMobileView("list")} aria-label={lang === "es" ? "Volver a los chats" : "Back to chats"} style={{ marginLeft: -6, flex: "none" }}>
+              <Icon name="arrowl" size={20} />
+            </button>
+          )}
           {selThread?.kind === "team"
             ? <span style={{ width: 36, height: 36, borderRadius: 10, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="agents" size={18} /></span>
             : <Avatar name={selThread?.title} initials={deriveInitials(selThread?.title ?? "?")} color={selThread?.color} size={36} />}

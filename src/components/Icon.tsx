@@ -53,6 +53,9 @@ export const ICONS: Record<string, IconFn> = {
   sliders: () => <>{P("M5 8h9M5 16h4M16 16h3")}<circle cx="17" cy="8" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="16" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.8" /></>,
   bolt: () => <>{P("M13 3 5 13h6l-1 8 8-10h-6l1-8Z")}</>,
   arrowr: () => <>{P("M5 12h13m0 0-5-5m5 5-5 5")}</>,
+  // Volver. Existe como icono propio y no como un arrowr rotado porque `Icon` no acepta `style`,
+  // y envolverlo en un span solo para girarlo ensucia cada sitio donde se use.
+  arrowl: () => <>{P("M19 12H6m0 0 5-5m-5 5 5 5")}</>,
   lock: () => <><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("M8 11V8a4 4 0 0 1 8 0v3")}</>,
   mail: () => <><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />{P("m4 7 8 6 8-6")}</>,
   wifioff: () => <>{P("M2 5l20 14M5 11.5a10 10 0 0 1 4-2.6M19 11.5a10 10 0 0 0-4.5-2.8M7.8 14.5a6 6 0 0 1 3-1.5M12 18h.01")}</>,

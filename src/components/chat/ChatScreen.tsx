@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useLayoutEffe
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { Icon } from "@/components/Icon";
 import { Spinner } from "@/components/Spinner";
 import { WaTemplateModal } from "@/components/chat/WaTemplateModal";
@@ -904,11 +905,23 @@ export function ChatScreen({
     showConv(c.id);
   }, [showConv]);
 
+  /** Volver a la lista (móvil). Se empuja `/chat` en el historial en vez de hacer `history.back()`
+   *  a ciegas: si alguien entró directo a `/chat?c=X` desde una notificación, un back lo sacaría
+   *  de la app en lugar de enseñarle la lista. */
+  const closeConv = useCallback(() => {
+    setDetail(null);
+    try { window.history.pushState(null, "", "/chat"); } catch {}
+  }, []);
+
   // Back/forward has to move between chats now that opening one isn't a route navigation.
   useEffect(() => {
     const onPop = () => {
       const id = new URLSearchParams(window.location.search).get("c");
+      // Sin `?c=` estamos de vuelta en la lista pelada. Antes esto no hacía nada y el chat se
+      // quedaba abierto; en un teléfono eso significaba que el botón atrás de Android no cerraba
+      // el hilo y parecía que la app se había trabado.
       if (id) showConv(id, _detailCache.get(id));
+      else setDetail(null);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -1115,6 +1128,10 @@ export function ChatScreen({
   }, [selectedId]);
 
   // Center column: show/hide + drag-resize (persisted).
+  // En móvil solo cabe UNA columna, así que el layout no se decide con CSS nada más: `ChatScreen`
+  // escribe `gridTemplateColumns` en el style inline, y un inline le gana a cualquier @media —- por
+  // eso la regla de 680px que ya existía en views.css llevaba tiempo sin hacer nada.
+  const isMobile = useIsMobile();
   const [ctxVisible, setCtxVisible] = useState(true);
   const [ctxW, setCtxW] = useState(360);
   const [listW, setListW] = useState(300);
@@ -1392,9 +1409,13 @@ export function ChatScreen({
       className="chat"
       style={{
         position: "relative",
-        gridTemplateColumns: detail && detailInView && ctxVisible
-          ? `${listW}px ${ctxW}px minmax(300px,1fr)`
-          : `${listW}px minmax(300px,1fr)`,
+        // Móvil: NO se escribe la propiedad, para que mande el CSS (una sola columna). Escribirla
+        // aunque fuera con otro valor volvería a pisar la media query.
+        ...(isMobile ? {} : {
+          gridTemplateColumns: detail && detailInView && ctxVisible
+            ? `${listW}px ${ctxW}px minmax(300px,1fr)`
+            : `${listW}px minmax(300px,1fr)`,
+        }),
       }}
     >
       {realtimeDown && (
@@ -1406,7 +1427,9 @@ export function ChatScreen({
         </div>
       )}
       {/* list column */}
-      <div className="chatcol list" style={{ position: "relative" }}>
+      {/* `hide-mobile` por fin se usa: la clase existía en views.css desde hace mucho y no la ponía
+          nadie, así que en un teléfono salían lista e hilo aplastados uno junto al otro. */}
+      <div className={"chatcol list" + (isMobile && detail && detailInView ? " hide-mobile" : "")} style={{ position: "relative" }}>
         <div className="col-resizer" onPointerDown={startListResize} title="" />
         <div className="col-head">
           <div className="seg" style={{ width: "100%" }}>
@@ -1541,9 +1564,14 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
-          <Thread detail={detail} agents={agents} areas={areas} connected={connected} ctxVisible={ctxVisible} onToggleCtx={() => setCtxVisible((v) => !v)} businessId={businessId} meId={meId}
-            onAccepted={acceptedToMine} />
+          {ctxVisible && !isMobile && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
+          {/* En móvil el panel del cliente no puede ser una columna, así que el mismo botón abre el
+              360 a pantalla completa —- que ya existía y muestra lo mismo y más. */}
+          <Thread detail={detail} agents={agents} areas={areas} connected={connected}
+            ctxVisible={isMobile ? false : ctxVisible}
+            onToggleCtx={isMobile ? () => setShow360(true) : () => setCtxVisible((v) => !v)}
+            onBack={isMobile ? closeConv : undefined}
+            businessId={businessId} meId={meId} onAccepted={acceptedToMine} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} onClose={() => setShow360(false)} />}
         </>
       ) : (
@@ -1615,7 +1643,7 @@ function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en";
 }
 
 /* ---------- Thread (right column) ---------- */
-export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, businessId, floating, meId, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; businessId: string; floating?: boolean; meId?: string; onAccepted?: (convId: string) => void }) {
+export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, onBack, businessId, floating, meId, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; /** Solo en móvil: volver a la lista de chats. */ onBack?: () => void; businessId: string; floating?: boolean; meId?: string; onAccepted?: (convId: string) => void }) {
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const refresh = useChatRefresh();
@@ -1990,6 +2018,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     <div className="chatcol" style={{ position: "relative", ...(floating ? { height: "100%", flex: 1, minWidth: 0, width: "100%" } : {}) }} {...dragProps}>
       {dragOver && <DropOverlay lang={lang} />}
       <div className="thread-head">
+        {onBack && (
+          <button className="iconbtn" onClick={onBack} aria-label={lang === "es" ? "Volver a los chats" : "Back to chats"} style={{ marginLeft: -6, flex: "none" }}>
+            <Icon name="arrowl" size={20} />
+          </button>
+        )}
         <Avatar name={detail.contact?.name} initials={deriveInitials(detail.contact?.name || detail.contact?.phone || "?")} color={avatarColor(detail.contact?.phone)} size={38}
           badge={assignee ? { initials: deriveInitials(assignee.name), color: assignee.color, src: assignee.avatar_url, title: (lang === "es" ? "Atiende " : "Handled by ") + assignee.name } : null} />
         <div className="grow" style={{ minWidth: 0 }}>

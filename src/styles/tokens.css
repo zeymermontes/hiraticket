@@ -60,6 +60,19 @@
   --rail-w: 76px;
   --topbar-h: 60px;
 
+  /* Móvil. El breakpoint vive aquí como número de referencia, pero OJO: `var()` no funciona
+     dentro de `@media`, así que las media queries repiten 768px a mano. Si cambia, cambia en
+     los dos lados —- y en `src/lib/useIsMobile.ts`, que es la versión de JS. */
+  --bp-mobile: 768px;
+  --tabbar-h: 58px;
+
+  /* Zonas seguras (muesca, barra de gestos). Sin `viewport-fit=cover` en el viewport devuelven 0,
+     que es justo lo que queremos en escritorio. */
+  --sa-top:    env(safe-area-inset-top, 0px);
+  --sa-right:  env(safe-area-inset-right, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
+  --sa-left:   env(safe-area-inset-left, 0px);
+
   --ease: cubic-bezier(.4,0,.2,1);
   --ease-out: cubic-bezier(.16,1,.3,1);
 
@@ -97,9 +110,14 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+/* `100dvh` y no `100%`/`100vh`: en iOS la barra del navegador entra en `100vh`, así que el
+   composer del chat quedaba debajo del borde visible. `dvh` sigue a la barra cuando se encoge. */
+html, body { height: 100dvh; }
 body {
   margin: 0;
+  /* En un teléfono la app es un panel fijo, no un documento: el rebote elástico al llegar al
+     final de una lista arrastra el shell entero y se ve un hueco. */
+  overscroll-behavior: none;
   font-family: 'Archivo', system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
