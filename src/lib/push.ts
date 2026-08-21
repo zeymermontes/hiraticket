@@ -55,6 +55,26 @@ interface SubRow {
 }
 
 /**
+ * ¿Las claves de esta suscripción sirven?
+ *
+ * Se comprueba ANTES de intentar el envío, y no se deduce del error, por algo que salió probando en
+ * local: una fila con la `p256dh` corrupta hace que `web-push` reviente al cifrar —- antes de tocar
+ * la red —- y ese error NO trae `statusCode`. La limpieza de suscripciones muertas solo mira
+ * 404/410, así que una fila así se quedaba para siempre y se reintentaba en CADA mensaje.
+ *
+ * Se valida contra el contrato real en vez de leer el mensaje del error: `p256dh` es un punto P-256
+ * sin comprimir (65 bytes) y `auth` son 16 bytes. Adivinar por el texto del error se rompe en
+ * cuanto la librería cambia de redacción.
+ */
+function validKeys(s: SubRow): boolean {
+  try {
+    return Buffer.from(s.p256dh, "base64url").length === 65
+      && Buffer.from(s.auth, "base64url").length === 16
+      && /^https:\/\//.test(s.endpoint);
+  } catch { return false; }
+}
+
+/**
  * Empuja a todos los dispositivos de estos usuarios.
  *
  * `pref` es la preferencia que hay que respetar (`mine`, `unassigned`, `internal`, …). Se lee de
@@ -94,7 +114,15 @@ export async function sendPushToUsers(
     const body = JSON.stringify({ ...payload, at: new Date().toISOString() });
     const dead: string[] = [];
 
-    await Promise.all((subs as SubRow[]).map(async (s) => {
+    // Las que ni siquiera pueden cifrarse se descartan aquí: no hay a qué reintentar y así no
+    // vuelven a costar en el siguiente mensaje.
+    const usable = (subs as SubRow[]).filter((s) => {
+      if (validKeys(s)) return true;
+      dead.push(s.id);
+      return false;
+    });
+
+    await Promise.all(usable.map(async (s) => {
       try {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
@@ -105,6 +133,9 @@ export async function sendPushToUsers(
         // 404/410 = la suscripción murió (app desinstalada, permiso revocado, navegador la rotó).
         // Es la ÚNICA forma de enterarse, así que se aprovecha para limpiar; si no, la tabla se
         // llena de endpoints muertos y cada envío paga el intento.
+        //
+        // Cualquier otro código (429, 500, red caída) se DEJA: puede ser pasajero, y borrar por un
+        // tropiezo del servicio de push desactivaría los avisos de alguien sin que se entere.
         const code = (e as { statusCode?: number }).statusCode;
         if (code === 404 || code === 410) dead.push(s.id);
       }
