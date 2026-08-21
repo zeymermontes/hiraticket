@@ -7,7 +7,7 @@ import { clearMediaCache } from "@/lib/mediaCache";
 import { PALETTE_GROUPS } from "@/lib/palette";
 import { Icon } from "@/components/Icon";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled,
-  pushSupported, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
+  browserSupportsPush, pushKeyPresent, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
 import { isStandalone } from "@/lib/useIsMobile";
 import { InstallAppRow } from "@/components/InstallApp";
 import { savePushSubscription, removePushSubscription, removePushDevice, listPushDevices, type PushDevice } from "@/app/(app)/settings/push-actions";
@@ -427,6 +427,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
 function PushRow({ lang }: { lang: "es" | "en" }) {
   const es = lang === "es";
   const [supported, setSupported] = useState(true);
+  const [keyed, setKeyed] = useState(true);   // ¿el despliegue trae la clave VAPID?
   const [endpoint, setEndpoint] = useState<string | null>(null);
   const [devices, setDevices] = useState<PushDevice[]>([]);
   const [busy, setBusy] = useState(false);
@@ -441,7 +442,8 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
   };
 
   useEffect(() => {
-    setSupported(pushSupported());
+    setSupported(browserSupportsPush());
+    setKeyed(pushKeyPresent());
     setStandalone(isStandalone());
     setIOS(/iPad|iPhone|iPod/.test(navigator.userAgent));
     refresh().catch(() => {});
@@ -502,9 +504,13 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
           <span className="t-xs muted" style={{ display: "block" }}>
             {!supported
               ? (es ? "Este navegador no soporta notificaciones push" : "This browser doesn't support push notifications")
-              : iosBlocked
+              : !keyed
+                // Le falta NEXT_PUBLIC_VAPID_PUBLIC_KEY al despliegue. Se dice tal cual: es lo único
+                // que distingue "no se puede" de "falta configurar", y sin eso el botón parecería roto.
+                ? (es ? "Falta configurar las claves de push en el servidor" : "Push keys aren't configured on the server")
+                : iosBlocked
                 ? (es ? "En iPhone hay que instalar la app primero: Compartir → Agregar a inicio" : "On iPhone, install the app first: Share → Add to Home Screen")
-                : (es ? "El servidor te avisa aunque no tengas Hiraticket abierto" : "The server alerts you even with Hiraticket closed")}
+                  : (es ? "El servidor te avisa aunque no tengas Hiraticket abierto" : "The server alerts you even with Hiraticket closed")}
           </span>
         </span>
         {endpoint ? (
@@ -512,7 +518,7 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
             <Icon name="x" size={14} />{es ? "Desactivar aquí" : "Turn off here"}
           </button>
         ) : (
-          <button className="btn btn-sm btn-primary" disabled={busy || !supported || iosBlocked} onClick={enable}>
+          <button className="btn btn-sm btn-primary" disabled={busy || !supported || !keyed || iosBlocked} onClick={enable}>
             <Icon name="bell" size={14} />{busy ? (es ? "Activando…" : "Enabling…") : (es ? "Activar aquí" : "Enable here")}
           </button>
         )}

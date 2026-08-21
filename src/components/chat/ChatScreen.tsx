@@ -1000,6 +1000,7 @@ export function ChatScreen({
     const softList = () => { clearTimeout(tl); tl = setTimeout(() => { refetchListRef.current(); }, 250); };
     const softMsgs = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(tm); tm = setTimeout(() => { liveMessages(id).then((ms) => setDetail((c) => (c && c.id === id ? { ...c, messages: mergeMsgs(c.messages, ms) } : c))).catch(() => {}); }, 120); };
     const softHeader = () => { const id = detailIdRef.current; if (!id) return; clearTimeout(th); th = setTimeout(() => { liveConvHeader(id).then((h) => { if (h) setDetail((c) => (c && c.id === id ? { ...c, ...h } : c)); }).catch(() => {}); }, 250); };
+    let lastCatchUp = 0;
     const stop = keepSubscribed(supabase, `chat-${businessId}`, (ch) => ch
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `business_id=eq.${businessId}` }, (p) => {
         const cid = (p.new as { conversation_id?: string })?.conversation_id ?? (p.old as { conversation_id?: string })?.conversation_id;
@@ -1020,7 +1021,14 @@ export function ChatScreen({
         realtimeHealthyRef.current = true;
         clearTimeout(down); // un parpadeo más corto que el debounce nunca enciende el banner
         setRealtimeDown(false);
-        if (reconnected) { refetchListRef.current(); softMsgs(); softHeader(); resyncRef.current?.(); }
+        // Ponerse al día cuesta media docena de lecturas. Con una conexión que va y viene —- un
+        // teléfono cambiando de antena —- eso se dispara una y otra vez sin traer nada nuevo, así
+        // que se pone un mínimo de 5 s entre puestas al día. La primera de una caída real entra
+        // siempre; las repeticiones de un parpadeo, no.
+        if (reconnected && Date.now() - lastCatchUp > 5000) {
+          lastCatchUp = Date.now();
+          refetchListRef.current(); softMsgs(); softHeader(); resyncRef.current?.();
+        }
       },
       onDown: () => {
         realtimeHealthyRef.current = false;
@@ -1057,12 +1065,20 @@ export function ChatScreen({
     return () => { clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
   }, [businessId]);
 
-  // Safety-net poll — DISABLED. We rely on realtime for live updates and show a "reload" banner when
-  // the channel drops (cheaper than steady background polling). Kept here, gated behind the flag, so
-  // it can be turned back on (e.g. per-business) without rewriting it. When enabled it's adaptive:
-  // it only fetches while realtime is unhealthy, with a slow 30s backstop, plus catch-up on (re)connect
-  // and tab focus.
-  const ENABLE_SAFETY_POLL = false;
+  /**
+   * Red de seguridad: sondeo mientras el realtime está caído. ENCENDIDO.
+   *
+   * Estuvo apagado a propósito —- con el canal sano sondear es gasto puro, y para la caída bastaba
+   * el aviso de "recarga". En un teléfono ese trato no sale a cuenta: la app instalada se congela
+   * en segundo plano, el socket se muere sin avisar, y al volver lo que había era una lista
+   * detenida y un cartel pidiendo recargar. Pedirle a alguien que recargue una app es admitir que
+   * no funciona.
+   *
+   * Sigue sin ser un sondeo constante: solo pide mientras el canal NO está sano y solo con la
+   * pantalla a la vista; con el canal bien, un repaso cada 30 s. Y ahora es barato de verdad,
+   * porque estas lecturas ya no van por la cola de acciones de servidor (ver src/lib/chatLive.ts).
+   */
+  const ENABLE_SAFETY_POLL = true;
   useEffect(() => {
     if (!ENABLE_SAFETY_POLL) return;
     let last = 0;
@@ -1440,7 +1456,10 @@ export function ChatScreen({
       {realtimeDown && (
         <div className="rt-banner">
           <Icon name="wifioff" size={15} />
-          <span className="grow">{lang === "es" ? "Se pausaron las actualizaciones en vivo. Recarga para ver lo más reciente." : "Live updates paused. Reload to see the latest."}</span>
+          {/* Ya no es "recarga o no te enteras": mientras el canal está caído, el sondeo de arriba
+              mantiene la lista al día. El aviso explica por qué va más lento, y recargar queda
+              como atajo, no como única salida. */}
+          <span className="grow">{lang === "es" ? "Sin conexión en vivo: actualizando cada pocos segundos." : "No live connection: refreshing every few seconds."}</span>
           <button className="btn btn-sm btn-dark" onClick={() => window.location.reload()}><Icon name="refresh" size={13} />{lang === "es" ? "Recargar" : "Reload"}</button>
           <button className="rt-banner-x" onClick={() => setRealtimeDown(false)} aria-label={lang === "es" ? "Descartar" : "Dismiss"}><Icon name="x" size={14} /></button>
         </div>

@@ -151,8 +151,17 @@ export function alertIncoming(opts: { title: string; body: string; href?: string
  *  se comporta como antes. */
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
-export const pushSupported = () =>
-  typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && !!VAPID_PUBLIC;
+/** ¿Este NAVEGADOR sabe recibir push? (service worker + PushManager). */
+export const browserSupportsPush = () =>
+  typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
+
+/** ¿Este DESPLIEGUE trae la clave pública VAPID? Se separa de lo anterior porque son dos fallos
+ *  distintos y antes se contaban como uno: sin la variable en el servidor, la app decía "este
+ *  navegador no soporta notificaciones" —- culpando al teléfono de algo que le faltaba al
+ *  despliegue, y mandando a buscar el problema al sitio equivocado. */
+export const pushKeyPresent = () => !!VAPID_PUBLIC;
+
+export const pushSupported = () => browserSupportsPush() && pushKeyPresent();
 
 /** La clave viaja en base64url y `applicationServerKey` la quiere en bytes. */
 function urlBase64ToUint8Array(base64: string): Uint8Array {

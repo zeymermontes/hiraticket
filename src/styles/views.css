@@ -165,6 +165,12 @@
 .rt-banner > svg { color: var(--amber); flex: none; }
 .rt-banner-x { border: none; background: transparent; cursor: pointer; color: var(--text-faint); display: inline-flex; padding: 2px; flex: none; }
 .rt-banner-x:hover { color: var(--text); }
+/* El aviso de "activa las notificaciones" usa el mismo cartel, pero abajo: arriba, en un teléfono,
+   ya están el buscador y la campana, y el pulgar vive cerca del borde de abajo. Se levanta por
+   encima de la barra de navegación —- va dentro de `.main`, y un absoluto se mide contra su caja de
+   relleno, así que el `padding-bottom` que reserva la barra no lo aparta solo. */
+.push-nudge { top: auto; bottom: 12px; }
+@media (max-width: 768px) { .push-nudge { bottom: calc(var(--tabbar-h) + var(--sa-bottom) + 12px); } }
 
 /* Sticker tray */
 .sticker-tray { overflow-y: auto; overflow-x: hidden; }

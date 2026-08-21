@@ -17,6 +17,7 @@ import { clearCache } from "@/lib/localCache";
 import { installKeyboardInset } from "@/lib/mobileViewport";
 import { PwaRegister } from "@/components/PwaRegister";
 import { InstallAppRow } from "@/components/InstallApp";
+import { PushNudge } from "@/components/PushNudge";
 import { loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import { liveBadges } from "@/lib/chatLive";
 import { createClient } from "@/lib/supabase/client";
@@ -630,6 +631,9 @@ export function Shell({
             <div className="main" style={{ position: "relative" }}>
               <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={due} onNavigate={onNavigate} />
               {children}
+              {/* Abajo y no arriba: en un teléfono la parte de arriba ya la ocupan buscador y campana,
+                  y el pulgar vive cerca del borde inferior. */}
+              <PushNudge />
               {navDest && (
                 <div style={{ position: "absolute", inset: 0, top: 57, background: "var(--surface)", zIndex: 30 }}>
                   <PageSkeleton />
