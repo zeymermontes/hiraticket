@@ -220,3 +220,44 @@ label.lbl { font-size: 12px; font-weight: 600; color: var(--text-muted); display
 .menu-item.danger svg { color: var(--red); }
 .menu-label { padding: 7px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
 .menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+
+/* =====================================================
+   MÓVIL — controles con tamaño de dedo
+   Solo bajo 768px: escritorio no cambia ni un píxel.
+   (768px repetido a mano: var() no funciona dentro de @media. Ver --bp-mobile en tokens.css.)
+   ===================================================== */
+@media (max-width: 768px) {
+  /* iOS hace zoom a la página cuando enfocas un campo con letra menor a 16px, y después te deja
+     ahí, con la app descuadrada. Se arregla en el campo, no bloqueando el zoom: bloquearlo es
+     una barrera de accesibilidad (y Safari lo ignora igual). */
+  input, textarea, select, .inp-inline, .select, .field input { font-size: 16px; }
+
+  /* 44px es el mínimo que recomiendan Apple y Google para tocar con el pulgar. Los 30px de
+     `.iconbtn.sm` se fallan constantemente en una pantalla de 390px. */
+  .iconbtn { width: 44px; height: 44px; }
+  .iconbtn.sm { width: 40px; height: 40px; }
+  .iconbtn svg { width: 21px; height: 21px; }
+  .iconbtn.sm svg { width: 18px; height: 18px; }
+
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 38px; font-size: 13.5px; }
+  .inp-inline, .select { height: 42px; }
+  .select-sm { height: 38px; }
+
+  /* Un menú se toca, no se apunta: filas más altas y ancho de sobra. */
+  .menu { min-width: min(280px, calc(100vw - 24px)); padding: 8px; }
+  .menu-item { padding: 12px 12px; font-size: 14.5px; border-radius: var(--r-md); }
+  .menu-item svg { width: 18px; height: 18px; }
+
+}
+
+/* En una pantalla táctil `:hover` se queda PEGADO tras tocar: el botón sigue resaltado hasta que
+   toques otra cosa. Se apaga solo donde el estado base es conocido (fondo transparente); los
+   botones de color se dejan en paz —- ahí "apagar" el hover los dejaría transparentes, que es peor
+   que el problema. Se decide por el PUNTERO y no por el ancho: una tableta con ratón sí quiere
+   hover, y una ventana angosta de escritorio también. */
+@media (hover: none) {
+  .iconbtn:hover { background: transparent; color: var(--text-muted); }
+  .iconbtn.active:hover { background: var(--brand-50); color: var(--brand-700); }
+  .menu-item:hover { background: transparent; }
+}

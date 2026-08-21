@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { CardList, Card, CardTop, CardMeta } from "@/components/MobileCards";
 import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials, avatarColor } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -95,6 +96,37 @@ export function ContactsScreen({ initial, total: totalProp }: { initial: Contact
         <span className="grow" />
         <span className="t-sm muted">{q ? `${total} ${lang === "es" ? "resultados" : "results"}` : `${rows.length} / ${total}`}</span>
       </div>
+
+      {/* Móvil: nombre + teléfono + etiquetas, y las acciones a la derecha. `onScroll` va también
+          aquí porque en móvil quien scrollea es la lista de tarjetas, no la tabla —- sin esto el
+          scroll infinito dejaba de pedir páginas. */}
+      <CardList onScroll={onScroll} empty={q ? (lang === "es" ? "Sin resultados." : "No matches.") : (lang === "es" ? "Aún no hay contactos." : "No contacts yet.")}>
+        {filtered.map((c) => (
+          <Card key={c.id} onClick={c.conv_id ? () => router.push(`/chat?c=${c.conv_id}`) : undefined}>
+            <CardTop>
+              <Avatar name={c.name} initials={deriveInitials(c.name || c.phone || "?")} color={avatarColor(c.phone)} size={36} />
+              <span className="grow">
+                <span className="card-title truncate" style={{ display: "block" }}>{c.name}</span>
+                <span className="mono t-xs muted">{c.phone ?? "—"}</span>
+              </span>
+              <span className="row gap-1" style={{ flex: "none" }} onClick={(e) => e.stopPropagation()}>
+                {c.conv_id && (
+                  <button className={"iconbtn sm" + (c.muted ? " active" : "")} title={c.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat (no guardar mensajes)" : "Disconnect chat (don't save messages)")} onClick={() => toggleMute(c)}><Icon name="wifioff" size={15} /></button>
+                )}
+                <button className="iconbtn sm" title={lang === "es" ? "Eliminar contacto y chats" : "Delete contact and chats"} style={{ color: "var(--red)" }} onClick={() => removeContact(c)}><Icon name="trash" size={15} /></button>
+              </span>
+            </CardTop>
+            {(c.tags.length > 0 || c.orders_count > 0 || c.last_active) && (
+              <CardMeta>
+                {c.tags.slice(0, 3).map((t) => <Pill key={t} color={tagColor(t)}><Icon name="tag" size={10} />{t}</Pill>)}
+                {c.orders_count > 0 && <Pill color="slate" title={objLabel}>{c.orders_count}</Pill>}
+                <span className="grow" />
+                <span>{fmtDate(c.last_active)}</span>
+              </CardMeta>
+            )}
+          </Card>
+        ))}
+      </CardList>
 
       <div className="tablewrap scroll" onScroll={onScroll}>
         <table className="tbl" style={{ minWidth: 720 }}>

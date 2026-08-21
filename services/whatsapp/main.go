@@ -72,6 +72,8 @@ type Manager struct {
 	mediaSem  chan struct{}                // tope global de adjuntos en vuelo (ver mediaConcurrency)
 	supaURL   string                       // Supabase URL (for media storage REST)
 	supaKey   string                       // service-role key
+	appURL    string                       // URL de la app Next (para avisarle de mensajes nuevos)
+	pushKey   string                       // secreto compartido con /api/push/notify
 }
 
 // mediaConcurrency: cuántos adjuntos se manipulan a la vez EN TODO EL WORKER, sumando los que
@@ -332,9 +334,14 @@ end $$;`); err != nil {
 		mediaSem: make(chan struct{}, mediaConcurrency),
 		supaURL:  strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		supaKey:  os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
+		appURL:   strings.TrimRight(os.Getenv("APP_URL"), "/"),
+		pushKey:  os.Getenv("PUSH_HOOK_SECRET"),
 	}
 	if m.supaURL == "" || m.supaKey == "" {
 		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
+	}
+	if m.appURL == "" || m.pushKey == "" {
+		logger.Warnf("APP_URL/PUSH_HOOK_SECRET sin definir — no se mandarán notificaciones push")
 	}
 
 	// El identificador decía "pool5" cuando el pool ya eran 7: un build fijo escrito a mano miente
@@ -670,6 +677,45 @@ func extFromMime(mime string) string {
 			return strings.Split(mime[i+1:], ";")[0]
 		}
 		return "bin"
+	}
+}
+
+// notifyPush le avisa a la app que llegó un mensaje, para que empuje la notificación.
+//
+// El worker NO firma VAPID por su cuenta a propósito: eso duplicaría el envío Y la decisión de a
+// quién le toca cada aviso, y dos copias de esa regla acaban diciendo cosas distintas. Aquí solo se
+// reporta el hecho; quién recibe lo decide `src/lib/push.ts`, que es el mismo que usa la ruta
+// oficial de Cloud API.
+//
+// Se llama SIEMPRE en una goroutine y con su propio contexto y timeout: el mensaje ya está
+// guardado, y si la app está caída o lenta eso no puede frenar la ingesta del siguiente.
+func (m *Manager) notifyPush(businessID, convID, title, body string) {
+	if m.appURL == "" || m.pushKey == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{
+		"businessId": businessID, "conversationId": convID, "title": title, "body": body,
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", m.appURL+"/api/push/notify", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-push-secret", m.pushKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.log.Warnf("push notify: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) // drenar para que la conexión se reuse
+	if resp.StatusCode >= 300 {
+		m.log.Warnf("push notify: HTTP %d", resp.StatusCode)
 	}
 }
 
@@ -1693,6 +1739,22 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		if !v.Info.IsGroup {
 			m.runScheduleAutomations(ctx, s.BusinessID, convID)
 		}
+
+		// Notificación push. Hasta ahora avisar dependía de tener la pestaña abierta —- el aviso lo
+		// pintaba el navegador al oír a Supabase —- así que con la app cerrada no llegaba nada. Se le
+		// reporta a la app, que decide a quién le toca (asignado, o todo el equipo si nadie lo ha
+		// tomado) con las preferencias de cada quien.
+		//
+		// En goroutine: el mensaje ya está guardado y la app podría estar lenta o caída. Un aviso
+		// que no sale es un aviso perdido; frenar la ingesta por esperarlo sería perder mensajes.
+		title := senderName
+		if title == "" {
+			_ = m.db.QueryRowContext(ctx, `SELECT coalesce(c.name,'') FROM conversations cv JOIN contacts c ON c.id=cv.contact_id WHERE cv.id=$1`, convID).Scan(&title)
+		}
+		if title == "" {
+			title = partner
+		}
+		go m.notifyPush(s.BusinessID, convID, title, pushPreview(mtype, body))
 	} else {
 		// Outbound — including a reply you sent from your phone. It's been answered, so clear the
 		// unread/pending marker; reopen if it was resolved.
@@ -1700,6 +1762,41 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			status = CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=$1`, convID)
 	}
 	m.log.Infof("saved %s %s from/to %s", dir, mtype, partner)
+}
+
+// pushPreview: qué se lee en la notificación. Un adjunto no trae texto, así que se nombra el tipo.
+// El cuerpo se recorta porque una notificación no es el mensaje, es el aviso de que llegó uno.
+//
+// OJO: `body` aquí es texto PLANO (el cifrado se aplica al guardar, no antes), así que esto se
+// llama con lo que se escribió, no con `encm:v1:…`.
+func pushPreview(mtype, body string) string {
+	if t := strings.TrimSpace(body); t != "" {
+		r := []rune(t)
+		if len(r) > 120 {
+			return string(r[:120])
+		}
+		return t
+	}
+	switch mtype {
+	case "image":
+		return "📷 Foto"
+	case "video":
+		return "🎥 Video"
+	case "audio":
+		return "🎤 Audio"
+	case "sticker":
+		return "🈸 Sticker"
+	case "document":
+		return "📄 Documento"
+	case "location":
+		return "📍 Ubicación"
+	case "contact":
+		return "👤 Contacto"
+	case "call":
+		return "📞 Llamada"
+	default:
+		return "Mensaje nuevo"
+	}
 }
 
 // ---------------------------------------------------------------- media bajo demanda

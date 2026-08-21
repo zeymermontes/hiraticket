@@ -123,7 +123,7 @@ export function TemplateManager() {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 16, alignItems: "start" }}>
+      <div className="stack-mobile" style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 16, alignItems: "start" }}>
         {/* ---- Builder ---- */}
         <div className="col gap-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14 }}>
           <div className="row gap-2">

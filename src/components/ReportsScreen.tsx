@@ -242,7 +242,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 24px 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${personal ? 4 : 5},1fr)`, gap: 14, marginBottom: 20 }}>
+        <div className="rep-grid stats" style={{ display: "grid", gridTemplateColumns: `repeat(${personal ? 4 : 5},1fr)`, gap: 14, marginBottom: 20 }}>
           {personal ? (
             <>
               <div className="ws-block" style={{ padding: 16 }}><Stat icon="orders" tone="brand" label={lang === "es" ? "Tareas" : "Tasks"} value={data.orderCount} /></div>
@@ -313,7 +313,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {lang === "es" ? "por fecha de pago, no de venta" : "by payment date, not sale date"}
               </span>
             </div>
-            <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+            <div className="ws-block-body rep-grid stats" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
               <Stat icon="check" tone="green" valueColor="var(--green)" label={lang === "es" ? "Cobrado en el periodo" : "Collected in period"} value={money(Math.round(data.collectedTotal))} />
               <Stat icon="orders" tone="slate" label={lang === "es" ? "De pedidos de este periodo" : "From this period's orders"} value={money(Math.round(data.collectedFromPeriodOrders))} />
               <Stat icon="clock" tone="slate" label={lang === "es" ? "De periodos anteriores" : "From earlier periods"} value={money(Math.round(data.collectedFromOtherOrders))} />
@@ -334,7 +334,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
               </span>
             </div>
             <div className="ws-block-body col gap-3">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
+              <div className="rep-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16 }}>
                 <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Registros" : "Entries"} value={data.wasteCount} />
                 <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Costo total" : "Total cost"} value={money(Math.round(data.wasteTotal))} />
               </div>
@@ -368,14 +368,14 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           </section>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
+        <div className="rep-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
           <BarList title={personal ? (lang === "es" ? "Subtareas más frecuentes" : "Most frequent subtasks") : (lang === "es" ? "Productos más vendidos" : "Best sellers")} rows={asBars(topQty, "qty", "brand")} />
           <BarList title={personal ? (lang === "es" ? "Subtareas menos frecuentes" : "Least frequent subtasks") : (lang === "es" ? "Productos menos vendidos" : "Worst sellers")} rows={asBars(bottomQty, "qty", "slate")} />
           {!personal && <BarList title={lang === "es" ? "Mayor ganancia" : "Top profit"} rows={asBars(topProfit, "profit", "green")} fmt={(n) => money(Math.round(n))} />}
           {!personal && <BarList title={lang === "es" ? "Menor ganancia" : "Lowest profit"} rows={asBars(bottomProfit, "profit", "amber")} fmt={(n) => money(Math.round(n))} />}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, alignItems: "start" }}>
+        <div className="rep-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, alignItems: "start" }}>
           <BarList title={lang === "es" ? "Por etapa" : "By stage"} rows={data.byStage} />
           <BarList title={lang === "es" ? "Por área" : "By area"} rows={data.byArea} />
           <BarList title={lang === "es" ? "Por agente" : "By agent"} rows={data.byAgent} />
@@ -390,7 +390,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                   {lang === "es" ? "no cuentan como venta" : "not counted as sales"}
                 </span>
               </div>
-              <div className="ws-block-body" style={{ display: "grid", gridTemplateColumns: `repeat(${!personal ? 3 : 1},1fr)`, gap: 16 }}>
+              <div className="ws-block-body rep-grid stats" style={{ display: "grid", gridTemplateColumns: `repeat(${!personal ? 3 : 1},1fr)`, gap: 16 }}>
                 <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Cancelados" : "Cancelled"} value={data.cancelledCount} />
                 {!personal && (
                   <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Valor cancelado" : "Cancelled value"} value={money(Math.round(data.cancelledTotal))} />

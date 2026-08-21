@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Pill } from "@/components/ui";
 import { Icon } from "@/components/Icon";
+import { menuStyle } from "@/lib/popover";
 import { useApp } from "@/components/AppContext";
 import { tagColor } from "@/lib/types";
 import { deleteTagFromCatalog } from "@/app/(app)/business/actions";
@@ -50,7 +51,7 @@ export function TagPicker({
   return (
     <>
       <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={onClose} />
-      <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 256), width: 240, maxHeight: 320, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden", zIndex: 201 }}>
+      <div className="menu" style={{ ...menuStyle(rect, { width: 240, height: 320, gap: 6 }), maxHeight: 320, display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
         <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
           <div className="field field-sm field-filled"><Icon name="tag" size={14} /><input autoFocus placeholder={lang === "es" ? "Buscar o crear…" : "Search or create…"} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) choose(q); }} /></div>
           {onRemove && current.length > 0 && (

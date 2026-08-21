@@ -88,7 +88,11 @@
 /* =====================================================
    CHAT — three column workspace
    ===================================================== */
-.chat { display: grid; grid-template-columns: 300px minmax(300px, 1fr) minmax(330px, 420px); flex: 1; min-height: 0; min-width: 0; }
+/* Las columnas vienen de `--chat-cols`, que ChatScreen escribe inline con los anchos que el
+   agente arrastró. Se hace con una VARIABLE y no con la propiedad para que la media query de móvil
+   pueda ganarle: un `grid-template-columns` inline le gana a cualquier hoja de estilos, y por eso
+   la regla de "una columna en el teléfono" llevaba tiempo escrita sin aplicarse jamás. */
+.chat { display: grid; grid-template-columns: var(--chat-cols, 300px minmax(300px, 1fr) minmax(330px, 420px)); flex: 1; min-height: 0; min-width: 0; }
 .chat.wide-ws { grid-template-columns: 300px minmax(360px, 1.2fr) minmax(320px, 400px); }
 .chat.no-ctx { grid-template-columns: 300px minmax(360px, 1fr); }
 .chatcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); background: var(--surface); }
@@ -401,10 +405,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
   .chat, .chat.wide-ws { grid-template-columns: 280px 1fr; }
   .chatcol.ctx { display: none; }
 }
-@media (max-width: 680px) {
-  .chat, .chat.wide-ws { grid-template-columns: 1fr; }
-  .chatcol.list.hide-mobile { display: none; }
-}
+/* El colapso a una columna vive en el bloque MÓVIL del final de este archivo, junto con el resto
+   de la barra inferior. Aquí había un @media de 680px que NUNCA se aplicó: ChatScreen escribe
+   `grid-template-columns` en el style inline y eso le gana a cualquier hoja de estilos. Ahora el
+   componente omite ese inline en móvil (ver `useIsMobile` en ChatScreen). */
 .ctx-toggle { display: none; }
 
 /* =====================================================
@@ -452,7 +456,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    MOBILE CHAT — docked beside the order drawer
    ===================================================== */
 .mchat { position: fixed; top: 0; bottom: 0; right: 560px; width: 372px; max-width: calc(100vw - 40px); z-index: 91; display: flex; align-items: center; justify-content: flex-end; padding: 22px 14px; pointer-events: none; }
-.mchat-phone { pointer-events: auto; width: 344px; height: min(760px, calc(100vh - 44px)); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 30px; box-shadow: var(--sh-lg); display: flex; flex-direction: column; overflow: hidden; animation: ht-slide-safe .26s var(--ease-out); }
+.mchat-phone { pointer-events: auto; width: 344px; height: min(760px, calc(100dvh - 44px)); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 30px; box-shadow: var(--sh-lg); display: flex; flex-direction: column; overflow: hidden; animation: ht-slide-safe .26s var(--ease-out); }
 .mchat-notch { height: 30px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--wa); position: relative; }
 .mchat-notch::before { content: ''; width: 70px; height: 6px; border-radius: 99px; background: rgba(255,255,255,.5); }
 .mchat-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--wa); color: #fff; }
@@ -464,3 +468,273 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 .mchat-composer { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--border); background: var(--surface); }
 .mchat-composer .field { flex: 1; height: 36px; border-radius: 999px; }
 @media (max-width: 1000px) { .mchat { right: 0; left: 0; justify-content: center; padding: 16px; background: rgba(20,18,10,.5); } }
+
+/* =====================================================
+   MÓVIL — shell y navegación
+   Un solo bloque, al final, para que sobreescriba sin pelear con especificidad.
+   768px va a mano: var() no funciona dentro de @media (ver --bp-mobile en tokens.css).
+   ===================================================== */
+.tabbar { display: none; }
+.more-sheet { display: none; }
+/* El gemelo de `.hide-mobile`: lo que SOLO existe en el teléfono (la flecha de volver del hilo).
+   Se pinta siempre y lo esconde el CSS, en vez de montarlo cuando JS averigua el ancho —- así no
+   aparece a destiempo empujando el encabezado. */
+.only-mobile { display: none !important; }
+/* `.hide-mobile` NO declara un display por defecto a propósito: se le cuelga a cosas muy distintas
+   (un chip inline-flex, una columna flex del chat) y forzar uno solo rompería a las demás en
+   escritorio. Solo esconde en móvil; fuera de ahí, cada elemento conserva el suyo. */
+
+@media (max-width: 768px) {
+  .hide-mobile { display: none !important; }
+  .only-mobile { display: inline-flex !important; }
+
+  /* El riel se va y el contenido ocupa todo. La barra inferior es `position: fixed`, así que no
+     entra en la rejilla: el hueco se hace con padding abajo del `.main`. */
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .main { padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom)); }
+
+  .topbar { padding: 0 10px; gap: 8px; padding-top: var(--sa-top); height: calc(var(--topbar-h) + var(--sa-top)); }
+  /* `min-width: 0` no es decorativo: un hijo flex no baja de su contenido salvo que se le diga, así
+     que el buscador se quedaba a su ancho natural y empujaba el botón de crear FUERA de la
+     pantalla (medido: se salía 11px). */
+  .topbar-search { max-width: none; min-width: 0; }
+  /* El botón de crear se queda solo con el ícono (su texto ya trae `hide-narrow`). */
+  .topbar .btn-primary { padding: 0 12px; }
+
+  .page-pad { padding: 14px 14px 20px; }
+  .phead { padding: 14px 14px 10px; gap: 10px; flex-wrap: wrap; }
+  .phead h1 { font-size: 19px; }
+  .tablewrap { margin: 0 14px 14px; }
+
+  /* ---- Barra inferior ---- */
+  .tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    height: calc(var(--tabbar-h) + var(--sa-bottom));
+    padding-bottom: var(--sa-bottom);
+    background: var(--surface); border-top: 1px solid var(--border);
+    /* La barra de gestos de iOS vive justo debajo: sin este respiro se toca el destino equivocado. */
+  }
+  .tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: none; background: transparent; color: var(--text-faint); font: inherit; padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab.on { color: var(--brand-700); }
+  [data-theme="dark"] .tab.on { color: var(--brand); }
+  .tab-ic { position: relative; display: flex; align-items: center; justify-content: center; height: 24px; }
+  .tab-ic svg { width: 23px; height: 23px; }
+  .tab-ic .badge { position: absolute; top: -5px; left: 12px; }
+  .tab-l { font-size: 10.5px; font-weight: 600; letter-spacing: .01em; }
+
+  /* ---- Panel "Más" ---- */
+  .more-sheet {
+    display: flex; flex-direction: column; position: fixed; inset: 0; z-index: 70;
+    background: var(--bg); padding-top: var(--sa-top);
+    padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom));
+    animation: ht-slide-up .2s var(--ease-out);
+  }
+  .more-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .more-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .more-item {
+    display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px;
+    border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface);
+    font-size: 14px; font-weight: 600; color: var(--text);
+  }
+  .more-item.on { border-color: var(--brand); background: var(--brand-50); color: var(--brand-700); }
+  .more-ic { position: relative; display: flex; flex: none; color: var(--text-muted); }
+  .more-item.on .more-ic { color: var(--brand-700); }
+  .more-ic .badge { position: absolute; top: -6px; left: 11px; }
+}
+
+@keyframes ht-slide-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* =====================================================
+   MÓVIL — chat y teclado
+   ===================================================== */
+@media (max-width: 768px) {
+  /* Una sola columna, y le gana al inline porque aquello solo define una variable. */
+  .chat, .chat.wide-ws, .chat.no-ctx { grid-template-columns: minmax(0, 1fr); }
+  /* Pero el estado vacío pide `grid-column: 2 / -1` en su style inline, y eso CREA una segunda
+     columna implícita: la rejilla volvía a partirse en dos aunque la plantilla dijera `1fr`. Medido
+     en un teléfono de 390px daba 133px + 257px. Aquí sí hace falta !important —- es un inline. */
+  .chatcol.center { grid-column: 1 / -1 !important; }
+  /* Los tiradores para redimensionar columnas no tienen sentido sin columnas que redimensionar,
+     y encima roban toques en el borde de la pantalla, que es donde se hace el gesto de "atrás". */
+  .col-resizer { display: none; }
+
+  /* El encabezado del hilo lleva flecha + avatar + nombre + panel + Resolver + Transferir. En
+     390px no cabe: los botones se encimaban encima del nombre. Se aprieta el espaciado, las
+     etiquetas de los botones se van (llevan `title`) y el nombre se queda con lo que sobra. */
+  .thread-head { padding: 8px 8px; gap: 6px; }
+  .thread-head > .grow { min-width: 0; }
+  .thread-head .btn-sm { padding: 0 10px; }
+  .thread { padding: 12px 12px 6px; }
+  .col-head { padding: 10px 12px; }
+  .composer { padding: 8px 10px; }
+  /* La burbuja puede ser más ancha: no compite con dos columnas más. */
+  .msg .bubble { max-width: min(86%, 520px); }
+}
+
+/* ---- Teclado abierto (ver src/lib/mobileViewport.ts) ----
+   `--kb` es lo que el teclado tapa. La app se encoge esa cantidad en vez de quedarse con media
+   interfaz debajo del teclado. */
+.app { height: calc(100% - var(--kb, 0px)); }
+@media (max-width: 768px) {
+  /* Con el teclado abierto la barra inferior es inalcanzable y solo roba alto al hilo. Se va, y
+     el hueco que le reservaba el .main también. */
+  html[data-kb="open"] .tabbar { display: none; }
+  html[data-kb="open"] .main { padding-bottom: 0; }
+}
+
+/* =====================================================
+   MÓVIL — listas como tarjetas (ver src/components/MobileCards.tsx)
+   ===================================================== */
+.cardlist { display: none; }
+@media (max-width: 768px) {
+  /* Una tabla de doce columnas obliga a barrer de lado para leer una sola fila. En móvil manda
+     la tarjeta; la tabla sigue en el DOM pero no se pinta. */
+  .tablewrap { display: none; }
+  .cardlist { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 16px; }
+
+  .card-row {
+    display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left;
+    padding: 12px 13px; border-radius: var(--r-lg); border: 1px solid var(--border);
+    background: var(--surface); box-shadow: var(--sh-xs); font: inherit; color: inherit;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .card-row:active { background: var(--surface-2); }
+  .card-row.sel { border-color: var(--brand); background: var(--brand-50); }
+  [data-theme="dark"] .card-row.sel { background: #221d0c; }
+  .card-row.dim { opacity: .72; }
+
+  .card-top { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; }
+  .card-top .grow { min-width: 0; }
+  .card-title { font-weight: 700; font-size: 14.5px; }
+  .card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; font-size: 12.5px; color: var(--text-muted); }
+  .cardlist-empty { text-align: center; padding: 40px 20px; }
+
+  /* Las que se quedan con tabla (datos densos de administración donde importan TODAS las columnas)
+     al menos fijan la primera columna, para no perder de vista de qué fila es cada dato. */
+  .tablewrap.keep-table { display: block; }
+  /* El `min-width: 1040px` de `table.tbl` está pensado para tablas de doce columnas. Las que se
+     quedan con tabla tienen cinco o seis: 620px basta y se barre mucho menos de lado. */
+  .tablewrap.keep-table .tbl { min-width: 620px; }
+  .tablewrap.keep-table .tbl thead th:first-child,
+  .tablewrap.keep-table .tbl tbody td:first-child {
+    position: sticky; left: 0; z-index: 1; background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+  .tablewrap.keep-table .tbl thead th:first-child { z-index: 3; background: var(--surface-2); }
+}
+
+/* =====================================================
+   MÓVIL — rejillas de página y bloques
+   ===================================================== */
+@media (max-width: 768px) {
+  /* Siete pantallas comparten la misma rejilla de dos columnas escrita en el `style` inline
+     (Ajustes, Negocio, Catálogo, Flujos, Agenda, Respuestas, Campañas). Se les puso la clase
+     `page-grid` para poder apilarlas aquí. El `!important` NO es pereza: sin él la hoja de estilos
+     no le gana a un style inline, y reescribir las siete a CSS era mover mucho más de lo que este
+     cambio necesita mover. */
+  .page-grid {
+    /* `minmax(0, 1fr)` y no `1fr` a secas: `1fr` significa `minmax(auto, 1fr)`, y ese `auto` no
+       deja que la columna baje del contenido mínimo de lo que lleva dentro. Un select con una
+       opción larga o una tabla anidada inflan la columna y la rejilla se sale sola —- el clásico
+       "grid blowout". Con `minmax(0, …)` la columna sí puede encoger y el que se ajusta es el hijo. */
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 14px !important;
+    padding: 0 14px 20px !important;
+  }
+  /* Los bloques de configuración que piden ocupar las dos columnas ya no tienen dos que ocupar. */
+  .page-grid > .ws-block { grid-column: auto !important; }
+}
+
+/* Reportes: sus rejillas también van en el `style` inline (repeat(5,1fr) para las cifras,
+   repeat(2..3,1fr) para las gráficas). En 390px eso son columnas de 78px. Mismo trato y misma
+   razón para el !important que en `.page-grid`. */
+@media (max-width: 768px) {
+  .rep-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; }
+  /* Las cifras sueltas sí caben de dos en dos: un número corto con su etiqueta. */
+  .rep-grid.stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
+/* =====================================================
+   MÓVIL — tablero (kanban)
+   ===================================================== */
+@media (max-width: 768px) {
+  /* Una etapa a la vez, con enganche: media columna asomándose a la derecha es lo que le dice a
+     la gente que hay más y que se desliza. Sin `scroll-snap` uno acaba siempre a medio camino
+     entre dos columnas. */
+  .board { padding: 4px 0 16px; scroll-snap-type: x mandatory; scroll-padding-left: 14px; }
+  .board-inner { gap: 10px; padding: 0 14px; }
+  .kcol { width: calc(100vw - 46px); scroll-snap-align: start; }
+  .kcol-head { padding: 10px 11px; }
+  /* La barra de filtros ya se envuelve sola; lo que le falta en móvil es respirar menos a los
+     lados y que los selects no se estiren a lo tonto. */
+  .toolbar { padding: 0 14px 12px; }
+  .toolbar > .field { flex: 1 1 100%; width: auto !important; }
+}
+
+/* =====================================================
+   MÓVIL — modales, drawer y menús
+   ===================================================== */
+@media (max-width: 768px) {
+  /* Un modal centrado de 460px en una pantalla de 390 queda pegado a los bordes y con el teclado
+     encima. Se convierte en hoja inferior: sube desde abajo, ancho completo, y el pulgar llega a
+     los botones sin estirarse. Los once componentes con `.modal` lo heredan sin tocarlos. */
+  .modal-wrap { padding: 0; align-items: flex-end; }
+  .modal, .modal.wide {
+    width: 100%; max-width: 100%;
+    max-height: calc(92dvh - var(--kb, 0px));
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    border-bottom: none;
+    padding-bottom: var(--sa-bottom);
+    animation: ht-sheet-up .22s var(--ease-out);
+  }
+  /* El tirador: no hace nada por sí solo, pero es lo que le dice a la gente que esto es una hoja
+     y no una ventana. */
+  .modal::before {
+    content: ""; display: block; flex: none; width: 38px; height: 4px; border-radius: 999px;
+    background: var(--border-strong); margin: 8px auto 0;
+  }
+  .modal-head { padding: 12px 16px 10px; }
+  .modal-body { padding: 0 16px 4px; }
+  .modal-foot { padding: 12px 16px 16px; }
+  /* Los botones de un pie de hoja se reparten el ancho: apuntar a uno chiquito con el pulgar en
+     el borde inferior es justo donde más se falla. */
+  .modal-foot .btn { flex: 1; }
+
+  /* El drawer de 560px se lleva la pantalla entera —- en un teléfono no hay "al lado". */
+  .drawer {
+    width: 100%; max-width: 100%; left: 0;
+    padding-bottom: var(--sa-bottom);
+    animation: ht-sheet-up .24s var(--ease-out);
+  }
+  .drawer-head { padding: 12px 14px; padding-top: calc(12px + var(--sa-top)); }
+  .drawer-body { padding: 14px; }
+  .drawer-foot { padding: 12px 14px; }
+  .drawer-foot .btn { flex: 1; }
+}
+
+@keyframes ht-sheet-up { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* La lista del chat de equipo: ancho fijo en escritorio, todo el ancho en el teléfono. Va en CSS
+   y no en un style inline por lo mismo que las columnas del chat de clientes. */
+.chatcol.int-list { width: 300px; flex: none; }
+@media (max-width: 768px) { .chatcol.int-list { width: auto; flex: 1; min-width: 0; } }
+
+/* Rejillas anidadas con una columna de ancho FIJO escrita en el style inline. En 390px una columna
+   de 300px más su compañera no caben, y el bloque se sale solo. Misma razón que `.page-grid` para
+   el !important: no se le gana a un inline desde una hoja de estilos. */
+@media (max-width: 768px) {
+  .stack-mobile { grid-template-columns: minmax(0, 1fr) !important; gap: 12px !important; }
+  /* La consola de plataforma trae su propio riel de 200px. */
+  .plat-app { grid-template-columns: minmax(0, 1fr) !important; }
+  .plat-app > nav:first-child { display: none; }
+
+  /* Un input dentro de una fila flex no baja de su ancho natural salvo que se le permita, y eso
+     empujaba los botones de al lado fuera de la pantalla (etapas y áreas en Negocio). */
+  .inp-inline, .field { min-width: 0; }
+}

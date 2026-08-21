@@ -27,10 +27,10 @@ export function CampaignsScreen({
     <div className="page">
       <div className="phead"><h1>{lang === "es" ? "Campañas" : "Campaigns"}</h1><Pill color="slate" large>{campaigns.length}</Pill></div>
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="send" size={16} /><h4>{lang === "es" ? "Historial" : "History"}</h4></div>
-          <div className="tablewrap">
+          <div className="tablewrap keep-table scroll">
             <table className="tbl">
               <thead><tr><th>{lang === "es" ? "Campaña" : "Campaign"}</th><th>{lang === "es" ? "Estado" : "Status"}</th><th>{lang === "es" ? "Audiencia" : "Audience"}</th><th>{lang === "es" ? "Entregado" : "Delivered"}</th><th>{lang === "es" ? "Leído" : "Read"}</th><th>{lang === "es" ? "Fecha" : "Date"}</th></tr></thead>
               <tbody>

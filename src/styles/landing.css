@@ -23,7 +23,11 @@
 /* hero */
 .hero { background: var(--ink); color: #fff; overflow: hidden; position: relative; }
 .hero::before { content: ''; position: absolute; width: 720px; height: 720px; border-radius: 50%; right: -200px; top: -260px; background: radial-gradient(circle, rgba(245,197,24,.18), transparent 68%); }
-.hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 72px 0 80px; position: relative; }
+/* `padding-block` y no el atajo `padding`: `.hero-grid` comparte elemento con `.lwrap`, y un
+   `padding: 72px 0 80px` le ponía el horizontal en CERO, borrando los 24px de `.lwrap`. En
+   escritorio no se notaba —- sobra ancho a los lados del contenedor de 1200px —- pero en un
+   teléfono el titular y el texto quedaban pegados al borde de la pantalla. */
+.hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding-block: 72px 80px; position: relative; }
 .hero-badge { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 10px; border-radius: 999px; background: rgba(245,197,24,.14); color: var(--brand); font-size: 12.5px; font-weight: 700; border: 1px solid rgba(245,197,24,.25); }
 .hero h1 { color: #fff; font-family: 'Archivo Expanded','Archivo',sans-serif; font-weight: 900; text-transform: uppercase; font-size: 54px; line-height: .98; letter-spacing: -.02em; margin: 20px 0 0; }
 .hero h1 .y { color: var(--brand); }
@@ -128,3 +132,70 @@
   .price-card.pop { transform: none; }
   .cta-band { padding: 36px 24px; }
 }
+
+/* =====================================================
+   MÓVIL — landing
+   El @media de 920px de arriba apila las rejillas, pero la BARRA seguía siendo una fila que no
+   envuelve con marca + ES/EN + tema + "Iniciar sesión" + "Prueba gratis": ~550px de ancho mínimo.
+   En un teléfono de 390px eso desbordaba y arrastraba la PÁGINA ENTERA de lado —- de ahí que el
+   hero se viera cortado por la derecha. Se arregla la causa (lo que no cabe se va al menú), no el
+   síntoma con un overflow:hidden que solo lo escondería.
+   ===================================================== */
+@media (max-width: 768px) {
+  .lwrap { padding: 0 16px; }
+
+  .announce { font-size: 12px; padding: 8px 14px; line-height: 1.35; }
+
+  .lnav-inner { height: 58px; gap: 10px; }
+  .brand { font-size: 16px; }
+  .brand .mark { width: 30px; height: 30px; font-size: 17px; }
+  /* El único botón que queda arriba: compacto, sin partirse en dos renglones. */
+  .lnav-cta { min-height: 38px; padding: 0 14px; font-size: 13.5px; white-space: nowrap; }
+
+  .lnav-sheet {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 16px 14px; border-top: 1px solid var(--border); background: var(--surface);
+  }
+  .lnav-sheet > a {
+    padding: 13px 4px; font-size: 15.5px; font-weight: 600; color: var(--text);
+    border-bottom: 1px solid var(--border);
+  }
+  .lnav-sheet-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+
+  /* Hero: 42px seguía siendo mucho para 390px —- "WHATSAPP" en Archivo Expanded no cabe. */
+  .hero-grid { padding-block: 34px 40px; gap: 26px; }
+  .hero h1 { font-size: 32px; }
+  .hero-sub { font-size: 15.5px; margin-top: 16px; }
+  .hero-cta { margin-top: 22px; }
+  .hero-cta .btn { flex: 1 1 100%; justify-content: center; }
+  .hero-trust { gap: 12px; margin-top: 20px; font-size: 12px; }
+
+  .sec { padding: 52px 0; }
+  .sec-head { margin-bottom: 32px; }
+  .sec-head h2 { font-size: 25px; }
+  .sec-head p { font-size: 15px; }
+
+  .feat { padding: 20px; }
+  .split { gap: 32px; }
+  .price-card { padding: 22px 20px; }
+  .price-amt .amt { font-size: 34px; }
+
+  .faq-q { padding: 15px 16px; font-size: 15px; }
+  .faq-a-inner { padding: 0 16px 16px 16px; }
+
+  .cta-band { padding: 34px 20px; border-radius: var(--r-xl); }
+  .cta-band h2 { font-size: 26px; }
+  .cta-band p { font-size: 15px; }
+
+  .quote blockquote { font-size: 19px; }
+  .logos { padding: 26px 0; }
+  .logos-row { gap: 22px; }
+  .logos-row .lg { font-size: 15px; }
+
+  .footer { padding: 36px 0 24px; }
+}
+
+/* Red de seguridad: un elemento decorativo o una palabra larguísima no deben poder volver a
+   arrastrar la página de lado. `clip` y no `hidden` porque `hidden` en el eje X convierte el eje Y
+   en scrollable y rompe el `position: sticky` de la barra. */
+.landing { overflow-x: clip; }

@@ -14,6 +14,8 @@ import { NavProgress } from "@/components/NavProgress";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { clearCache } from "@/lib/localCache";
+import { installKeyboardInset } from "@/lib/mobileViewport";
+import { PwaRegister } from "@/components/PwaRegister";
 import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
@@ -144,6 +146,22 @@ const ADMIN: NavItem[] = [
   { id: "settings", href: "/settings", icon: "settings", labelKey: "nav_settings" },
 ];
 
+/** La etiqueta de un destino depende del modo (negocio/personal) y del nombre que el negocio le
+ *  dio a su objeto. Vive aquí y no dentro del riel porque la barra inferior y el panel "Más" tienen
+ *  que decir exactamente lo mismo —- si se copia, a la primera semana ya no coinciden. */
+function navLabel(it: NavItem, t: (k: StringKey) => string, lang: "es" | "en", personal: boolean, objectName: string): string {
+  if (it.id === "orders") return objectName;
+  if (!personal) return t(it.labelKey);
+  if (it.id === "business") return lang === "es" ? "Espacio" : "Workspace";
+  if (it.id === "catalog") return lang === "es" ? "Repetitivas" : "Recurring";
+  if (it.id === "contacts") return lang === "es" ? "Contactos" : "Contacts";
+  return t(it.labelKey);
+}
+
+/** Los cinco destinos de la barra inferior en móvil. Cinco es el tope que se puede tocar con el
+ *  pulgar sin fallar en una pantalla de 390px; el resto del NAV vive detrás de "Más". */
+const TAB_IDS = ["chat", "orders", "kanban", "internal"] as const;
+
 export interface ShellUser {
   id: string;
   name: string;
@@ -208,7 +226,7 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
       <Link key={it.id} href={it.href} prefetch={false} className={"rail-item" + (on ? " on" : "")}
         onMouseEnter={() => armPrefetch(it.href)} onMouseLeave={cancelPrefetch} onClick={() => onNavigate?.(it.href)}>
         <Icon name={it.icon} />
-        <span className="rl">{it.id === "orders" ? objectName : it.id === "business" && personal ? (lang === "es" ? "Espacio" : "Workspace") : it.id === "catalog" && personal ? (lang === "es" ? "Repetitivas" : "Recurring") : it.id === "contacts" && personal ? (lang === "es" ? "Contactos" : "Contacts") : t(it.labelKey)}</span>
+        <span className="rl">{navLabel(it, t, lang, personal, objectName)}</span>
         <span className="rail-badges">
           {badge != null && badge > 0 && (
             <span className={"badge" + (it.red ? " badge-red" : "")} title={it.id === "internal" ? (lang === "es" ? "Mensajes del equipo sin leer" : "Unread team messages") : (lang === "es" ? "Asignados a ti" : "Assigned to you")}>{badge}</span>
@@ -248,6 +266,129 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
         )}
       </div>
     </nav>
+  );
+}
+
+/**
+ * Navegación en móvil: barra inferior de cinco + panel "Más".
+ *
+ * El riel lateral no se adapta —- son 15 destinos en vertical, y en un teléfono se come la mitad
+ * de la pantalla. Se sustituye por lo que la gente ya sabe usar sin que se lo expliquen: cuatro
+ * destinos fijos al alcance del pulgar y todo lo demás detrás de "Más".
+ *
+ * Riel y barra existen a la vez en el DOM y decide el CSS cuál se ve (`.rail` / `.tabbar`), no
+ * `useIsMobile`: así el servidor pinta el correcto de una vez. Con JavaScript habría un parpadeo
+ * de riel en cada carga, porque en el servidor no hay ventana que medir.
+ */
+function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, connected, dueDates, onNavigate }: {
+  badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>;
+  objectName: string; user: ShellUser; isAdmin: boolean; connected: boolean; dueDates: string[];
+  onNavigate?: (href: string) => void;
+}) {
+  const pathname = usePathname();
+  const { lang, setLang, theme, setTheme, t, personal } = useApp();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Cambiar de sección cierra el panel. Va por pathname y no en el onClick de cada fila para que
+  // también cierre cuando se navega desde otro lado (una notificación, el buscador).
+  useEffect(() => { setMoreOpen(false); }, [pathname]);
+  // Con el panel abierto, el fondo no debe hacer scroll detrás.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [moreOpen]);
+
+  const tabs = TAB_IDS.map((id) => PRIMARY.find((p) => p.id === id)!).filter(Boolean);
+  const inTabs = new Set<string>(TAB_IDS);
+  const rest = [...PRIMARY.filter((it) => !inTabs.has(it.id)), ...ADMIN.filter((it) => isAdmin || !it.adminOnly)];
+  // "Más" se marca activo cuando estás en cualquier sección que vive detrás de él: sin eso, entrar
+  // a Reportes deja la barra entera apagada y parece que estás en ningún lado.
+  const onRest = rest.some((it) => pathname === it.href || pathname.startsWith(it.href + "/"));
+
+  const tabBadge = (id: string) => (badges[id] ?? 0) + (secondaryBadges[id] ?? 0);
+
+  return (
+    <>
+      <nav className="tabbar" aria-label={lang === "es" ? "Navegación" : "Navigation"}>
+        {tabs.map((it) => {
+          const on = pathname === it.href || pathname.startsWith(it.href + "/");
+          const n = tabBadge(it.id);
+          return (
+            <Link key={it.id} href={it.href} prefetch={false} className={"tab" + (on ? " on" : "")} onClick={() => onNavigate?.(it.href)}>
+              <span className="tab-ic">
+                <Icon name={it.icon} />
+                {n > 0 && <span className={"badge" + (it.red ? " badge-red" : "")}>{n > 99 ? "99+" : n}</span>}
+              </span>
+              <span className="tab-l">{navLabel(it, t, lang, personal, objectName)}</span>
+            </Link>
+          );
+        })}
+        <button className={"tab" + (onRest || moreOpen ? " on" : "")} onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}>
+          <span className="tab-ic"><Icon name={moreOpen ? "x" : "dots"} /></span>
+          <span className="tab-l">{lang === "es" ? "Más" : "More"}</span>
+        </button>
+      </nav>
+
+      {moreOpen && (
+        <div className="more-sheet" role="dialog" aria-modal="true">
+          <div className="more-head">
+            <Avatar name={user.name} initials={deriveInitials(user.name)} color={user.color || "#0E8C82"} size={40} presence="online" src={user.avatarUrl ?? undefined} />
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700 }} className="truncate">{user.name}</div>
+              <div className="t-xs muted truncate">{user.email}</div>
+            </div>
+            <button className="iconbtn" onClick={() => setMoreOpen(false)} aria-label={lang === "es" ? "Cerrar" : "Close"}><Icon name="x" /></button>
+          </div>
+
+          <div className="more-body scroll">
+            {/* El chip de conexión y las banderitas de fechas no caben en la barra de arriba en un
+                teléfono, pero son de lo primero que un agente quiere ver: se mudan aquí, no se
+                pierden. */}
+            <Link className={"conn-chip " + (connected ? "ok" : "down")} href="/settings" prefetch={false} style={{ width: "100%", justifyContent: "flex-start", height: 44 }}>
+              <span className="conn-dot" />
+              <Icon name={connected ? "whatsapp" : "wifioff"} size={16} />
+              <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
+            </Link>
+            <DueFlags dates={dueDates} onNavigate={onNavigate} />
+
+            <div className="more-grid">
+              {rest.map((it) => {
+                const on = pathname === it.href || pathname.startsWith(it.href + "/");
+                const n = (badges[it.id] ?? 0) + (secondaryBadges[it.id] ?? 0);
+                return (
+                  <Link key={it.id} href={it.href} prefetch={false} className={"more-item" + (on ? " on" : "")} onClick={() => onNavigate?.(it.href)}>
+                    <span className="more-ic"><Icon name={it.icon} size={20} />{n > 0 && <span className={"badge" + (it.red ? " badge-red" : "")}>{n > 99 ? "99+" : n}</span>}</span>
+                    <span className="truncate">{navLabel(it, t, lang, personal, objectName)}</span>
+                  </Link>
+                );
+              })}
+              <Link href="/profile" prefetch={false} className={"more-item" + (pathname === "/profile" ? " on" : "")} onClick={() => onNavigate?.("/profile")}>
+                <span className="more-ic"><Icon name="user" size={20} /></span>
+                <span className="truncate">{lang === "es" ? "Perfil" : "Profile"}</span>
+              </Link>
+            </div>
+
+            <div className="row gap-2" style={{ marginTop: 4 }}>
+              <div className="seg grow" style={{ height: 42 }}>
+                <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
+                <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+              </div>
+              <button className="btn btn-outline" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />{theme === "dark" ? t("light") : t("dark")}
+              </button>
+            </div>
+
+            {/* Igual que en el riel: se borra el caché local de mensajes (texto plano en este
+                aparato) antes de cerrar la sesión. */}
+            <form action="/auth/signout" method="post" onSubmit={() => { clearCache().catch(() => {}); }}>
+              <button className="btn btn-danger btn-block" type="submit"><Icon name="lock" size={15} />{t("sign_out")}</button>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -317,21 +458,23 @@ function TopBar({ notifications, connected, businessId, dueDates = [], onNavigat
       </div>
       <span className="grow" />
 
-      <DueFlags dates={dueDates} onNavigate={onNavigate} />
+      {/* `hide-mobile`: en un teléfono estas cuatro cosas no caben en la barra y viven en el panel
+          "Más" (ver MobileNav). Arriba se quedan solo buscador, campana y crear. */}
+      <span className="hide-mobile"><DueFlags dates={dueDates} onNavigate={onNavigate} /></span>
 
-      <Link className={"conn-chip " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings" prefetch={false}>
+      <Link className={"conn-chip hide-mobile " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings" prefetch={false}>
         <span className="conn-dot" />
         <Icon name={connected ? "whatsapp" : "wifioff"} size={15} />
         <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
       </Link>
 
-      <div className="seg" style={{ height: 34 }}>
+      <div className="seg hide-mobile" style={{ height: 34 }}>
         <button className={lang === "es" ? "on" : ""} onClick={() => setLang("es")}>ES</button>
         <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
       </div>
 
       <button
-        className="iconbtn"
+        className="iconbtn hide-mobile"
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         aria-label={theme === "dark" ? t("light") : t("dark")}
       >
@@ -402,6 +545,10 @@ export function Shell({
     } catch {}
   }, [pending]);
 
+  // El teclado del teléfono tapa el composer en iOS si nadie mide el viewport de verdad.
+  // Se instala una sola vez, en el shell, para que valga en todas las pantallas. Ver mobileViewport.
+  useEffect(() => installKeyboardInset(), []);
+
   // Let pages signal "badges may have changed" (e.g. the team chat after marking a channel read).
   useEffect(() => {
     const h = () => refreshBadges();
@@ -434,6 +581,7 @@ export function Shell({
         <ConfirmProvider>
           <NavProgress />
           <BuildSkewGuard />
+          <PwaRegister />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />
@@ -446,6 +594,9 @@ export function Shell({
                 </div>
               )}
             </div>
+            {/* Riel y barra inferior conviven en el DOM; el CSS decide cuál se ve. Ver MobileNav. */}
+            <MobileNav badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin}
+              connected={connected} dueDates={dueDates} onNavigate={onNavigate} />
           </div>
         </ConfirmProvider>
       </ToastProvider>

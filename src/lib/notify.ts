@@ -84,25 +84,45 @@ export function playPing() {
 }
 
 /** Notificación del sistema. Solo cuando la pestaña NO está al frente: con la pestaña visible el
- *  toast ya cumple, y duplicarlo es ruido. */
+ *  toast ya cumple, y duplicarlo es ruido.
+ *
+ *  Pasa por el SERVICE WORKER cuando lo hay, y no por `new Notification()`. Eso no es un detalle:
+ *  en Android Chrome `new Notification()` LANZA excepción —- exige un service worker —- así que el
+ *  `catch` de abajo se comía todos los avisos en teléfono y nadie se enteraba. Con el SW registrado
+ *  funcionan los dos, y de paso el clic lo maneja `notificationclick` en sw.js, que reusa la
+ *  ventana abierta en vez de abrir otra. */
 export function desktopNotify(opts: { title: string; body: string; href?: string; tag?: string; image?: string }) {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (!desktopEnabled() || Notification.permission !== "granted") return;
   if (document.visibilityState === "visible") return;
+
+  const icon = opts.image || "/icons/icon-192.png";
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (reg) {
+        reg.showNotification(opts.title, {
+          body: opts.body, icon, badge: "/icons/icon-192.png", tag: opts.tag,
+          data: { href: opts.href || "/chat" },
+        }).catch(() => {});
+      } else {
+        legacyNotify(opts, icon);
+      }
+    }).catch(() => legacyNotify(opts, icon));
+    return;
+  }
+  legacyNotify(opts, icon);
+}
+
+/** Camino viejo, para escritorio sin service worker registrado todavía. */
+function legacyNotify(opts: { title: string; body: string; href?: string; tag?: string }, icon: string) {
   try {
-    const n = new Notification(opts.title, {
-      body: opts.body,
-      icon: opts.image || "/icon.svg",
-      // Mismo tag = la nueva reemplaza a la anterior, así 20 mensajes de un chat no apilan
-      // 20 notificaciones del sistema.
-      tag: opts.tag,
-    });
+    const n = new Notification(opts.title, { body: opts.body, icon, tag: opts.tag });
     n.onclick = () => {
       window.focus();
       if (opts.href) window.location.href = opts.href;
       n.close();
     };
-  } catch { /* algunos navegadores exigen service worker (Android) — se ignora */ }
+  } catch { /* sin SW y sin soporte: se queda en el toast */ }
 }
 
 /** Vibra, donde el dispositivo pueda.
@@ -119,4 +139,86 @@ export const CALL_VIBRATION = [400, 200, 400, 200, 400];
 export function alertIncoming(opts: { title: string; body: string; href?: string; tag?: string; image?: string }) {
   playPing();
   desktopNotify(opts);
+}
+
+/* ============================================================
+   WEB PUSH — avisos con la app CERRADA
+   Lo de arriba solo funciona con la pestaña abierta. Esto registra el dispositivo para que el
+   servidor pueda empujar (ver src/lib/push.ts y public/sw.js).
+   ============================================================ */
+
+/** La clave pública VAPID viaja al navegador; la privada JAMÁS. Sin clave, no hay push y la app
+ *  se comporta como antes. */
+const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
+
+export const pushSupported = () =>
+  typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && !!VAPID_PUBLIC;
+
+/** La clave viaja en base64url y `applicationServerKey` la quiere en bytes. */
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padded = (base64 + "=".repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(padded);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/** Lo que hay que mandarle al servidor para poder empujar a este aparato. */
+export interface PushSubJSON { endpoint: string; p256dh: string; auth: string; ua: string }
+
+const toJSON = (sub: PushSubscription): PushSubJSON | null => {
+  const j = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+  if (!j.endpoint || !j.keys?.p256dh || !j.keys?.auth) return null;
+  return { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, ua: navigator.userAgent };
+};
+
+/**
+ * Suscribe este dispositivo. DEBE llamarse desde un gesto de la persona (el botón de Ajustes):
+ * los navegadores ignoran —- o penalizan para siempre —- una petición de permiso sin gesto, y en
+ * iOS es requisito estricto.
+ *
+ * Devuelve la suscripción para que el llamador la guarde en el servidor, o null con el motivo.
+ */
+export async function subscribeToPush(): Promise<{ ok: true; sub: PushSubJSON } | { ok: false; reason: "unsupported" | "denied" | "failed" }> {
+  if (!pushSupported()) return { ok: false, reason: "unsupported" };
+  const perm = await requestNotifyPermission();
+  if (perm !== "granted") return { ok: false, reason: "denied" };
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    // Si ya había una, se reusa: volver a suscribir con otra clave falla, y de todos modos el
+    // endpoint sería el mismo.
+    const existing = await reg.pushManager.getSubscription();
+    const sub = existing ?? await reg.pushManager.subscribe({
+      userVisibleOnly: true, // obligatorio en Chrome: nada de push silencioso
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) as BufferSource,
+    });
+    const j = toJSON(sub);
+    return j ? { ok: true, sub: j } : { ok: false, reason: "failed" };
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+}
+
+/** Baja de este dispositivo. Devuelve el endpoint que se dio de baja, para borrarlo del servidor. */
+export async function unsubscribeFromPush(): Promise<string | null> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return null;
+    const endpoint = sub.endpoint;
+    await sub.unsubscribe();
+    return endpoint;
+  } catch { return null; }
+}
+
+/** El endpoint actual, si este aparato ya está suscrito. Sirve para marcar "este dispositivo" en
+ *  la lista de Ajustes. */
+export async function currentPushEndpoint(): Promise<string | null> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
+    return sub?.endpoint ?? null;
+  } catch { return null; }
 }

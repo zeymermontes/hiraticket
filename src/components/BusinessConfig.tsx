@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { menuStyle } from "@/lib/popover";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { type PillColor, tagColor } from "@/lib/types";
@@ -34,7 +35,7 @@ function ColorPicker({ value, onPick }: { value: string; onPick: (c: string) => 
       {rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, padding: 8, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, zIndex: 201 }}>
+          <div className="menu" style={{ ...menuStyle(rect, { width: 138, height: 120, gap: 6 }), padding: 8, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
             {COLORS.map((c) => (
               <button key={c} onClick={() => { onPick(c); setRect(null); }} style={{ width: 22, height: 22, borderRadius: 6, background: `var(--${c})`, border: c === value ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer" }} />
             ))}
@@ -220,7 +221,7 @@ export function BusinessConfig({
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         {/* Vertical + object name */}
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
           <div className="ws-block-head"><Icon name="store" size={16} /><h4>{lang === "es" ? "Tipo de espacio" : "Workspace type"}</h4></div>
