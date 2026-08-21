@@ -284,7 +284,6 @@ function InviteModal({ businessId, areas, onClose, onChanged }: { businessId: st
 
   const errMsg = (e?: string) =>
     e === "no-account" ? (lang === "es" ? "Esta persona aún no tiene cuenta en Hiraticket. Pídele que cree una cuenta primero, o usa un enlace de invitación." : "This person doesn't have a Hiraticket account yet. Ask them to sign up first, or use an invite link.")
-      : e === "in-another-team" ? (lang === "es" ? "Ya pertenece a otro equipo. Una cuenta solo puede estar en un equipo." : "Already belongs to another team. An account can only be in one team.")
         : e === "already-member" ? (lang === "es" ? "Ya está en tu equipo." : "Already in your team.")
           : e === "forbidden" ? (lang === "es" ? "Necesitas permisos de admin." : "You need admin rights.")
             : (lang === "es" ? "No se pudo invitar." : "Couldn't invite.");

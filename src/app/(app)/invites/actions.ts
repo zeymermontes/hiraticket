@@ -1,6 +1,8 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { ORG_COOKIE } from "@/lib/queries";
 import { getSessionUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { configuredOrigin } from "@/lib/url";
@@ -81,9 +83,19 @@ export async function getTokenInvite(token: string): Promise<{ ok: boolean; busi
   return { ok: true, businessName, inviterName, role: inv.role as Role };
 }
 
-async function alreadyInTeam(userId: string): Promise<boolean> {
+/**
+ * ¿Ya está en ESTA organización?
+ *
+ * Antes la pregunta era "¿está en alguna?", y bastaba con eso para rechazar la invitación —- era la
+ * regla de una cuenta, un equipo. Ahora un correo puede estar en varias, así que lo único que sigue
+ * sin tener sentido es entrar dos veces al mismo sitio: la llave primaria de business_members es
+ * (business_id, user_id), o sea que el insert fallaría igual, pero con un error de base de datos en
+ * vez de un mensaje que se entienda.
+ */
+async function alreadyInThisTeam(userId: string, businessId: string): Promise<boolean> {
   const admin = createAdminClient();
-  const { data } = await admin.from("business_members").select("business_id").eq("user_id", userId).limit(1).maybeSingle();
+  const { data } = await admin.from("business_members").select("business_id")
+    .eq("user_id", userId).eq("business_id", businessId).maybeSingle();
   return !!data;
 }
 
@@ -91,15 +103,18 @@ async function alreadyInTeam(userId: string): Promise<boolean> {
 export async function acceptInvite(inviteId: string): Promise<{ ok: boolean; error?: string }> {
   const u = await me();
   if (!u) return { ok: false, error: "auth" };
-  if (await alreadyInTeam(u.id)) return { ok: false, error: "already-in-team" };
   const admin = createAdminClient();
   const { data: inv } = await admin.from("team_invites").select("business_id, role, area_id, email, expires_at").eq("id", inviteId).is("token", null).maybeSingle();
   if (!inv) return { ok: false, error: "not-found" };
+  if (await alreadyInThisTeam(u.id, inv.business_id as string)) return { ok: false, error: "already-in-team" };
   if (inv.email && (inv.email as string).toLowerCase() !== (u.email ?? "").toLowerCase()) return { ok: false, error: "mismatch" };
   if (inv.expires_at && new Date(inv.expires_at as string) < new Date()) return { ok: false, error: "expired" };
   const { error } = await admin.from("business_members").insert({ business_id: inv.business_id, user_id: u.id, role: inv.role, area_id: inv.area_id ?? null });
   if (error) return { ok: false, error: error.message };
   await admin.from("team_invites").delete().eq("id", inviteId);
+  // Entrar a la organización a la que te acaban de invitar es lo que espera cualquiera; sin esto
+  // aterrizarías en la primera que tengas y parecería que la invitación no hizo nada.
+  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -117,15 +132,16 @@ export async function declineInvite(inviteId: string): Promise<void> {
 export async function acceptToken(token: string): Promise<{ ok: boolean; error?: string }> {
   const u = await me();
   if (!u) return { ok: false, error: "auth" };
-  if (await alreadyInTeam(u.id)) return { ok: false, error: "already-in-team" };
   const admin = createAdminClient();
   const { data: inv } = await admin.from("team_invites").select("id, business_id, role, area_id, expires_at, max_uses, used_count").eq("token", token).maybeSingle();
   if (!inv) return { ok: false, error: "invalid" };
+  if (await alreadyInThisTeam(u.id, inv.business_id as string)) return { ok: false, error: "already-in-team" };
   if (inv.expires_at && new Date(inv.expires_at as string) < new Date()) return { ok: false, error: "expired" };
   if (inv.max_uses != null && (inv.used_count as number) >= (inv.max_uses as number)) return { ok: false, error: "used" };
   const { error } = await admin.from("business_members").insert({ business_id: inv.business_id, user_id: u.id, role: inv.role, area_id: inv.area_id ?? null });
   if (error) return { ok: false, error: error.message };
   await admin.from("team_invites").update({ used_count: (inv.used_count as number) + 1 }).eq("id", inv.id as string);
+  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
   return { ok: true };
 }

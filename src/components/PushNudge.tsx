@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useApp } from "@/components/AppContext";
 import { browserSupportsPush, pushKeyPresent, subscribeToPush, currentPushEndpoint } from "@/lib/notify";
-import { savePushSubscription } from "@/app/(app)/settings/push-actions";
+import { savePushSubscription, listPushDevices } from "@/app/(app)/settings/push-actions";
 import { isStandalone } from "@/lib/useIsMobile";
 
 const DISMISSED = "ht_pushNudge";
@@ -35,8 +35,14 @@ export function PushNudge() {
     // En iPhone el push solo existe con la app en la pantalla de inicio; ahí el aviso que toca es
     // el de instalar (InstallAppRow), no este.
     if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !isStandalone()) return;
-    // Si este aparato ya está suscrito no hay nada que pedir.
-    currentPushEndpoint().then((ep) => { if (!ep) setShow(true); }).catch(() => {});
+    // "Ya está suscrito" se pregunta contra la ORGANIZACIÓN activa, no contra el navegador: quien
+    // entra a una segunda organización tiene suscripción de navegador pero ninguna fila ahí, y
+    // sin este matiz el aviso no aparecería justo donde hace falta.
+    (async () => {
+      const ep = await currentPushEndpoint();
+      const devices = await listPushDevices(ep ?? undefined);
+      if (!devices.some((d) => d.current)) setShow(true);
+    })().catch(() => {});
   }, []);
 
   const dismiss = () => { setShow(false); try { localStorage.setItem(DISMISSED, "off"); } catch {} };

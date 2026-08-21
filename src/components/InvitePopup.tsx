@@ -17,7 +17,7 @@ function Inner({ businessName, inviterName, role, inviteId, token }: { businessN
   const [err, setErr] = useState<string | null>(null);
 
   const errMsg = (e?: string) =>
-    e === "already-in-team" ? (lang === "es" ? "Ya perteneces a un equipo. Cada cuenta puede estar en uno solo." : "You already belong to a team. Each account can be in one only.")
+    e === "already-in-team" ? (lang === "es" ? "Ya perteneces a esta organización." : "You already belong to this organization.")
       : e === "expired" ? (lang === "es" ? "Esta invitación expiró." : "This invitation expired.")
         : e === "used" ? (lang === "es" ? "Este enlace ya se usó." : "This link was already used.")
           : (lang === "es" ? "No se pudo aceptar la invitación." : "Couldn't accept the invitation.");
@@ -70,7 +70,7 @@ function NoticeInner({ reason }: { reason?: string }) {
   const { lang } = useApp();
   const msg = reason === "expired" ? (lang === "es" ? "Este enlace de invitación expiró." : "This invite link has expired.")
     : reason === "used" ? (lang === "es" ? "Este enlace de invitación ya se usó." : "This invite link was already used.")
-      : reason === "already-in-team" ? (lang === "es" ? "Ya perteneces a un equipo. Cada cuenta puede estar en uno solo." : "You already belong to a team. Each account can be in one only.")
+      : reason === "already-in-team" ? (lang === "es" ? "Ya perteneces a esta organización." : "You already belong to this organization.")
         : (lang === "es" ? "Este enlace de invitación no es válido." : "This invite link is not valid.");
   return (
     <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", gap: 14, alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>

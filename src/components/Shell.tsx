@@ -18,6 +18,7 @@ import { installKeyboardInset } from "@/lib/mobileViewport";
 import { PwaRegister } from "@/components/PwaRegister";
 import { InstallAppRow } from "@/components/InstallApp";
 import { PushNudge } from "@/components/PushNudge";
+import { OrgSwitcher, type OrgOption } from "@/components/OrgSwitcher";
 import { loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import { liveBadges } from "@/lib/chatLive";
 import { createClient } from "@/lib/supabase/client";
@@ -175,7 +176,7 @@ export interface ShellUser {
   avatarUrl?: string | null;
 }
 
-function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNavigate }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser; isAdmin: boolean; onNavigate?: (href: string) => void }) {
+function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNavigate, orgs = [], activeOrg }: { badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>; objectName: string; user: ShellUser; isAdmin: boolean; onNavigate?: (href: string) => void; orgs?: OrgOption[]; activeOrg: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const { lang, t, personal } = useApp();
@@ -267,6 +268,8 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
                   navegador no sabe instalar, InstallAppRow no devuelve nada. */}
               <InstallAppRow />
               <div className="menu-sep" />
+              <OrgSwitcher orgs={orgs} activeId={activeOrg} onDone={() => setProfOpen(false)} />
+              <div className="menu-sep" />
               {/* Wipe the local message cache (plaintext on this device) before the session ends. */}
               <form action="/auth/signout" method="post" onSubmit={() => { clearCache().catch(() => {}); }}><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
             </div>
@@ -288,10 +291,10 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
  * `useIsMobile`: así el servidor pinta el correcto de una vez. Con JavaScript habría un parpadeo
  * de riel en cada carga, porque en el servidor no hay ventana que medir.
  */
-function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, connected, dueDates, onNavigate }: {
+function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, connected, dueDates, onNavigate, orgs = [], activeOrg }: {
   badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>;
   objectName: string; user: ShellUser; isAdmin: boolean; connected: boolean; dueDates: string[];
-  onNavigate?: (href: string) => void;
+  onNavigate?: (href: string) => void; orgs?: OrgOption[]; activeOrg: string;
 }) {
   const pathname = usePathname();
   const { lang, setLang, theme, setTheme, t, personal } = useApp();
@@ -392,6 +395,10 @@ function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, co
                 <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />{theme === "dark" ? t("light") : t("dark")}
               </button>
             </div>
+
+            {/* El espejo del selector del riel. Con una sola organización aquí solo queda "Crear
+                organización", que es lo que debe ver quien no sabe que esto existe. */}
+            <OrgSwitcher orgs={orgs} activeId={activeOrg} variant="block" onDone={() => setMoreOpen(false)} />
 
             {/* Igual que en el riel: se borra el caché local de mensajes (texto plano en este
                 aparato) antes de cerrar la sesión. */}
@@ -515,6 +522,7 @@ export function Shell({
   personal = false,
   isAdmin = false,
   dueDates = [],
+  orgs = [],
   children,
 }: {
   user: ShellUser;
@@ -529,6 +537,8 @@ export function Shell({
   isAdmin?: boolean;
   /** Fechas (ISO) de pedidos con fecha límite y citas programadas, para las banderitas del TopBar. */
   dueDates?: string[];
+  /** Organizaciones de esta persona. Con una sola, el selector no se pinta (ver OrgSwitcher). */
+  orgs?: OrgOption[];
   children: React.ReactNode;
 }) {
   // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
@@ -627,7 +637,7 @@ export function Shell({
           <PwaRegister />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
-            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />
+            <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} orgs={orgs} activeOrg={businessId} />
             <div className="main" style={{ position: "relative" }}>
               <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={due} onNavigate={onNavigate} />
               {children}
@@ -642,7 +652,7 @@ export function Shell({
             </div>
             {/* Riel y barra inferior conviven en el DOM; el CSS decide cuál se ve. Ver MobileNav. */}
             <MobileNav badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin}
-              connected={connected} dueDates={due} onNavigate={onNavigate} />
+              connected={connected} dueDates={due} onNavigate={onNavigate} orgs={orgs} activeOrg={businessId} />
           </div>
         </ConfirmProvider>
       </ToastProvider>

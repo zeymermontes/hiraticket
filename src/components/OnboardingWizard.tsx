@@ -7,7 +7,7 @@ import type { Business } from "@/lib/types";
 import { createBusiness, completeOnboarding } from "@/app/(app)/actions";
 
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, extra }: { children: React.ReactNode; extra?: boolean }) {
   const { lang } = useApp();
   return (
     <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24, gap: 14 }}>
@@ -18,19 +18,31 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
         {children}
       </div>
-      <a href="/logout" className="t-sm muted" style={{ textDecoration: "none" }}>{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>
+      {/* Creando una organización ADICIONAL ya hay sesión y hay a dónde volver: ofrecer "cerrar
+          sesión" ahí sería la salida equivocada. */}
+      {extra
+        ? <a href="/chat" className="t-sm muted" style={{ textDecoration: "none" }}>{lang === "es" ? "Cancelar y volver" : "Cancel and go back"}</a>
+        : <a href="/logout" className="t-sm muted" style={{ textDecoration: "none" }}>{lang === "es" ? "Cerrar sesión" : "Sign out"}</a>}
     </div>
   );
 }
 
-export function OnboardingWizard({ business, email }: { business: Business | null; email?: string }) {
+/**
+ * `extra`: se está creando una organización ADICIONAL, no la primera.
+ *
+ * Cambia tres cosas y ninguna es cosmética: se entra directo al formulario (la pantalla de
+ * "¿crear o unirme?" no aplica cuando ya estás dentro), createBusiness sabe que el alta es
+ * deliberada y no un doble envío, y al terminar se va a la app —- la nueva queda activa, así que
+ * el asistente de configuración aparecerá para ella y no para la de siempre.
+ */
+export function OnboardingWizard({ business, email, extra = false }: { business: Business | null; email?: string; extra?: boolean }) {
   const { lang } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"business" | "personal">("business");
   const [err, setErr] = useState<string | null>(null);
-  const [path, setPath] = useState<"choose" | "create" | "join">("choose");
+  const [path, setPath] = useState<"choose" | "create" | "join">(extra ? "create" : "choose");
 
   // Phase A — no team yet: first choose to create your own workspace or join an existing one.
   if (!business) {
@@ -85,7 +97,7 @@ export function OnboardingWizard({ business, email }: { business: Business | nul
       if (!name.trim()) return;
       setErr(null);
       start(async () => {
-        try { await createBusiness(name, mode); router.refresh(); }
+        try { await createBusiness(name, mode, extra); if (extra) router.push("/chat"); router.refresh(); }
         catch (e) { setErr(e instanceof Error ? e.message : "error"); }
       });
     }
@@ -94,11 +106,13 @@ export function OnboardingWizard({ business, email }: { business: Business | nul
       { id: "personal", icon: "orders", title: lang === "es" ? "Gestión personal" : "Personal management", desc: lang === "es" ? "Tareas con subtareas, sin dinero. Para organizar tu trabajo." : "Tasks with subtasks, no money. To organize your work." },
     ];
     return (
-      <Shell>
-        <button type="button" className="row gap-1 t-sm muted" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 10 }} onClick={() => setPath("choose")}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="arrowr" size={14} /></span>{lang === "es" ? "Atrás" : "Back"}</button>
-        <h1 style={{ fontSize: 24 }}>{lang === "es" ? "Crea tu espacio" : "Create your workspace"}</h1>
+      <Shell extra={extra}>
+        {!extra && <button type="button" className="row gap-1 t-sm muted" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 10 }} onClick={() => setPath("choose")}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="arrowr" size={14} /></span>{lang === "es" ? "Atrás" : "Back"}</button>}
+        <h1 style={{ fontSize: 24 }}>{extra ? (lang === "es" ? "Nueva organización" : "New organization") : (lang === "es" ? "Crea tu espacio" : "Create your workspace")}</h1>
         <p className="muted" style={{ marginTop: 4, marginBottom: 18 }}>
-          {lang === "es" ? "Elige cómo lo vas a usar. Sin datos de ejemplo." : "Choose how you'll use it. No sample data."}
+          {extra
+            ? (lang === "es" ? "Empieza de cero: sus chats, pedidos y equipo no se mezclan con los de la otra." : "Starts empty: its chats, orders and team don't mix with the other one's.")
+            : (lang === "es" ? "Elige cómo lo vas a usar. Sin datos de ejemplo." : "Choose how you'll use it. No sample data.")}
         </p>
         <div className="col gap-2">
           <label className="lbl">{lang === "es" ? "Nombre" : "Name"}</label>

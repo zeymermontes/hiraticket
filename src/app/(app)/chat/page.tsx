@@ -45,7 +45,11 @@ export default async function ChatPage({
   // Both are resolved directly instead of scanning the list, which is only a window now.
   let detail = urlDetail;
   if (!detail && !sp.c) {
-    const lastChat = (await cookies()).get("ht_lastChat")?.value;
+    // La cookie lleva el id del negocio: con varias organizaciones, un "último chat" sin dueño
+    // apunta a una conversación ajena al cambiar. Hoy eso NO filtra nada —- getConversationDetail
+    // usa el cliente con RLS y devuelve null—, pero es una consulta tirada y un comportamiento
+    // raro: entras a otra organización y no abre nada por un id que no era de ahí.
+    const lastChat = (await cookies()).get(`ht_lastChat_${business.id}`)?.value;
     detail = lastChat ? await getConversationDetail(lastChat) : null;
     if (!detail) {
       const { rows: newest } = await getConversationListPage(business.id, { scope: "all", limit: 1 });

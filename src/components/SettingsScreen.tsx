@@ -472,29 +472,41 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
     } finally { setBusy(false); }
   };
 
+  /**
+   * Apagar aquí. El orden importa y es al revés de como estaba.
+   *
+   * Antes se soltaba la suscripción del NAVEGADOR y luego se borraba la fila. Con una sola
+   * organización daba igual; con varias, ese primer paso apagaba también los avisos de las otras
+   * —- la suscripción del navegador es una sola y compartida. Así que primero se borra la fila de
+   * esta organización, y solo si no queda ninguna más usando el aparato se suelta el navegador.
+   */
   const disable = async () => {
     setErr(null); setBusy(true);
     try {
-      const ep = await unsubscribeFromPush();
-      if (ep) await removePushSubscription(ep);
-      await refresh(null);
+      const ep = endpoint ?? await currentPushEndpoint();
+      if (ep) {
+        const r = await removePushSubscription(ep);
+        if (r.remaining === 0) await unsubscribeFromPush();
+      }
+      await refresh();
     } finally { setBusy(false); }
   };
 
   const forget = async (d: PushDevice) => {
     setBusy(true);
     try {
-      // Si es ESTE, además hay que soltar la suscripción del navegador: borrar solo la fila dejaría
-      // al navegador creyendo que sigue suscrito y el botón diría "activado" sin estarlo.
-      if (d.current) { await unsubscribeFromPush(); }
-      await removePushDevice(d.id);
-      await refresh(d.current ? null : undefined);
+      const r = await removePushDevice(d.id);
+      // Solo cuando este aparato ya no le sirve a NINGUNA organización se da de baja en el
+      // navegador: si no, borrar la fila dejaría al navegador creyéndose suscrito.
+      if (d.current && r.remaining === 0) await unsubscribeFromPush();
+      await refresh();
     } finally { setBusy(false); }
   };
 
   // iOS solo entrega push a la app instalada. Decirlo antes de que alguien pique un botón que no
   // puede funcionar.
   const iosBlocked = iOS && !standalone;
+  const enabledHere = devices.some((d) => d.current);
 
   return (
     <div className="col gap-2">
@@ -513,7 +525,11 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
                   : (es ? "El servidor te avisa aunque no tengas Hiraticket abierto" : "The server alerts you even with Hiraticket closed")}
           </span>
         </span>
-        {endpoint ? (
+        {/* Activado aquí = hay una fila para ESTA organización con el endpoint de este navegador.
+            Antes bastaba con que el navegador tuviera suscripción, y con multiempresa eso mentía:
+            activabas en una, cambiabas a la otra y Ajustes decía "activado" sin que existiera fila
+            —- o sea, sin que esa organización pudiera avisarte nunca. */}
+        {enabledHere ? (
           <button className="btn btn-sm btn-outline" disabled={busy} onClick={disable}>
             <Icon name="x" size={14} />{es ? "Desactivar aquí" : "Turn off here"}
           </button>

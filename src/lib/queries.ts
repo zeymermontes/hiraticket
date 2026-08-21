@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Business, OrderRow } from "@/lib/types";
@@ -15,14 +16,22 @@ async function _getMyBusiness(): Promise<Business | null> {
   if (!user) return null;
   // Scope to the business the user is a MEMBER of. A platform admin can read every business via RLS,
   // so "the first readable business" would return someone else's tenant — we must filter by membership.
-  // Ordered by created_at: with more than one membership the pick has to be STABLE, otherwise the
-  // app hops between workspaces from one request to the next.
-  const { data: mem, error: memErr } = await supabase
+  //
+  // Con varias organizaciones, cuál es la ACTIVA lo dice la cookie `ht_org`. Y la seguridad sale por
+  // construcción, no por una comprobación aparte: la cookie no dice qué negocio leer, solo ELIGE
+  // entre los tuyos. Un valor inventado —- o el de una organización ajena —- no encuentra pareja en
+  // la lista de membresías y se cae a la primera. Nunca puede apuntar fuera.
+  //
+  // El orden por created_at sigue importando: sin cookie, la elección tiene que ser ESTABLE o la
+  // app saltaría de una organización a otra entre peticiones.
+  const { data: mems, error: memErr } = await supabase
     .from("business_members").select("business_id")
-    .eq("user_id", user.id).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    .eq("user_id", user.id).order("created_at", { ascending: true });
   if (memErr) throw new Error(`No se pudo leer tu membresía: ${memErr.message}`);
-  if (!mem?.business_id) return null;
-  const bizId = mem.business_id as string;
+  if (!mems?.length) return null;
+  const mine = mems.map((m) => m.business_id as string);
+  const wanted = (await cookies()).get(ORG_COOKIE)?.value;
+  const bizId = wanted && mine.includes(wanted) ? wanted : mine[0];
 
   const BASE = "id, name, vertical, object_singular, onboarded, custom_fields";
   // Try with the optional columns (migrations 0019/0027/0028). Fall back gracefully if not there yet.
@@ -87,6 +96,36 @@ async function _getMyBusiness(): Promise<Business | null> {
  *  (Render en Oregon, Supabase en us-east-1) eso se nota en cada clic.
  *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
 export const getMyBusiness = cache(_getMyBusiness);
+
+/** Nombre de la cookie que dice en qué organización estás. Vive aquí porque quien la LEE es
+ *  getMyBusiness; quien la escribe (setActiveOrg) la importa de aquí para que no haya dos textos. */
+export const ORG_COOKIE = "ht_org";
+
+/** Las organizaciones de las que la persona es miembro, con su rol en cada una. Alimenta el
+ *  selector del menú de perfil; con una sola, el selector no se pinta. */
+export async function listMyOrgs(): Promise<{ id: string; name: string; role: string; mode: string }[]> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  if (!user) return [];
+  const { data: mems } = await supabase
+    .from("business_members").select("business_id, role")
+    .eq("user_id", user.id).order("created_at", { ascending: true });
+  if (!mems?.length) return [];
+  const ids = mems.map((m) => m.business_id as string);
+  // El nombre y el modo se piden aparte: `business_members` no los tiene, y un join anidado por RLS
+  // aquí es más frágil que dos lecturas.
+  const { data: bizs } = await supabase.from("businesses").select("id, name, mode").in("id", ids);
+  const byId = new Map((bizs ?? []).map((b) => [b.id as string, b]));
+  return mems.map((m) => {
+    const b = byId.get(m.business_id as string);
+    return {
+      id: m.business_id as string,
+      name: (b?.name as string) ?? "—",
+      role: (m.role as string) ?? "agent",
+      mode: (b?.mode as string) ?? "business",
+    };
+  });
+}
 
 export type OrderSortKey = "code" | "total" | "updated_at" | "created_at" | "due_at";
 

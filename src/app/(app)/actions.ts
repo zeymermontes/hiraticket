@@ -1,6 +1,8 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { ORG_COOKIE, listMyOrgs } from "@/lib/queries";
 import { getSessionUser } from "@/lib/auth";
 import { encryptBody } from "@/lib/msgcrypto";
 import { ensureTag } from "@/lib/tags";
@@ -156,30 +158,34 @@ export async function moveOrderArea(orderId: string, areaId: string): Promise<vo
  * Creates the caller's business with a working default pipeline (no sample data).
  * Used by the first-run onboarding wizard.
  */
-export async function createBusiness(name: string, mode: string = "business"): Promise<void> {
+export async function createBusiness(name: string, mode: string = "business", extra = false): Promise<void> {
   const supabase = await createClient();
   const personal = mode === "personal";
 
-  // Guard against a double-submit (or a getMyBusiness read that failed and sent an existing user
-  // back to onboarding) turning into a second tenant. Creating one is not idempotent: every call
-  // seeds its own stages, areas, subscription and WhatsApp session.
+  // El guarda contra el doble envío se queda, pero deja de significar "una por cuenta".
+  //
+  // Sigue protegiendo el alta INICIAL: crear no es idempotente —- cada llamada siembra sus etapas,
+  // áreas, suscripción y sesión de WhatsApp—, así que un doble clic o un getMyBusiness que falló y
+  // devolvió a alguien al asistente no pueden acabar en dos negocios. Lo que ya no hace es impedir
+  // una organización ADICIONAL pedida a propósito (`extra`), que es justo lo contrario.
   const user = await getSessionUser();
-  if (user) {
+  if (user && !extra) {
     const { data: existing, error: memErr } = await supabase
       .from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (memErr) throw new Error(`No se pudo verificar tu membresía: ${memErr.message}`);
     if (existing?.business_id) { revalidatePath("/", "layout"); return; }
   }
 
-  const { error } = await supabase.rpc("create_business", {
+  const { data: newId, error } = await supabase.rpc("create_business", {
     p_name: name.trim() || (personal ? "Mi espacio" : "Mi negocio"),
     p_vertical: personal ? "personal" : "imprenta",
   });
   if (error) throw new Error(error.message);
-  // Set the workspace mode + default noun (orders→"Pedido" / tasks→"Tarea") on the new business.
-  const { data: biz } = await supabase.from("businesses").select("id").order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (biz) {
-    const businessId = biz.id as string;
+  // El id lo DEVUELVE el RPC. Antes se adivinaba con "el negocio más reciente", que con varias
+  // organizaciones es una carrera esperando a pasar: dos altas casi simultáneas y configuras la
+  // ajena. Ver create_business en 0006_onboarding.sql.
+  const businessId = newId as string | null;
+  if (businessId) {
     await supabase.from("businesses").update({ mode: personal ? "personal" : "business", object_singular: personal ? "Tarea" : "Pedido", product_stages: personal }).eq("id", businessId);
     if (personal) {
       // Replace the (business) seeded pipeline with task-oriented stages.
@@ -191,7 +197,29 @@ export async function createBusiness(name: string, mode: string = "business"): P
       await supabase.from("stages").insert(taskStages.map(([name, color], i) => ({ business_id: businessId, name, color, position: i })));
     }
   }
+  // La organización recién creada pasa a ser la activa: quien la crea quiere entrar en ella.
+  if (businessId) (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
+}
+
+/**
+ * Cambia de organización activa.
+ *
+ * Verificar la membresía aquí no es lo que da la seguridad —- eso ya lo hace getMyBusiness, que solo
+ * sabe elegir entre las tuyas— pero sí evita dejar una cookie inútil que confunda al depurar.
+ */
+export async function setActiveOrg(businessId: string): Promise<{ ok: boolean }> {
+  const orgs = await listMyOrgs();
+  if (!orgs.some((o) => o.id === businessId)) return { ok: false };
+  (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+  // El layout entero se rearma: insignias, riel, realtime y la sección en la que estés.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Para el selector: las organizaciones de la persona, con su rol en cada una. */
+export async function myOrgs() {
+  return listMyOrgs();
 }
 
 /** Marks the one-time onboarding as done (finished or skipped). */

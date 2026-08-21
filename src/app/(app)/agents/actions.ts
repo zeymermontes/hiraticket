@@ -88,7 +88,7 @@ export async function deactivateAgent(businessId: string, userId: string): Promi
 
 /** Invite an EXISTING account to the team — never creates an account on someone's behalf. The person
  *  accepts via a popup on their next visit. Errors: 'no-account' (tell them to sign up first),
- *  'in-another-team', 'already-member'. */
+ *  'already-member'. */
 export async function inviteAgent(
   businessId: string, email: string, role: "admin" | "agent" | "viewer", areaId?: string | null, allowExtra = false,
 ): Promise<{ ok: boolean; error?: string; extra?: { included: number; current: number; price: number } }> {
@@ -101,9 +101,11 @@ export async function inviteAgent(
   const { data: uid } = await admin.rpc("user_id_by_email", { p_email: clean });
   if (!uid) return { ok: false, error: "no-account" };
 
-  // One team per account (for now): block if they already belong to a team.
-  const { data: existing } = await admin.from("business_members").select("business_id").eq("user_id", uid).limit(1).maybeSingle();
-  if (existing) return { ok: false, error: existing.business_id === businessId ? "already-member" : "in-another-team" };
+  // Pertenecer a otro equipo ya no estorba: un correo puede estar en varias organizaciones, con rol
+  // distinto en cada una. Lo único que se sigue rechazando es invitar dos veces al mismo sitio.
+  const { data: existing } = await admin.from("business_members").select("business_id")
+    .eq("user_id", uid).eq("business_id", businessId).maybeSingle();
+  if (existing) return { ok: false, error: "already-member" };
 
   // Seat check: members + pending email invites vs allowed = plan.included + paid extra_seats. Going
   // over is allowed (each extra agent costs 250 MXN/mo) but the caller must confirm first (allowExtra).

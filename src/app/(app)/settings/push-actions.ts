@@ -27,9 +27,11 @@ export async function savePushSubscription(sub: {
   if (!user || !business) return { ok: false, error: "no-session" };
   if (!sub.endpoint || !sub.p256dh || !sub.auth) return { ok: false, error: "bad-subscription" };
 
-  // Upsert por endpoint: el navegador reusa el mismo al volver a suscribir, y sin esto cada
-  // "activar" dejaría una fila más apuntando al mismo aparato.
-  const { error } = await supabase.from("push_subscriptions").upsert({
+  // Upsert por (organización, endpoint): el navegador reusa el mismo endpoint al volver a
+  // suscribir, y sin upsert cada "activar" dejaría una fila más apuntando al mismo aparato. La
+  // organización va en la llave porque un aparato puede recibir de VARIAS —- con `endpoint` a
+  // secas, activar en la segunda pisaba en silencio la suscripción de la primera. Ver 0083.
+  const row = {
     business_id: business.id,
     user_id: user.id,
     endpoint: sub.endpoint,
@@ -37,37 +39,68 @@ export async function savePushSubscription(sub: {
     auth: sub.auth,
     ua: (sub.ua ?? "").slice(0, 300) || null,
     last_seen_at: new Date().toISOString(),
-  }, { onConflict: "endpoint" });
+  };
+  let { error } = await supabase.from("push_subscriptions").upsert(row, { onConflict: "business_id,endpoint" });
+  // Con 0083 sin aplicar todavía, esa llave no existe y Postgres rechaza el ON CONFLICT. Se cae a
+  // la de 0082 para que un despliegue que llegue antes que la migración no deje a nadie sin poder
+  // activar los avisos —- misma cascada que el resto del código ante una columna que aún no está.
+  if (error) ({ error } = await supabase.from("push_subscriptions").upsert(row, { onConflict: "endpoint" }));
 
   if (error) return { ok: false, error: error.message };
   return { ok: true };
 }
 
-export async function removePushSubscription(endpoint: string): Promise<{ ok: boolean }> {
+/**
+ * Baja de ESTA organización en este navegador.
+ *
+ * Con varias organizaciones ya no vale borrar por endpoint a secas: el mismo aparato puede estar
+ * recibiendo avisos de dos, y apagarlos en una no puede apagar la otra. Pero la suscripción del
+ * NAVEGADOR es una sola y compartida, así que solo se puede soltar cuando no queda ninguna
+ * organización usándola —- por eso se devuelve `remaining`, para que quien llama sepa si además
+ * tiene que darse de baja en el navegador.
+ */
+export async function removePushSubscription(endpoint: string): Promise<{ ok: boolean; remaining: number }> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  if (!user || !endpoint) return { ok: false };
-  const { error } = await supabase.from("push_subscriptions").delete().eq("endpoint", endpoint).eq("user_id", user.id);
-  return { ok: !error };
+  const business = await getMyBusiness();
+  if (!user || !endpoint || !business) return { ok: false, remaining: 0 };
+  const { error } = await supabase.from("push_subscriptions").delete()
+    .eq("endpoint", endpoint).eq("user_id", user.id).eq("business_id", business.id);
+  return { ok: !error, remaining: await stillUsing(endpoint, user.id) };
 }
 
-export async function removePushDevice(id: string): Promise<{ ok: boolean }> {
+/** Quita un aparato de la lista de Ajustes (la papelera). Mismo criterio que arriba. */
+export async function removePushDevice(id: string): Promise<{ ok: boolean; remaining: number }> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  if (!user || !id) return { ok: false };
+  if (!user || !id) return { ok: false, remaining: 0 };
+  const { data: row } = await supabase.from("push_subscriptions").select("endpoint").eq("id", id).eq("user_id", user.id).maybeSingle();
   const { error } = await supabase.from("push_subscriptions").delete().eq("id", id).eq("user_id", user.id);
-  return { ok: !error };
+  const endpoint = (row?.endpoint as string) ?? "";
+  return { ok: !error, remaining: endpoint ? await stillUsing(endpoint, user.id) : 0 };
 }
 
-/** Los dispositivos en los que esta persona activó las notificaciones. */
+/** ¿Cuántas organizaciones siguen apuntando a este endpoint? */
+async function stillUsing(endpoint: string, userId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count } = await supabase.from("push_subscriptions")
+    .select("id", { count: "exact", head: true }).eq("endpoint", endpoint).eq("user_id", userId);
+  return count ?? 0;
+}
+
+/** Los dispositivos en los que esta persona activó las notificaciones, EN ESTA organización.
+ *  Sin filtrar por negocio, quien está en dos vería el mismo teléfono repetido una vez por cada
+ *  una, sin nada que las distinga. */
 export async function listPushDevices(currentEndpoint?: string): Promise<PushDevice[]> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  if (!user) return [];
+  const business = await getMyBusiness();
+  if (!user || !business) return [];
   const { data, error } = await supabase
     .from("push_subscriptions")
     .select("id, ua, created_at, endpoint")
     .eq("user_id", user.id)
+    .eq("business_id", business.id)
     .order("created_at", { ascending: false });
   if (error) return []; // 0082 sin aplicar todavía
   return (data ?? []).map((d) => ({

@@ -894,7 +894,7 @@ export function ChatScreen({
     setDetail(_detailCache.get(c.id) ?? skeletonDetail(c));
     // Persist immediately on the explicit click (the URL lags behind the optimistic open, so the
     // URL-guarded effect below can miss it and the "last chat" cookie would get stuck).
-    try { document.cookie = `ht_lastChat=${c.id}; path=/; max-age=2592000; SameSite=Lax`; } catch {}
+    try { document.cookie = `ht_lastChat_${businessId}=${c.id}; path=/; max-age=2592000; SameSite=Lax`; } catch {}
     // history.pushState instead of router.push: opening a chat only changes the DETAIL, but a
     // router navigation re-runs the whole /chat server component — list, agents, areas, stages,
     // sessions, products, integrations — on every click, and the route is force-dynamic so nothing
@@ -1141,7 +1141,7 @@ export function ChatScreen({
   // via the URL, so the most-recent default doesn't overwrite it.
   useEffect(() => {
     if (detail && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("c") === detail.id) {
-      document.cookie = `ht_lastChat=${detail.id}; path=/; max-age=2592000; SameSite=Lax`;
+      document.cookie = `ht_lastChat_${businessId}=${detail.id}; path=/; max-age=2592000; SameSite=Lax`;
     }
   }, [detail?.id]);
 

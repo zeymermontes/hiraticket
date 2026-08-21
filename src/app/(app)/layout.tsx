@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getMyBusiness } from "@/lib/queries";
+import { getMyBusiness, listMyOrgs } from "@/lib/queries";
 import { getShellBadges } from "@/lib/shellBadges";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { Shell, type ShellUser } from "@/components/Shell";
@@ -52,9 +52,10 @@ export default async function AppLayout({
 
   // Las insignias van todas juntas en getShellBadges, que es también lo que refresca `/chat/live`
   // en vivo: si se calcularan aquí a mano, el refresco y la carga inicial dirían cosas distintas.
-  const [badges, sessions, { data: mem }] = await Promise.all([
+  const [badges, sessions, orgs, { data: mem }] = await Promise.all([
     getShellBadges(business.id, user.id, myName, business.done_from_stage_id ?? null),
     getSessions(business.id),
+    listMyOrgs(),
     supabase.from("business_members").select("role").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
   ]);
   const objectName = (business.object_singular ?? "Pedido") + "s";
@@ -72,6 +73,7 @@ export default async function AppLayout({
       isAdmin={mem?.role === "admin"}
       notifPrefs={parseNotifPrefs(prof?.notif_prefs)}
       dueDates={badges.dueDates}
+      orgs={orgs}
     >
       {children}
     </Shell>
