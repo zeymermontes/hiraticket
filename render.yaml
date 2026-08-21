@@ -65,6 +65,20 @@ services:
       # --- Mercado Pago ---
       - key: MP_INTEGRATOR_ID
         sync: false
+      # --- Notificaciones push (Web Push / VAPID) ---
+      # Se generan UNA vez con `npx web-push generate-vapid-keys` y NO se rotan: rotarlas invalida
+      # todas las suscripciones existentes y cada agente tendría que volver a activar el push en
+      # cada uno de sus dispositivos.
+      - key: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      # Contacto que los servidores de push (Google/Apple/Mozilla) usan para reportar problemas.
+      - key: VAPID_SUBJECT
+        sync: false
+      # Secreto compartido con el worker de whatsmeow (mismo valor en los dos servicios).
+      - key: PUSH_HOOK_SECRET
+        sync: false
 
   # WhatsApp worker (whatsmeow, Go). Sessions persist in Postgres — no disk needed, and the
   # session survives a region move without rescanning the QR.
@@ -92,4 +106,11 @@ services:
       # Must match the web service's value exactly. Without it the worker still boots and
       # only prints a warning, then silently marks every encrypted outbound message failed.
       - key: MESSAGE_SECRET_KEY
+        sync: false
+      # Para avisarle a la app de los mensajes nuevos y que empuje la notificación. APP_URL es la
+      # URL pública del servicio web; PUSH_HOOK_SECRET tiene que ser el MISMO valor que allá. Si
+      # faltan, el worker arranca igual y solo avisa que no habrá push.
+      - key: APP_URL
+        sync: false
+      - key: PUSH_HOOK_SECRET
         sync: false

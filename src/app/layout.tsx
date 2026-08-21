@@ -50,6 +50,11 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+        {/* Next 16 emite el meta estándar `mobile-web-app-capable`, pero iOS anterior a 17 solo
+            entiende el heredado con prefijo `apple-`. Sin él, la app agregada a la pantalla de
+            inicio abre dentro de Safari con su barra —- y ahí NO hay Web Push. Una línea que
+            decide si las notificaciones existen o no en la mitad de los iPhone. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
       </head>
       <body>{children}</body>

@@ -6,7 +6,10 @@ import { clearCache } from "@/lib/localCache";
 import { clearMediaCache } from "@/lib/mediaCache";
 import { PALETTE_GROUPS } from "@/lib/palette";
 import { Icon } from "@/components/Icon";
-import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled } from "@/lib/notify";
+import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled,
+  pushSupported, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
+import { isStandalone } from "@/lib/useIsMobile";
+import { savePushSubscription, removePushSubscription, removePushDevice, listPushDevices, type PushDevice } from "@/app/(app)/settings/push-actions";
 import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
 import { loadNotifPrefs, saveNotifPrefs } from "@/app/(app)/settings/notif-actions";
 import { NOTIF_PREFS_EVENT } from "@/components/RealtimeNotifier";
@@ -342,6 +345,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
               </div>
             </div>
             <DesktopNotifRow lang={lang} />
+            <PushRow lang={lang} />
             <NotifPrefsRows lang={lang} />
           </div>
         </section>
@@ -402,6 +406,144 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
       </div>
     </div>
   );
+}
+
+/**
+ * Notificaciones con la app CERRADA (Web Push).
+ *
+ * Es distinto de la fila de arriba y por eso va aparte: aquello son notificaciones que pinta ESTA
+ * pestaña mientras está abierta; esto es el servidor empujando a este aparato aunque la app no esté
+ * corriendo. Es lo único que sirve cuando el agente trae el teléfono en la bolsa.
+ *
+ * Se activa por dispositivo, no por cuenta: el permiso lo da el navegador de cada aparato. De ahí
+ * la lista —- quien activó en el teléfono y en la laptop tiene que poder quitar uno sin tocar el
+ * otro, y ver desde dónde le están llegando avisos.
+ *
+ * Lo de iOS se dice claro y sin adornos: Safari solo entrega push a una app AGREGADA A LA PANTALLA
+ * DE INICIO. En una pestaña normal no hay push y no hay forma de que la haya —- no es algo que se
+ * arregle con código.
+ */
+function PushRow({ lang }: { lang: "es" | "en" }) {
+  const es = lang === "es";
+  const [supported, setSupported] = useState(true);
+  const [endpoint, setEndpoint] = useState<string | null>(null);
+  const [devices, setDevices] = useState<PushDevice[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [standalone, setStandalone] = useState(true);
+  const [iOS, setIOS] = useState(false);
+
+  const refresh = async (ep?: string | null) => {
+    const cur = ep !== undefined ? ep : await currentPushEndpoint();
+    setEndpoint(cur);
+    setDevices(await listPushDevices(cur ?? undefined));
+  };
+
+  useEffect(() => {
+    setSupported(pushSupported());
+    setStandalone(isStandalone());
+    setIOS(/iPad|iPhone|iPod/.test(navigator.userAgent));
+    refresh().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const enable = async () => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await subscribeToPush();
+      if (!r.ok) {
+        setErr(r.reason === "denied"
+          ? (es ? "El navegador no dio permiso. Actívalo desde el candado de la barra de direcciones." : "The browser denied permission. Enable it from the padlock in the address bar.")
+          : (es ? "No se pudo activar en este dispositivo." : "Couldn't enable it on this device."));
+        return;
+      }
+      const saved = await savePushSubscription(r.sub);
+      if (!saved.ok) {
+        // Pasa si la migración 0082 todavía no se corrió: mejor decirlo que dejar un botón que
+        // parece que funcionó y no manda nada.
+        setErr(es ? "Se activó en el navegador pero no se pudo guardar en el servidor." : "Enabled in the browser but couldn't be saved on the server.");
+        return;
+      }
+      setDesktopEnabled(true);
+      await refresh(r.sub.endpoint);
+    } finally { setBusy(false); }
+  };
+
+  const disable = async () => {
+    setErr(null); setBusy(true);
+    try {
+      const ep = await unsubscribeFromPush();
+      if (ep) await removePushSubscription(ep);
+      await refresh(null);
+    } finally { setBusy(false); }
+  };
+
+  const forget = async (d: PushDevice) => {
+    setBusy(true);
+    try {
+      // Si es ESTE, además hay que soltar la suscripción del navegador: borrar solo la fila dejaría
+      // al navegador creyendo que sigue suscrito y el botón diría "activado" sin estarlo.
+      if (d.current) { await unsubscribeFromPush(); }
+      await removePushDevice(d.id);
+      await refresh(d.current ? null : undefined);
+    } finally { setBusy(false); }
+  };
+
+  // iOS solo entrega push a la app instalada. Decirlo antes de que alguien pique un botón que no
+  // puede funcionar.
+  const iosBlocked = iOS && !standalone;
+
+  return (
+    <div className="col gap-2">
+      <div className="row gap-2">
+        <span className="grow">
+          {es ? "Avisos con la app cerrada" : "Alerts when the app is closed"}
+          <span className="t-xs muted" style={{ display: "block" }}>
+            {!supported
+              ? (es ? "Este navegador no soporta notificaciones push" : "This browser doesn't support push notifications")
+              : iosBlocked
+                ? (es ? "En iPhone hay que instalar la app primero: Compartir → Agregar a inicio" : "On iPhone, install the app first: Share → Add to Home Screen")
+                : (es ? "El servidor te avisa aunque no tengas Hiraticket abierto" : "The server alerts you even with Hiraticket closed")}
+          </span>
+        </span>
+        {endpoint ? (
+          <button className="btn btn-sm btn-outline" disabled={busy} onClick={disable}>
+            <Icon name="x" size={14} />{es ? "Desactivar aquí" : "Turn off here"}
+          </button>
+        ) : (
+          <button className="btn btn-sm btn-primary" disabled={busy || !supported || iosBlocked} onClick={enable}>
+            <Icon name="bell" size={14} />{busy ? (es ? "Activando…" : "Enabling…") : (es ? "Activar aquí" : "Enable here")}
+          </button>
+        )}
+      </div>
+      {err && <span className="t-xs" style={{ color: "var(--red)" }}>{err}</span>}
+      {devices.length > 0 && (
+        <div className="col gap-1" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          <span className="t-xs muted">{es ? "Dispositivos con avisos activos" : "Devices receiving alerts"}</span>
+          {devices.map((d) => (
+            <div key={d.id} className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="grow truncate t-sm">
+                {describeUA(d.ua, es)}{d.current && <span className="muted"> · {es ? "este dispositivo" : "this device"}</span>}
+              </span>
+              <button className="iconbtn sm" disabled={busy} title={es ? "Quitar" : "Remove"} onClick={() => forget(d)}><Icon name="trash" size={15} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** El user-agent crudo no le dice nada a nadie. Se reduce a "iPhone · Safari", que es lo que la
+ *  persona necesita para reconocer cuál de sus aparatos es. */
+function describeUA(ua: string | null, es: boolean): string {
+  if (!ua) return es ? "Dispositivo" : "Device";
+  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android"
+    : /Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : (es ? "Dispositivo" : "Device");
+  // El orden importa: Edge y Chrome se anuncian como Safari, y Chrome también como Edge.
+  const browser = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome"
+    : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return browser ? `${os} · ${browser}` : os;
 }
 
 /** Notificaciones del sistema: estado del permiso + interruptor.

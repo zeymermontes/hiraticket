@@ -15,6 +15,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { clearCache } from "@/lib/localCache";
 import { installKeyboardInset } from "@/lib/mobileViewport";
+import { PwaRegister } from "@/components/PwaRegister";
 import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
@@ -580,6 +581,7 @@ export function Shell({
         <ConfirmProvider>
           <NavProgress />
           <BuildSkewGuard />
+          <PwaRegister />
           <RealtimeNotifier businessId={businessId} userId={user.id} myName={user.name} prefs={notifPrefs} onChange={refreshBadges} />
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />

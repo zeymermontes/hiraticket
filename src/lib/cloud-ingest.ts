@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptBody } from "@/lib/msgcrypto";
+import { pushInboundMessage } from "@/lib/push";
 import { officialSessionByPhoneNumberId, type CloudSession } from "@/lib/cloud-session";
 import { getMediaInfo, downloadMedia } from "@/lib/whatsapp-cloud";
 
@@ -109,7 +110,7 @@ async function ensureConversation(
   session: CloudSession,
   phoneDigits: string,
   name?: string,
-): Promise<{ convId: string; muted: boolean; status: string; unread: number; lastAt: string | null } | null> {
+): Promise<{ convId: string; muted: boolean; status: string; unread: number; lastAt: string | null; name: string } | null> {
   const businessId = session.businessId;
   const normalized = "+" + phoneDigits;
 
@@ -166,7 +167,27 @@ async function ensureConversation(
     status: (conv.status as string) ?? "open",
     unread: (conv.unread as number) ?? 0,
     lastAt: (conv.last_message_at as string | null) ?? null,
+    // Para titular el push con el nombre del cliente y no con su número.
+    name: ((contact.name as string) || normalized),
   };
+}
+
+/** Qué se lee en la notificación. Un adjunto no tiene texto, así que se nombra el tipo —- y de
+ *  todas formas el cuerpo se recorta: una notificación no es el mensaje, es el aviso de que hay
+ *  uno. */
+function pushPreview(type: string, body: string | null): string {
+  const t = (body ?? "").trim();
+  if (t) return t.slice(0, 120);
+  switch (type) {
+    case "image": return "📷 Foto";
+    case "video": return "🎥 Video";
+    case "audio": return "🎤 Audio";
+    case "sticker": return "🈸 Sticker";
+    case "document": return "📄 Documento";
+    case "location": return "📍 Ubicación";
+    case "contact": return "👤 Contacto";
+    default: return "Mensaje nuevo";
+  }
 }
 
 /** ¿Ya salió una respuesta nuestra DESPUÉS de este momento? Un evento que Meta reentrega tarde
@@ -274,6 +295,19 @@ async function ingestMessage(
       if (conv.status === "resolved") patch.status = "open";
     }
     if (Object.keys(patch).length) await supabase.from("conversations").update(patch).eq("id", conv.convId);
+
+    // Push a quien le toque. Solo para mensajes ENTRANTES y no tardíos: el eco de algo que mandó
+    // el propio equipo no se avisa, y un webhook que aterriza tres horas tarde tampoco —- avisar de
+    // un mensaje ya contestado es peor que no avisar. No se espera (`void`): un aviso que falla no
+    // puede retrasar ni tumbar la ingesta del mensaje.
+    if (!outbound && !late) {
+      void pushInboundMessage({
+        businessId: session.businessId,
+        conversationId: conv.convId,
+        title: conv.name,
+        body: pushPreview(parsed.type, parsed.body),
+      });
+    }
   } else {
     // History backfill: never touch unread/status, only keep last_message_at moving forward.
     const { data: cur } = await supabase.from("conversations").select("last_message_at").eq("id", conv.convId).maybeSingle();
