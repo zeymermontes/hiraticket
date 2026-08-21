@@ -125,7 +125,7 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
   );
 }
 
-export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, confirmPaymentStageId = null, confirmPaymentEnabled = true, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "" }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; confirmPaymentStageId?: string | null; confirmPaymentEnabled?: boolean; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string }) {
+export function SettingsScreen({ businessId, sessions, stages = [], doneFromStageId = null, confirmPaymentStageId = null, confirmPaymentEnabled = true, isPlatformAdmin = false, showOfficial = false, fbAppId = "", esConfigId = "", orgName = null }: { businessId: string; sessions: WaSession[]; stages?: { id: string; name: string }[]; doneFromStageId?: string | null; confirmPaymentStageId?: string | null; confirmPaymentEnabled?: boolean; isPlatformAdmin?: boolean; showOfficial?: boolean; fbAppId?: string; esConfigId?: string; /** Nombre de la organización activa, SOLO si la persona tiene más de una: entonces hay que decir de cuál son estos avisos. */ orgName?: string | null }) {
   const { lang, theme, setTheme, setLang, density, setDensity, brand, setBrand, personal } = useApp();
   const [doneFrom, setDoneFrom] = useState<string | null>(doneFromStageId);
   useEffect(() => { setDoneFrom(doneFromStageId); }, [doneFromStageId]);
@@ -347,7 +347,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             </div>
             <DesktopNotifRow lang={lang} />
             <PushRow lang={lang} />
-            <NotifPrefsRows lang={lang} />
+            <NotifPrefsRows lang={lang} orgName={orgName} />
           </div>
         </section>
 
@@ -626,7 +626,7 @@ function DesktopNotifRow({ lang }: { lang: "es" | "en" }) {
  *
  *  "Todas" es un maestro: en off nada avisa, y los demás se ven apagados sin perder su valor, para
  *  que al volver a encender quede como estaba. */
-function NotifPrefsRows({ lang }: { lang: "es" | "en" }) {
+function NotifPrefsRows({ lang, orgName }: { lang: "es" | "en"; orgName?: string | null }) {
   const es = lang === "es";
   const [prefs, setPrefs] = useState<NotifPrefs>(DEFAULT_NOTIF_PREFS);
   const [ready, setReady] = useState(false);
@@ -656,7 +656,11 @@ function NotifPrefsRows({ lang }: { lang: "es" | "en" }) {
       <div className="row gap-2" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
         <span className="grow">
           <strong>{es ? "Todas las notificaciones" : "All notifications"}</strong>
-          <span className="t-xs muted" style={{ display: "block" }}>{es ? "Apágalo para no recibir ninguna" : "Turn off to receive none"}</span>
+          <span className="t-xs muted" style={{ display: "block" }}>
+            {orgName
+              ? (es ? `Solo para ${orgName}. Cada organización tiene las suyas.` : `For ${orgName} only. Each organization has its own.`)
+              : (es ? "Apágalo para no recibir ninguna" : "Turn off to receive none")}
+          </span>
         </span>
         <div className="seg">
           <button className={prefs.all ? "on" : ""} disabled={!ready} onClick={() => set({ all: true })}>{es ? "Activadas" : "On"}</button>

@@ -56,7 +56,9 @@ export default async function AppLayout({
     getShellBadges(business.id, user.id, myName, business.done_from_stage_id ?? null),
     getSessions(business.id),
     listMyOrgs(),
-    supabase.from("business_members").select("role").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
+    // `notif_prefs` viaja con el rol: los dos son de la MEMBRESÍA, o sea de esta persona en esta
+    // organización (0084). Una consulta, no dos.
+    supabase.from("business_members").select("role, notif_prefs").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
   ]);
   const objectName = (business.object_singular ?? "Pedido") + "s";
 
@@ -71,7 +73,7 @@ export default async function AppLayout({
       objectName={objectName}
       personal={business.mode === "personal"}
       isAdmin={mem?.role === "admin"}
-      notifPrefs={parseNotifPrefs(prof?.notif_prefs)}
+      notifPrefs={parseNotifPrefs((mem as { notif_prefs?: unknown } | null)?.notif_prefs ?? prof?.notif_prefs)}
       dueDates={badges.dueDates}
       orgs={orgs}
     >

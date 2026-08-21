@@ -12,8 +12,8 @@ import { parseNotifPrefs, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
  * frente a la computadora.
  *
  * A quién le toca cada aviso se decide AQUÍ y en un solo lugar, reutilizando las preferencias que
- * ya existen por usuario en `profiles.notif_prefs` (0068). Si esa decisión se copiara al worker de
- * Go y al ingest oficial, a la primera semana dirían cosas distintas.
+ * ya existen por persona y organización en `business_members.notif_prefs` (0084). Si esa decisión
+ * se copiara al worker de Go y al ingest oficial, a la primera semana dirían cosas distintas.
  *
  * Nada de esto puede tumbar un mensaje: todas las funciones tragan sus errores. Un push que falla
  * es un aviso que no llegó; un ingest que falla es un mensaje perdido. No se juegan lo mismo.
@@ -92,14 +92,25 @@ export async function sendPushToUsers(
   try {
     const uniq = [...new Set(userIds)].filter(Boolean);
 
-    // Preferencias de cada quien. Un fallo aquí NO debe silenciar a todos: si no se pueden leer,
-    // se aplica el valor por defecto, que es "avisar" —- perder un aviso es peor que mandar uno de
-    // más a quien lo tenía apagado.
-    const { data: profs } = await admin.from("profiles").select("id, notif_prefs").in("id", uniq);
+    // Preferencias de cada quien EN ESTA organización (0084): están en la membresía, porque la
+    // misma persona puede querer que le avisen de todo en un negocio y solo de menciones en otro.
+    //
+    // Un fallo aquí NO debe silenciar a todos: si no se pueden leer, se aplica el valor por
+    // defecto, que es "avisar" —- perder un aviso es peor que mandar uno de más a quien lo tenía
+    // apagado. Por eso también la caída a profiles: sin la migración, ahí es donde vivían.
+    let prefsBy = new Map<string, unknown>();
+    const { data: mems, error: memErr } = await admin
+      .from("business_members").select("user_id, notif_prefs")
+      .eq("business_id", businessId).in("user_id", uniq);
+    if (memErr) {
+      const { data: profs } = await admin.from("profiles").select("id, notif_prefs").in("id", uniq);
+      prefsBy = new Map((profs ?? []).map((p) => [p.id as string, p.notif_prefs]));
+    } else {
+      prefsBy = new Map((mems ?? []).map((m) => [m.user_id as string, m.notif_prefs]));
+    }
     const wants = new Map<string, boolean>();
     for (const id of uniq) {
-      const raw = (profs ?? []).find((p) => p.id === id)?.notif_prefs;
-      wants.set(id, notifOn(parseNotifPrefs(raw), pref));
+      wants.set(id, notifOn(parseNotifPrefs(prefsBy.get(id)), pref));
     }
     const targets = uniq.filter((id) => wants.get(id));
     if (targets.length === 0) return;
