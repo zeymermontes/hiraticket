@@ -18,6 +18,7 @@ import { OrderDrawer } from "@/components/OrderDrawer";
 import { loadOrderDetail, setItemStage, markPaid } from "@/app/(app)/orders/actions";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { useConfirm } from "@/components/Confirm";
+import { useBoardDrag } from "@/lib/boardDrag";
 
 export function KanbanBoard({
   initial, stages, areas, agents, catalog = [], businessId, connected, productStages = false, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
@@ -50,8 +51,9 @@ export function KanbanBoard({
   const [q, setQ] = useState("");
   const [areaF, setAreaF] = useState("");
   const [assigneeF, setAssigneeF] = useState("");
-  const [drag, setDrag] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
+  // Arrastre + desplazamiento lateral al borde, ratón y dedo. Ver src/lib/boardDrag.ts.
+  const board = useBoardDrag({ onDrop: (colId, cardId) => onDrop(colId, cardId) });
+  const { drag, over } = board;
   const agentMap = new Map(agents.map((a) => [a.id, a]));
 
   const products = productStages && view === "products";
@@ -129,11 +131,7 @@ export function KanbanBoard({
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore(colId);
   };
 
-  function onDrop(colId: string) {
-    const id = drag;
-    setDrag(null);
-    setOver(null);
-    if (!id) return;
+  function onDrop(colId: string, id: string) {
 
     // Optimista: la tarjeta salta de columna al instante y los dos contadores se ajustan. Con la
     // columna paginada, esperar al refetch dejaba la tarjeta congelada en el origen.
@@ -209,7 +207,7 @@ export function KanbanBoard({
         </select>
       </div>
 
-      <div className="board scroll">
+      <div className="board scroll" {...board.boardProps}>
         <div className="board-inner">
           {columns.map((col) => {
             const cards = colCards(col.id);
@@ -217,10 +215,7 @@ export function KanbanBoard({
             const itemList = (products ? cards : []) as KanbanItem[];
             const total = colTotal(col.id);
             return (
-              <div key={col.id} className={"kcol" + (over === col.id ? " drop" : "")}
-                onDragOver={(e) => { e.preventDefault(); setOver(col.id); }}
-                onDragLeave={() => setOver((o) => (o === col.id ? null : o))}
-                onDrop={() => onDrop(col.id)}>
+              <div key={col.id} className={"kcol" + (over === col.id ? " drop" : "")} {...board.columnProps(col.id)}>
                 <div className="kcol-head">
                   <span className="ttl">
                     <span className="dot" style={{ width: 9, height: 9, borderRadius: 9, background: `var(--${col.color})`, display: "inline-block", flex: "none" }} />
@@ -235,8 +230,7 @@ export function KanbanBoard({
                   {products && itemList.map((it) => {
                     const ag = it.assignee_id ? agentMap.get(it.assignee_id) : null;
                     return (
-                      <div key={it.id} className={"kcard" + (drag === it.id ? " dragging" : "")} draggable
-                        onDragStart={() => setDrag(it.id)} onDragEnd={() => { setDrag(null); setOver(null); }}>
+                      <div key={it.id} className={"kcard" + (drag === it.id ? " dragging" : "")} {...board.cardProps(it.id)}>
                         <div className="row gap-2">
                           <span className="mono t-xs" style={{ fontWeight: 700, color: "var(--text-muted)" }}>{it.order_code}</span>
                           {it.priority && it.priority !== "normal" && <Pill color={priorityColor(it.priority as never)}><Icon name="flag" size={10} />{PRIO[it.priority]?.[lang] ?? it.priority}</Pill>}
@@ -258,8 +252,7 @@ export function KanbanBoard({
                     );
                   })}
                   {!products && list.map((o) => (
-                    <div key={o.id} className={"kcard" + (drag === o.id ? " dragging" : "")} draggable
-                      onDragStart={() => setDrag(o.id)} onDragEnd={() => { setDrag(null); setOver(null); }}>
+                    <div key={o.id} className={"kcard" + (drag === o.id ? " dragging" : "")} {...board.cardProps(o.id)}>
                       <div className="row gap-2">
                         <span className="mono t-xs" style={{ fontWeight: 700, color: "var(--text-muted)" }}>{o.code}</span>
                         {/* Cancelado desplaza a la prioridad: es lo que hay que leer primero. */}

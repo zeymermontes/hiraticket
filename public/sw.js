@@ -22,6 +22,18 @@
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
+/**
+ * Un manejador de `fetch` que no hace NADA, y tiene que estar.
+ *
+ * Chrome no ofrece instalar una app —- ni dispara `beforeinstallprompt` —- si el service worker no
+ * declara un manejador de `fetch`. Lo comprueba mirando el script, no llamándolo. Como aquí no se
+ * cachea nada a propósito (ver arriba), este queda vacío: al no llamar a `respondWith`, cada
+ * petición sigue su camino normal a la red, y Chrome además se salta el rodeo por el worker al
+ * detectar que el manejador está vacío. Cuesta cero y es lo que hace que el botón de instalar
+ * exista.
+ */
+self.addEventListener("fetch", () => {});
+
 self.addEventListener("push", (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch { d = { body: event.data && event.data.text() }; }

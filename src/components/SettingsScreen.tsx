@@ -9,6 +9,7 @@ import { Icon } from "@/components/Icon";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled,
   pushSupported, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
 import { isStandalone } from "@/lib/useIsMobile";
+import { InstallAppRow } from "@/components/InstallApp";
 import { savePushSubscription, removePushSubscription, removePushDevice, listPushDevices, type PushDevice } from "@/app/(app)/settings/push-actions";
 import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
 import { loadNotifPrefs, saveNotifPrefs } from "@/app/(app)/settings/notif-actions";
@@ -516,6 +517,9 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
           </button>
         )}
       </div>
+      {/* Decir "instala la app primero" sin dar el botón para hacerlo era dejar la frase a medias.
+          Se pinta sola: si ya está instalada o el navegador no sabe instalar, no aparece. */}
+      {!standalone && <InstallAppRow variant="block" />}
       {err && <span className="t-xs" style={{ color: "var(--red)" }}>{err}</span>}
       {devices.length > 0 && (
         <div className="col gap-1" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>

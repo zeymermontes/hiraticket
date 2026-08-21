@@ -68,6 +68,30 @@ const threadPinBoot = `(function(){
   document.addEventListener('DOMContentLoaded',function(){pin();mo.disconnect();},{once:true});
 })();`;
 
+/**
+ * Guarda el evento de "se puede instalar" ANTES de que React hidrate.
+ *
+ * `beforeinstallprompt` lo dispara Chrome una sola vez y muy temprano —- normalmente durante la
+ * carga, antes de que exista ningún componente que pueda escucharlo. Si nadie lo atrapa, se pierde
+ * y ya no hay manera de abrir el diálogo de instalación por nuestra cuenta: el navegador solo deja
+ * llamar a `prompt()` sobre ESE objeto. Ese era el "no me dio opción de instalar".
+ *
+ * Aquí se atrapa desde <head>, se llama a preventDefault() para que Chrome no ponga su propio
+ * aviso a destiempo, y se avisa por un evento propio para que la interfaz aparezca cuando llegue.
+ */
+const installBoot = `(function(){
+  window.__htInstall=null;
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault();
+    window.__htInstall=e;
+    window.dispatchEvent(new Event('ht:installable'));
+  });
+  window.addEventListener('appinstalled',function(){
+    window.__htInstall=null;
+    window.dispatchEvent(new Event('ht:installed'));
+  });
+})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -84,6 +108,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
         <script dangerouslySetInnerHTML={{ __html: threadPinBoot }} />
+        <script dangerouslySetInnerHTML={{ __html: installBoot }} />
       </head>
       <body>{children}</body>
     </html>

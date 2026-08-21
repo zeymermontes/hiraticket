@@ -36,7 +36,8 @@ import { menuStyle } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
-import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadStickerTray } from "@/app/(app)/chat/live-actions";
+import { loadStickerTray } from "@/app/(app)/chat/live-actions";
+import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages } from "@/lib/chatLive";
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
@@ -1254,6 +1255,8 @@ export function ChatScreen({
   // del servidor regrese sin ella —- sin esto, la fila aparecía, desaparecía y volvía a aparecer.
   const stickyMineRef = useRef<{ row: ConvListItem; until: number } | null>(null);
   const [listLoading, setListLoading] = useState(false);
+  // Una lectura que falla ya no es invisible: la lista se queda con lo que tenía y esto lo dice.
+  const [listError, setListError] = useState(false);
   // The typed search, debounced, together with the conversation ids its message text matched in
   // this device's cache. They move as one value so a search costs a single list fetch: last_body is
   // encrypted at rest, so SQL matches the contact name and the local hits are ORed in server-side.
@@ -1302,8 +1305,9 @@ export function ChatScreen({
       }
       setList(rows);
       setListTotal(total);
+      setListError(false);
       listCacheRef.current.set(listKeyOf(query, howMany), { rows, total });
-    } catch { /* keep the previous window */ }
+    } catch { if (seq === listSeq.current) setListError(true); /* keep the previous window */ }
     finally { if (seq === listSeq.current) setListLoading(false); }
   }, [businessId]);
 
@@ -1447,6 +1451,14 @@ export function ChatScreen({
               </button>
             ))}
           </div>
+          {/* Cambiar de pestaña y que no pase nada era el peor de los dos males: sin error, parecía
+              que "Míos" y "Todos" tenían lo mismo. Si la lectura falló, se dice y se ofrece salida. */}
+          {listError && (
+            <button className="btn btn-sm btn-outline" style={{ width: "100%", color: "var(--red)", borderColor: "var(--red)" }}
+              onClick={() => { setListError(false); refetchListRef.current(); }}>
+              <Icon name="wifioff" size={13} />{lang === "es" ? "No se pudo actualizar · Reintentar" : "Couldn't refresh · Retry"}
+            </button>
+          )}
           <div className="row gap-2">
             <div className="field field-sm field-filled grow">
               <Icon name="search" />

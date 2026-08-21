@@ -350,6 +350,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 .kcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 11px; box-shadow: var(--sh-xs); cursor: grab; display: flex; flex-direction: column; gap: 9px; transition: box-shadow .14s, transform .1s, border-color .14s; }
 .kcard:hover { box-shadow: var(--sh-md); border-color: var(--border-strong); }
 .kcard.dragging { opacity: .4; }
+/* El fantasma que sigue al dedo (arrastre táctil, ver src/lib/boardDrag.ts). Es un clon de la
+   tarjeta, así que hereda .kcard: aquí solo se le da el aire de "levantada". */
+.kcard-ghost { opacity: .96; box-shadow: var(--sh-lg); border-color: var(--brand-300); transition: none; }
+/* Mientras algo va en el aire, ni seleccionar texto ni el menú contextual de mantener pulsado. */
+body.dragging-card { user-select: none; -webkit-user-select: none; }
+body.dragging-card .kcard { cursor: grabbing; }
+/* Mantener pulsado sobre una tarjeta ES el gesto de arrastrar, así que en pantallas táctiles no
+   puede además abrir el menú de copiar/compartir del navegador encima. */
+@media (hover: none) and (pointer: coarse) {
+  .kcard { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+}
 .kcard:active { cursor: grabbing; }
 .kcard-title { font-size: 13px; font-weight: 700; line-height: 1.3; }
 .kcol-head .ttl > span:last-child { overflow: hidden; text-overflow: ellipsis; }

@@ -16,7 +16,9 @@ import { GlobalSearch } from "@/components/GlobalSearch";
 import { clearCache } from "@/lib/localCache";
 import { installKeyboardInset } from "@/lib/mobileViewport";
 import { PwaRegister } from "@/components/PwaRegister";
-import { liveBadges, loadNotificationFeed } from "@/app/(app)/chat/live-actions";
+import { InstallAppRow } from "@/components/InstallApp";
+import { loadNotificationFeed } from "@/app/(app)/chat/live-actions";
+import { liveBadges } from "@/lib/chatLive";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -258,6 +260,9 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
               <div style={{ padding: "8px 12px" }}><div style={{ fontWeight: 700 }} className="truncate">{user.name}</div><div className="t-xs muted truncate">{user.email}</div></div>
               <div className="menu-sep" />
               <Link className="menu-item" href="/profile" prefetch={false} onClick={() => setProfOpen(false)}><Icon name="user" size={15} />{lang === "es" ? "Perfil" : "Profile"}</Link>
+              {/* Se pinta sola solo si hay algo que ofrecer: si la app ya está instalada, o el
+                  navegador no sabe instalar, InstallAppRow no devuelve nada. */}
+              <InstallAppRow />
               <div className="menu-sep" />
               {/* Wipe the local message cache (plaintext on this device) before the session ends. */}
               <form action="/auth/signout" method="post" onSubmit={() => { clearCache().catch(() => {}); }}><button className="menu-item danger" type="submit" style={{ width: "100%" }}><Icon name="lock" size={15} />{t("sign_out")}</button></form>
@@ -352,6 +357,11 @@ function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, co
               <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
             </Link>
             <DueFlags dates={dueDates} onNavigate={onNavigate} />
+
+            {/* En un teléfono esto es lo que convierte la pestaña en app —- y en iPhone, lo único
+                que habilita los avisos con la app cerrada. Por eso va arriba y en grande, no
+                escondido en Ajustes. */}
+            <InstallAppRow variant="block" />
 
             <div className="more-grid">
               {rest.map((it) => {
