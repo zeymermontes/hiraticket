@@ -1128,9 +1128,11 @@ export function ChatScreen({
   }, [selectedId]);
 
   // Center column: show/hide + drag-resize (persisted).
-  // En móvil solo cabe UNA columna, así que el layout no se decide con CSS nada más: `ChatScreen`
-  // escribe `gridTemplateColumns` en el style inline, y un inline le gana a cualquier @media —- por
-  // eso la regla de 680px que ya existía en views.css llevaba tiempo sin hacer nada.
+  // El LAYOUT móvil lo resuelve todo el CSS (ver `--chat-cols` y `hide-mobile`), a propósito: si
+  // dependiera de esto, cada carga en un teléfono pintaría un cuadro con el layout de escritorio
+  // antes de que JS alcance a medir la ventana. Esto queda solo para una decisión de COMPORTAMIENTO
+  // que el CSS no puede tomar: en móvil el botón del panel del cliente abre el 360 a pantalla
+  // completa en vez de mostrar una columna que no cabe.
   const isMobile = useIsMobile();
   const [ctxVisible, setCtxVisible] = useState(true);
   const [ctxW, setCtxW] = useState(360);
@@ -1409,14 +1411,15 @@ export function ChatScreen({
       className="chat"
       style={{
         position: "relative",
-        // Móvil: NO se escribe la propiedad, para que mande el CSS (una sola columna). Escribirla
-        // aunque fuera con otro valor volvería a pisar la media query.
-        ...(isMobile ? {} : {
-          gridTemplateColumns: detail && detailInView && ctxVisible
-            ? `${listW}px ${ctxW}px minmax(300px,1fr)`
-            : `${listW}px minmax(300px,1fr)`,
-        }),
-      }}
+        // Se escribe una VARIABLE, no `grid-template-columns`. Un valor inline le gana a cualquier
+        // @media —- por eso la regla de una columna llevaba tiempo sin aplicarse nunca —- pero una
+        // variable no: la media query redefine la propiedad y el ancho de escritorio se ignora
+        // solo. Así el layout móvil sale bien desde el PRIMER pintado, sin esperar a que JS mida
+        // la ventana. Ver `.chat` en views.css.
+        ["--chat-cols" as string]: detail && detailInView && ctxVisible
+          ? `${listW}px ${ctxW}px minmax(300px,1fr)`
+          : `${listW}px minmax(300px,1fr)`,
+      } as React.CSSProperties}
     >
       {realtimeDown && (
         <div className="rt-banner">
@@ -1428,8 +1431,10 @@ export function ChatScreen({
       )}
       {/* list column */}
       {/* `hide-mobile` por fin se usa: la clase existía en views.css desde hace mucho y no la ponía
-          nadie, así que en un teléfono salían lista e hilo aplastados uno junto al otro. */}
-      <div className={"chatcol list" + (isMobile && detail && detailInView ? " hide-mobile" : "")} style={{ position: "relative" }}>
+          nadie, así que en un teléfono salían lista e hilo aplastados uno junto al otro. No se
+          consulta `isMobile` a propósito —- la clase solo hace algo dentro de la media query, y
+          preguntarle a JS habría dejado un cuadro con las dos columnas en cada carga. */}
+      <div className={"chatcol list" + (detail && detailInView ? " hide-mobile" : "")} style={{ position: "relative" }}>
         <div className="col-resizer" onPointerDown={startListResize} title="" />
         <div className="col-head">
           <div className="seg" style={{ width: "100%" }}>
@@ -1564,13 +1569,13 @@ export function ChatScreen({
 
       {detail && detailInView ? (
         <>
-          {ctxVisible && !isMobile && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
+          {ctxVisible && <Workspace detail={detail} agents={agents} areas={areas} stages={stages} products={products} meId={meId} businessId={businessId} connected={connected} invoice={invoice} shipping={shipping} invoicing={invoicing} onResizeStart={startResize} onOpen360={() => setShow360(true)} onAssignedToMe={acceptedToMine} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} />}
           {/* En móvil el panel del cliente no puede ser una columna, así que el mismo botón abre el
               360 a pantalla completa —- que ya existía y muestra lo mismo y más. */}
           <Thread detail={detail} agents={agents} areas={areas} connected={connected}
-            ctxVisible={isMobile ? false : ctxVisible}
+            ctxVisible={ctxVisible}
             onToggleCtx={isMobile ? () => setShow360(true) : () => setCtxVisible((v) => !v)}
-            onBack={isMobile ? closeConv : undefined}
+            onBack={closeConv}
             businessId={businessId} meId={meId} onAccepted={acceptedToMine} />
           {show360 && <CustomerOverlay detail={detail} agents={agents} areas={areas} stages={stages} products={products} businessId={businessId} connected={connected} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct} onClose={() => setShow360(false)} />}
         </>
@@ -2019,7 +2024,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       {dragOver && <DropOverlay lang={lang} />}
       <div className="thread-head">
         {onBack && (
-          <button className="iconbtn" onClick={onBack} aria-label={lang === "es" ? "Volver a los chats" : "Back to chats"} style={{ marginLeft: -6, flex: "none" }}>
+          <button className="iconbtn only-mobile" onClick={onBack} aria-label={lang === "es" ? "Volver a los chats" : "Back to chats"} style={{ marginLeft: -6, flex: "none" }}>
             <Icon name="arrowl" size={20} />
           </button>
         )}

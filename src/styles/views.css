@@ -88,7 +88,11 @@
 /* =====================================================
    CHAT — three column workspace
    ===================================================== */
-.chat { display: grid; grid-template-columns: 300px minmax(300px, 1fr) minmax(330px, 420px); flex: 1; min-height: 0; min-width: 0; }
+/* Las columnas vienen de `--chat-cols`, que ChatScreen escribe inline con los anchos que el
+   agente arrastró. Se hace con una VARIABLE y no con la propiedad para que la media query de móvil
+   pueda ganarle: un `grid-template-columns` inline le gana a cualquier hoja de estilos, y por eso
+   la regla de "una columna en el teléfono" llevaba tiempo escrita sin aplicarse jamás. */
+.chat { display: grid; grid-template-columns: var(--chat-cols, 300px minmax(300px, 1fr) minmax(330px, 420px)); flex: 1; min-height: 0; min-width: 0; }
 .chat.wide-ws { grid-template-columns: 300px minmax(360px, 1.2fr) minmax(320px, 400px); }
 .chat.no-ctx { grid-template-columns: 300px minmax(360px, 1fr); }
 .chatcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--border); background: var(--surface); }
@@ -472,12 +476,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    ===================================================== */
 .tabbar { display: none; }
 .more-sheet { display: none; }
+/* El gemelo de `.hide-mobile`: lo que SOLO existe en el teléfono (la flecha de volver del hilo).
+   Se pinta siempre y lo esconde el CSS, en vez de montarlo cuando JS averigua el ancho —- así no
+   aparece a destiempo empujando el encabezado. */
+.only-mobile { display: none !important; }
 /* `.hide-mobile` NO declara un display por defecto a propósito: se le cuelga a cosas muy distintas
    (un chip inline-flex, una columna flex del chat) y forzar uno solo rompería a las demás en
    escritorio. Solo esconde en móvil; fuera de ahí, cada elemento conserva el suyo. */
 
 @media (max-width: 768px) {
   .hide-mobile { display: none !important; }
+  .only-mobile { display: inline-flex !important; }
 
   /* El riel se va y el contenido ocupa todo. La barra inferior es `position: fixed`, así que no
      entra en la rejilla: el hueco se hace con padding abajo del `.main`. */
@@ -542,7 +551,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
    MÓVIL — chat y teclado
    ===================================================== */
 @media (max-width: 768px) {
-  /* Una sola columna. Funciona porque ChatScreen ya no escribe el inline en móvil. */
+  /* Una sola columna, y le gana al inline porque aquello solo define una variable. */
   .chat, .chat.wide-ws, .chat.no-ctx { grid-template-columns: 1fr; }
   /* Los tiradores para redimensionar columnas no tienen sentido sin columnas que redimensionar,
      y encima roban toques en el borde de la pantalla, que es donde se hace el gesto de "atrás". */
@@ -691,3 +700,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 
 }
 
 @keyframes ht-sheet-up { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* La lista del chat de equipo: ancho fijo en escritorio, todo el ancho en el teléfono. Va en CSS
+   y no en un style inline por lo mismo que las columnas del chat de clientes. */
+.chatcol.int-list { width: 300px; flex: none; }
+@media (max-width: 768px) { .chatcol.int-list { width: auto; flex: 1; min-width: 0; } }
