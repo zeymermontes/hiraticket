@@ -31,12 +31,27 @@ export function CardList({ children, empty, onScroll }: {
   );
 }
 
-/** Una fila. `onClick` la vuelve un botón de verdad —- con div se pierde el foco por teclado y el
- *  lector de pantalla no la anuncia como algo que se puede activar. */
+/**
+ * Una fila.
+ *
+ * Con `onClick` NO es un `<button>`, aunque se comporte como uno: la fila lleva dentro sus propias
+ * acciones (abrir chat, silenciar, eliminar), y un `<button>` dentro de otro `<button>` es HTML
+ * inválido —- React lo detecta y tira la hidratación entera del árbol. Costó una pantalla en blanco
+ * intermitente antes de que apareciera en la consola.
+ *
+ * Así que es un `div` con el papel de botón puesto a mano: `role`, foco por teclado y Enter/Espacio.
+ * Eso conserva lo que un `<button>` daba —- se puede tabular y el lector de pantalla lo anuncia como
+ * activable —- sin el anidamiento prohibido.
+ */
 export function Card({ onClick, selected, dim, children }: { onClick?: () => void; selected?: boolean; dim?: boolean; children: React.ReactNode }) {
   const cls = "card-row" + (selected ? " sel" : "") + (dim ? " dim" : "");
   if (!onClick) return <div className={cls}>{children}</div>;
-  return <button type="button" className={cls} onClick={onClick}>{children}</button>;
+  return (
+    <div className={cls} role="button" tabIndex={0} onClick={onClick}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}>
+      {children}
+    </div>
+  );
 }
 
 /** Renglón de arriba: lo que identifica la fila (nombre, código) y a la derecha lo que se compara

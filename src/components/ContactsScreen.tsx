@@ -119,7 +119,7 @@ export function ContactsScreen({ initial, total: totalProp }: { initial: Contact
             {(c.tags.length > 0 || c.orders_count > 0 || c.last_active) && (
               <CardMeta>
                 {c.tags.slice(0, 3).map((t) => <Pill key={t} color={tagColor(t)}><Icon name="tag" size={10} />{t}</Pill>)}
-                {c.orders_count > 0 && <Pill color="slate">{c.orders_count} {objLabel}</Pill>}
+                {c.orders_count > 0 && <Pill color="slate" title={objLabel}>{c.orders_count}</Pill>}
                 <span className="grow" />
                 <span>{fmtDate(c.last_active)}</span>
               </CardMeta>
