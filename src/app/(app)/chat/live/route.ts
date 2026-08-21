@@ -5,8 +5,7 @@ import {
   getConversationDetail, getConversationHeader,
   type ConvQuery, type ConvTab,
 } from "@/lib/chat";
-import { getChatBadges, getNotifications } from "@/lib/notifications";
-import { getInternalUnread } from "@/lib/internal";
+import { getShellBadges } from "@/lib/shellBadges";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -62,20 +61,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(convId ? await getConversationDetail(convId) : null);
     case "badges": {
       const user = await getSessionUser();
-      if (!user || !businessId) return NextResponse.json({ mine: 0, unassigned: 0, internal: 0, notifications: [] });
+      if (!user || !businessId) return NextResponse.json(EMPTY_BADGES);
       const supabase = await createClient();
       const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
       const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
-      const [badges, internal, notifications] = await Promise.all([
-        getChatBadges(businessId, user.id),
-        getInternalUnread(businessId, user.id),
-        getNotifications(businessId, user.id, myName),
-      ]);
-      return NextResponse.json({ mine: badges.mine, unassigned: badges.unassigned, internal, notifications });
+      // La etapa final es del negocio, no del usuario: hace falta para saber qué pedidos siguen
+      // abiertos y cuáles ya no cuentan para las banderitas.
+      const { data: biz } = await supabase.from("businesses").select("done_from_stage_id").eq("id", businessId).maybeSingle();
+      return NextResponse.json(await getShellBadges(businessId, user.id, myName, (biz?.done_from_stage_id as string | null) ?? null));
     }
     default:
       return NextResponse.json({ error: "bad-kind" }, { status: 400 });
   }
 }
 
+const EMPTY_BADGES = { mine: 0, unassigned: 0, internal: 0, orders: 0, notifications: [], dueDates: [] };
 const EMPTY_COUNTS = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };

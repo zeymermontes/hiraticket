@@ -66,6 +66,7 @@ export function OrdersTable({
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [showXfer, setShowXfer] = useState(false);
   const [stageMenu, setStageMenu] = useState<DOMRect | null>(null); // bulk "change stage" popover
+  const [filtMenu, setFiltMenu] = useState<DOMRect | null>(null); // móvil: todos los filtros en uno
   const [, startBulk] = useTransition();
   const flowToast = useFlowToast();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
@@ -186,6 +187,20 @@ export function OrdersTable({
     const a = document.createElement("a"); a.href = url; a.download = "pedidos.csv"; a.click(); URL.revokeObjectURL(url);
   }
 
+  // Una sola definición de los filtros: la barra de escritorio y el menú de móvil pintan de aquí,
+  // así no puede pasar que uno tenga un filtro que al otro le falta.
+  const FILTERS = [
+    { key: "stage", label: lang === "es" ? "Etapa" : "Stage", value: stageF, set: setStageF,
+      all: lang === "es" ? "Todo estado" : "All status", opts: stages.map((s) => ({ v: s.id, l: s.name })) },
+    { key: "area", label: lang === "es" ? "Área" : "Area", value: areaF, set: setAreaF,
+      all: lang === "es" ? "Toda área" : "All areas", opts: areas.map((a) => ({ v: a.id, l: a.name })) },
+    { key: "agent", label: lang === "es" ? "Agente" : "Agent", value: assigneeF, set: setAssigneeF,
+      all: lang === "es" ? "Todo agente" : "All agents", opts: agents.map((a) => ({ v: a.id, l: a.name })) },
+    { key: "prio", label: lang === "es" ? "Prioridad" : "Priority", value: prioF, set: setPrioF,
+      all: lang === "es" ? "Toda prioridad" : "All priority", opts: (["urgent", "high", "normal", "low"] as const).map((pr) => ({ v: pr as string, l: PRIO_LABEL[pr][lang] })) },
+  ];
+  const activeFilters = FILTERS.filter((f) => f.value).length;
+
   return (
     <div className="page">
       <div className="phead">
@@ -193,40 +208,73 @@ export function OrdersTable({
         <Pill color="slate" large>{total}{capped ? "+" : ""} {objectName.toLowerCase()}</Pill>
         {loading && <span className="muted t-sm">{lang === "es" ? "Cargando…" : "Loading…"}</span>}
         <span className="grow" />
-        <div className="seg seg-sm">
+        <div className="seg seg-sm hide-mobile">
           <button className={!dense ? "on" : ""} onClick={() => setDense(false)} title={lang === "es" ? "Cómodo" : "Comfortable"}><Icon name="layers" size={14} /></button>
           <button className={dense ? "on" : ""} onClick={() => setDense(true)} title={lang === "es" ? "Compacto" : "Compact"}><Icon name="sliders" size={14} /></button>
         </div>
       </div>
 
       <div className="toolbar">
-        <div className="field field-sm" style={{ width: 220 }}>
+        <div className="field field-sm grow-mobile" style={{ width: 220 }}>
           <Icon name="search" />
-          <input placeholder={t("search_ph")} value={q} onChange={(e) => setQ(e.target.value)} />
+          <input placeholder={personal ? (lang === "es" ? "Buscar tarea, contacto…" : "Search task, contact…") : (lang === "es" ? "Buscar pedido, cliente…" : "Search order, customer…")}
+            value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <select className="select select-sm" value={stageF} onChange={(e) => setStageF(e.target.value)}>
-          <option value="">{lang === "es" ? "Todo estado" : "All status"}</option>
-          {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select className="select select-sm" value={areaF} onChange={(e) => setAreaF(e.target.value)}>
-          <option value="">{lang === "es" ? "Toda área" : "All areas"}</option>
-          {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-        <select className="select select-sm" value={assigneeF} onChange={(e) => setAssigneeF(e.target.value)}>
-          <option value="">{lang === "es" ? "Todo agente" : "All agents"}</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-        <select className="select select-sm" value={prioF} onChange={(e) => setPrioF(e.target.value)}>
-          <option value="">{lang === "es" ? "Toda prioridad" : "All priority"}</option>
-          {(["urgent", "high", "normal", "low"] as const).map((p) => <option key={p} value={p}>{PRIO_LABEL[p][lang]}</option>)}
-        </select>
-        <span className="grow" />
-        <button className={"btn btn-sm " + (trashView ? "btn-danger" : "btn-outline")} type="button" onClick={() => openTrash(!trashView)} title={lang === "es" ? "Papelera (eliminados)" : "Trash (deleted)"}><Icon name="trash" size={14} /> {lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${total})` : ""}</button>
-        <button className="btn btn-sm btn-outline" type="button" onClick={exportCsv}><Icon name="file" size={14} /> {lang === "es" ? "Exportar" : "Export"}</button>
-        <button className="btn btn-sm btn-primary" type="button" onClick={() => setShowNew(true)}>
+        {/* En un teléfono los cuatro filtros + papelera + exportar ocupaban media pantalla antes de
+            enseñar un solo pedido. Se pliegan en este botón, que además dice cuántos hay puestos
+            —- si no, un filtro activo se vuelve invisible y parece que faltan pedidos. */}
+        <button className="btn btn-sm btn-outline only-mobile" type="button"
+          onClick={(e) => setFiltMenu(filtMenu ? null : e.currentTarget.getBoundingClientRect())}>
+          <Icon name="sliders" size={14} />{lang === "es" ? "Filtros" : "Filters"}
+          {activeFilters > 0 && <span className="badge badge-soft">{activeFilters}</span>}
+        </button>
+        {FILTERS.map((f) => (
+          <select key={f.key} className="select select-sm hide-mobile" value={f.value} onChange={(e) => f.set(e.target.value)}>
+            <option value="">{f.all}</option>
+            {f.opts.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+          </select>
+        ))}
+        <span className="grow hide-mobile" />
+        <button className={"btn btn-sm hide-mobile " + (trashView ? "btn-danger" : "btn-outline")} type="button" onClick={() => openTrash(!trashView)} title={lang === "es" ? "Papelera (eliminados)" : "Trash (deleted)"}><Icon name="trash" size={14} /> {lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${total})` : ""}</button>
+        <button className="btn btn-sm btn-outline hide-mobile" type="button" onClick={exportCsv}><Icon name="file" size={14} /> {lang === "es" ? "Exportar" : "Export"}</button>
+        {/* En móvil no se repite: el botón amarillo de la barra de arriba ya lleva a /orders?new=1. */}
+        <button className="btn btn-sm btn-primary hide-mobile" type="button" onClick={() => setShowNew(true)}>
           <Icon name="plus" size={14} /> {t("new_order")}
         </button>
       </div>
+      {filtMenu && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setFiltMenu(null)} />
+          <div className="menu scroll" style={menuStyle(filtMenu, { width: Math.min(320, (typeof window !== "undefined" ? window.innerWidth : 360) - 16), height: 420 })}>
+            <div className="menu-label">{lang === "es" ? "Filtrar" : "Filter"}</div>
+            {FILTERS.map((f) => (
+              <label key={f.key} style={{ display: "block", padding: "4px 10px" }}>
+                <span className="t-xs muted" style={{ display: "block", marginBottom: 3 }}>{f.label}</span>
+                <select className="select" style={{ width: "100%" }} value={f.value} onChange={(e) => f.set(e.target.value)}>
+                  <option value="">{f.all}</option>
+                  {f.opts.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </label>
+            ))}
+            {activeFilters > 0 && (
+              <button className="menu-item" onClick={() => { FILTERS.forEach((f) => f.set("")); }}>
+                <Icon name="x" size={15} />{lang === "es" ? "Quitar filtros" : "Clear filters"}
+              </button>
+            )}
+            <div className="menu-sep" />
+            <button className="menu-item" onClick={() => { setFiltMenu(null); openTrash(!trashView); }}>
+              <Icon name="trash" size={15} />{lang === "es" ? "Papelera" : "Trash"}{trashView ? ` (${total})` : ""}
+            </button>
+            <button className="menu-item" onClick={() => { setFiltMenu(null); exportCsv(); }}>
+              <Icon name="file" size={15} />{lang === "es" ? "Exportar" : "Export"}
+            </button>
+            <div className="menu-sep" />
+            <button className="menu-item" onClick={() => setDense(!dense)}>
+              <Icon name={dense ? "layers" : "sliders"} size={15} />{dense ? (lang === "es" ? "Vista cómoda" : "Comfortable view") : (lang === "es" ? "Vista compacta" : "Compact view")}
+            </button>
+          </div>
+        </>
+      )}
 
       {sel.size > 0 && (
         <div className="row gap-2" style={{ margin: "0 24px 10px", padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--brand)", borderRadius: 10, alignItems: "center" }}>

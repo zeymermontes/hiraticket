@@ -1359,7 +1359,16 @@ export function ChatScreen({
     if (hit) setCounts(hit);
     refreshCounts();
   }, [refreshCounts, initialCounts]);
-  useEffect(() => { refetchListRef.current = () => { void fetchList(listQuery, pages); void refreshCounts(); }; }, [fetchList, listQuery, pages, refreshCounts]);
+  useEffect(() => {
+    refetchListRef.current = () => {
+      void fetchList(listQuery, pages);
+      void refreshCounts();
+      // Lo que mueve la lista mueve también los números de la barra de arriba (no leídos, campana).
+      // El Shell escucha esto para adelantarse a su propio realtime: al marcar leído, la campana
+      // baja al instante en vez de esperar a que el aviso dé la vuelta por el servidor.
+      try { window.dispatchEvent(new Event("ht:badges")); } catch { /* SSR */ }
+    };
+  }, [fetchList, listQuery, pages, refreshCounts]);
 
   const filtered = list;
   const chipCounts = counts;

@@ -19,6 +19,8 @@ import { PwaRegister } from "@/components/PwaRegister";
 import { InstallAppRow } from "@/components/InstallApp";
 import { loadNotificationFeed } from "@/app/(app)/chat/live-actions";
 import { liveBadges } from "@/lib/chatLive";
+import { createClient } from "@/lib/supabase/client";
+import { keepSubscribed } from "@/lib/realtime";
 import type { StringKey } from "@/lib/i18n";
 import type { Notif } from "@/lib/notifications";
 
@@ -532,14 +534,44 @@ export function Shell({
   const [b, setB] = useState(badges);
   const [sb, setSb] = useState(secondaryBadges);
   const [notifs, setNotifs] = useState(notifications);
-  useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications]);
+  const [due, setDue] = useState(dueDates);
+  useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); setDue(dueDates); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications, JSON.stringify(dueDates)]);
   const refreshBadges = useCallback(() => {
     liveBadges(businessId).then((r) => {
-      setB((cur) => ({ ...cur, chat: r.mine, internal: r.internal }));
+      // Se refresca TODO lo que pinta la barra, no solo el chat. Antes esto solo tocaba chat e
+      // interno: mover un pedido de etapa cambiaba los pedidos abiertos y las banderitas del
+      // calendario, pero esos dos números no estaban aquí y se quedaban con el valor de la carga.
+      setB((cur) => ({ ...cur, chat: r.mine, internal: r.internal, orders: r.orders }));
       setSb({ chat: r.unassigned });
       setNotifs(r.notifications);
+      setDue(r.dueDates);
     }).catch(() => {});
   }, [businessId]);
+
+  /**
+   * Los números de arriba, en vivo.
+   *
+   * Antes dependían de que la ruta se volviera a renderizar. Y una acción de servidor revalida la
+   * PÁGINA donde ocurre —- no el layout que dibuja la barra —- así que mover un pedido de etapa, o
+   * abrir un chat desde la campana, dejaba los contadores en el número anterior hasta recargar.
+   *
+   * Ahora la barra escucha por su cuenta: `conversations` para lo del chat, `events` para lo que le
+   * pasa a los pedidos (cambiar de etapa escribe un evento) e `internal_messages` para el equipo.
+   * De paso funciona cuando quien mueve algo es OTRO agente, que antes tampoco se veía.
+   *
+   * `orders` y `appointments` no están publicadas en realtime; `events` cubre los pedidos, y la
+   * agenda ya se refresca sola porque revalida la ruta en la que estás.
+   */
+  useEffect(() => {
+    const supabase = createClient();
+    let t: ReturnType<typeof setTimeout>;
+    const poke = () => { clearTimeout(t); t = setTimeout(() => refreshBadges(), 500); };
+    const stop = keepSubscribed(supabase, `shell-${businessId}`, (ch) => ch
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, poke)
+      .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `business_id=eq.${businessId}` }, poke)
+      .on("postgres_changes", { event: "*", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, poke));
+    return () => { clearTimeout(t); stop(); };
+  }, [businessId, refreshBadges]);
   // Pendientes en el título de la pestaña: "(3) Hiraticket". Es lo único que se ve sin cambiar de
   // pestaña, así que suma lo que de verdad requiere tu atención — chats tuyos sin leer, sin asignar
   // y mensajes del equipo. setAppBadge además lo pinta en el icono de la barra de tareas cuando la
@@ -596,7 +628,7 @@ export function Shell({
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} />
             <div className="main" style={{ position: "relative" }}>
-              <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={dueDates} onNavigate={onNavigate} />
+              <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={due} onNavigate={onNavigate} />
               {children}
               {navDest && (
                 <div style={{ position: "absolute", inset: 0, top: 57, background: "var(--surface)", zIndex: 30 }}>
@@ -606,7 +638,7 @@ export function Shell({
             </div>
             {/* Riel y barra inferior conviven en el DOM; el CSS decide cuál se ve. Ver MobileNav. */}
             <MobileNav badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin}
-              connected={connected} dueDates={dueDates} onNavigate={onNavigate} />
+              connected={connected} dueDates={due} onNavigate={onNavigate} />
           </div>
         </ConfirmProvider>
       </ToastProvider>

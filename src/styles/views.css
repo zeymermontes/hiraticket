@@ -539,12 +539,19 @@ body.dragging-card .kcard { cursor: grabbing; }
   .tab-l { font-size: 10.5px; font-weight: 600; letter-spacing: .01em; }
 
   /* ---- Panel "Más" ---- */
+  /* Las hojas a pantalla completa terminan JUSTO ENCIMA de la barra de abajo, no debajo de ella.
+     Antes cubrían la pantalla entera (`inset: 0`) y se reservaban el alto de la barra con un
+     padding —- pero el fondo de la hoja pintaba igual sobre ese hueco, así que la barra no se veía
+     y quedaba una franja en blanco al final. Y la barra sí tiene que verse: su botón "Más" se
+     convierte en una X justo para eso. Con `bottom` en vez de padding, esa franja vuelve a ser la
+     barra. Con el teclado abierto la barra se esconde (regla de arriba), así que la hoja baja. */
   .more-sheet {
-    display: flex; flex-direction: column; position: fixed; inset: 0; z-index: 70;
+    display: flex; flex-direction: column; z-index: 70;
+    position: fixed; top: 0; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--sa-bottom));
     background: var(--bg); padding-top: var(--sa-top);
-    padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom));
     animation: ht-slide-up .2s var(--ease-out);
   }
+  html[data-kb="open"] .more-sheet, html[data-kb="open"] .ws-sheet { bottom: var(--kb, 0px); }
   .more-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .more-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   .more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -691,6 +698,9 @@ body.dragging-card .kcard { cursor: grabbing; }
      lados y que los selects no se estiren a lo tonto. */
   .toolbar { padding: 0 14px 12px; }
   .toolbar > .field { flex: 1 1 100%; width: auto !important; }
+  /* Salvo cuando el buscador tiene compañía: en Pedidos comparte fila con el botón de filtros,
+     así que en vez de ocupar el ancho entero pide 200px y cede el resto. */
+  .toolbar > .field.grow-mobile { flex: 1 1 200px; min-width: 0; }
 }
 
 /* =====================================================
@@ -758,10 +768,11 @@ body.dragging-card .kcard { cursor: grabbing; }
 /* Panel del cliente como hoja, en móvil. Reusa el MISMO componente `Workspace` que la columna de
    escritorio, así que hereda `.ws` (que ya scrollea) y todos sus bloques. */
 @media (max-width: 768px) {
+  /* Mismo criterio que .more-sheet: acaba encima de la barra de abajo (ver ahí el porqué). */
   .ws-sheet {
-    position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
+    position: fixed; top: 0; left: 0; right: 0; bottom: calc(var(--tabbar-h) + var(--sa-bottom));
+    z-index: 80; display: flex; flex-direction: column;
     background: var(--bg); padding-top: var(--sa-top);
-    padding-bottom: calc(var(--tabbar-h) + var(--sa-bottom));
     animation: ht-sheet-up .22s var(--ease-out);
   }
   .ws-sheet-head {

@@ -2,7 +2,7 @@
 import type {
   ChatMessage, ConvDetail, ConvQuery, ConvListPage, ChatListCounts, ConvTab,
 } from "@/lib/chat";
-import type { Notif } from "@/lib/notifications";
+import type { ShellBadges } from "@/lib/shellBadges";
 
 /**
  * Las lecturas en vivo del chat, contra la ruta `/chat/live` en vez de acciones de servidor.
@@ -78,7 +78,8 @@ export function liveDetail(convId: string): Promise<ConvDetail | null> {
   return post<ConvDetail | null>({ kind: "detail", convId });
 }
 
-/** Insignias del riel + campana, para que el Shell siga vivo sin recargar la ruta. */
-export function liveBadges(businessId: string): Promise<{ mine: number; unassigned: number; internal: number; notifications: Notif[] }> {
-  return post({ kind: "badges", businessId });
+/** Insignias del riel + campana + banderitas del calendario, para que el Shell siga vivo sin
+ *  recargar la ruta. Devuelve exactamente lo mismo que el layout pinta al cargar. */
+export function liveBadges(businessId: string): Promise<ShellBadges> {
+  return post<ShellBadges>({ kind: "badges", businessId });
 }
