@@ -25,12 +25,12 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
     <div className="page">
       <div className="phead"><h1>{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Catálogo" : "Catalog")}</h1><Pill color="slate" large>{products.length}</Pill></div>
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="store" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Productos y servicios" : "Products & services")}</h4>
             <div className="field field-sm" style={{ width: 180 }}><Icon name="search" /><input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} /></div>
           </div>
-          <div className="tablewrap">
+          <div className="tablewrap keep-table scroll">
             <table className="tbl">
               <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}{!personal && <th title={lang === "es" ? "Lo que te cuesta — se usa para calcular la ganancia en reportes" : "What it costs you — used to compute profit in reports"}>{lang === "es" ? "Costo" : "Cost"}</th>}<th></th></tr></thead>
               <tbody>

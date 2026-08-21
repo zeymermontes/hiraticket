@@ -90,7 +90,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
                   <Kpi icon="whatsapp" label={lang === "es" ? "WhatsApp" : "Connected"} value={t.connected} />
                 </div>
                 <StorageBlock lang={lang} />
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+                <div className="page-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
                   <section className="ws-block">
                     <div className="ws-block-head"><Icon name="plus" size={16} /><h4>{lang === "es" ? "Altas recientes" : "Recent signups"}</h4></div>
                     <div className="ws-block-body col gap-2">
@@ -121,7 +121,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
             )}
 
             {tab === "tenants" && (
-              <div className="tablewrap">
+              <div className="tablewrap keep-table scroll">
                 <table className="tbl">
                   <thead><tr><th>{lang === "es" ? "Negocio" : "Business"}</th><th>{lang === "es" ? "Vertical" : "Vertical"}</th><th>Plan</th><th>{lang === "es" ? "Estado" : "Status"}</th><th>{lang === "es" ? "Asientos" : "Seats"}</th><th>WhatsApp</th><th>MRR</th></tr></thead>
                   <tbody>
@@ -164,7 +164,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
             )}
 
             {tab === "plugins" && (
-              <div className="tablewrap">
+              <div className="tablewrap keep-table scroll">
                 <table className="tbl" style={{ minWidth: 720 }}>
                   <thead><tr><th>Plugin</th><th>{lang === "es" ? "Categoría" : "Category"}</th><th>{lang === "es" ? "Precio" : "Pricing"}</th><th>{lang === "es" ? "Instalados" : "Installs"}</th><th>MRR</th><th>{lang === "es" ? "Estado" : "Status"}</th></tr></thead>
                   <tbody>
@@ -204,7 +204,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
                   <Kpi icon="clock" label={lang === "es" ? "En prueba" : "On trial"} value={t.trials} />
                   <Kpi icon="bell" label={lang === "es" ? "Pagos vencidos" : "Past due"} value={t.pastDue} />
                 </div>
-                <div className="tablewrap">
+                <div className="tablewrap keep-table scroll">
                   <table className="tbl">
                     <thead><tr><th>{lang === "es" ? "Negocio" : "Business"}</th><th>Plan</th><th>{lang === "es" ? "Estado" : "Status"}</th><th>MRR</th></tr></thead>
                     <tbody>
@@ -218,7 +218,7 @@ export function PlatformConsole({ data }: { data: PlatformConsoleData }) {
             )}
 
             {tab === "usage" && (
-              <div className="tablewrap">
+              <div className="tablewrap keep-table scroll">
                 <table className="tbl">
                   <thead><tr><th>{lang === "es" ? "Negocio" : "Business"}</th><th>Plan</th><th>{lang === "es" ? "Agentes" : "Agents"}</th><th>{lang === "es" ? "Pedidos" : "Orders"}</th><th>{lang === "es" ? "Números" : "Numbers"}</th></tr></thead>
                   <tbody>

@@ -247,7 +247,7 @@ export function FlowsScreen({
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-2">
           {filtered.length === 0 ? (
             <div className="empty" style={{ padding: "48px 24px" }}>

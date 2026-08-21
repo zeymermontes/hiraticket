@@ -170,7 +170,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
       <div className="phead"><h1>{lang === "es" ? "Ajustes" : "Settings"}</h1></div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
         <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
           <div className="ws-block-head">
             <Icon name="whatsapp" size={16} />

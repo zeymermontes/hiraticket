@@ -2,6 +2,8 @@
 import React, { useCallback, useEffect, useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { menuStyle } from "@/lib/popover";
+import { CardList, Card, CardTop, CardMeta } from "@/components/MobileCards";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useConfirm } from "@/components/Confirm";
@@ -54,6 +56,28 @@ export function AgentsScreen({
         <span className="grow" />
         {isAdmin && <button className="btn btn-sm btn-primary" onClick={() => setShowInvite(true)}><Icon name="plus" size={14} />{lang === "es" ? "Invitar agente" : "Invite agent"}</button>}
       </div>
+
+      <CardList empty={lang === "es" ? "Sin agentes." : "No agents."}>
+        {agents.map((a) => (
+          <Card key={a.id}>
+            <CardTop>
+              <Avatar name={a.name} initials={deriveInitials(a.name)} color={a.color} src={a.avatar_url ?? undefined} size={38} presence="online" />
+              <span className="grow">
+                <span className="card-title truncate" style={{ display: "block" }}>{a.name}</span>
+                {a.email && <span className="t-xs muted truncate" style={{ display: "block" }}>{a.email}</span>}
+              </span>
+              {isAdmin && <AgentMenu businessId={businessId} agentId={a.id} agentName={a.name} onEdit={() => setEditAgent(a)} />}
+            </CardTop>
+            <CardMeta>
+              <Pill color={ROLE_COLOR[a.role]}><Icon name={ROLE_ICON[a.role]} size={12} />{ROLE_LABEL[a.role][lang]}</Pill>
+              {a.area && <Pill color={a.area.color as PillColor}>{a.area.name}</Pill>}
+              <span className="grow" />
+              <span title={lang === "es" ? "Chats abiertos" : "Open chats"} className="row gap-1"><Icon name="chat" size={13} /><span className="mono" style={{ fontWeight: 700 }}>{a.openChats}</span></span>
+              <span title={lang === "es" ? "Pedidos abiertos" : "Open orders"} className="row gap-1"><Icon name="orders" size={13} /><span className="mono" style={{ fontWeight: 700 }}>{a.openOrders}</span></span>
+            </CardMeta>
+          </Card>
+        ))}
+      </CardList>
 
       <div className="tablewrap scroll">
         <table className="tbl" style={{ minWidth: 840 }}>
@@ -167,7 +191,7 @@ function AgentMenu({ businessId, agentId, agentName, onEdit }: { businessId: str
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, right: window.innerWidth - rect.right, width: 210, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 210, height: 210, align: "right" })}>
             <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar permisos" : "Edit permissions"}</button>
             <button className="menu-item danger" onClick={async () => { setOpen(false); if (await ask({ icon: "trash", danger: true, title: lang === "es" ? `Quitar a ${agentName}` : `Remove ${agentName}`, message: lang === "es" ? "Perderá el acceso al espacio de trabajo." : "They'll lose access to the workspace.", confirmLabel: lang === "es" ? "Quitar" : "Remove", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { const r = await deactivateAgent(businessId, agentId); if (!r.ok) alert(r.error === "last-admin" ? (lang === "es" ? "No puedes quitar al último admin." : "Can't remove the last admin.") : r.error === "self" ? (lang === "es" ? "No puedes quitarte a ti mismo." : "Can't remove yourself.") : r.error ?? "error"); else router.refresh(); }); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar del equipo" : "Remove from team"}</button>
           </div>

@@ -184,7 +184,7 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-       <div style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+       <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
         <div className="col gap-3">
           {/* variables reference */}
           <section className="ws-block">

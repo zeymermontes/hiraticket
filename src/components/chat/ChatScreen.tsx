@@ -660,7 +660,7 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, [out ? "right" : "left"]: out ? window.innerWidth - rect.right : rect.left, width: 160, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 160, height: 240, align: out ? "right" : "left" })}>
             <button className="menu-item" onClick={() => { const r = rect; close(); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {!m.deleted && (m.type === "text" || !!m.media_url) && <button className="menu-item" onClick={() => { close(); onForward(); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>}
@@ -700,7 +700,7 @@ function AlbumMenu({ out, onForward, onDelete }: { out: boolean; onForward: () =
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, [out ? "right" : "left"]: out ? window.innerWidth - rect.right : rect.left, width: 180, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 180, align: out ? "right" : "left" })}>
             <button className="menu-item" onClick={() => { close(); onForward(); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar todas" : "Forward all"}</button>
             {onDelete && <button className="menu-item danger" onClick={() => { close(); onDelete(); }}><Icon name="trash" size={15} />{lang === "es" ? "Eliminar todas" : "Delete all"}</button>}
           </div>
@@ -2823,7 +2823,7 @@ function StatusControl({ detail }: { detail: ConvDetail }) {
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 180, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 240, gap: 6 })}>
             {(["open", "pending", "resolved"] as const).map((s) => (
               <button className="menu-item" key={s} onClick={() => { close(); patch({ status: s }); start(async () => { const r = await setConvStatus(detail.id, s); flowToast(r.flows, lang); refresh(); }); }}>
                 <Pill color={STATUS_COLOR[s]} dot>{STATUS_LABEL[s][lang]}</Pill>
@@ -2850,7 +2850,7 @@ function SnoozeControl({ detail }: { detail: ConvDetail }) {
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 6, left: rect.left, width: 220, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 220, height: 280, gap: 6 })}>
           {snoozeShortcuts(lang).map((o) => (
             <button className="menu-item" key={o.label} onClick={() => apply(o.iso)}><Icon name="clock" size={15} />{o.label}</button>
           ))}

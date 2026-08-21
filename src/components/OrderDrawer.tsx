@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { menuStyle } from "@/lib/popover";
 import { defaultDoneStageName } from "@/lib/doneStage";
 import { Pill, Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -871,7 +872,7 @@ function StageChip({ value, stages, lang, onChange }: { itemId: string; value: s
       {rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, left: rect.left, width: 180, maxHeight: 280, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 280 })}>
             {stages.map((s) => (
               <button key={s.id} className={"menu-item" + (s.id === value ? " on" : "")} onClick={() => { setRect(null); onChange(s.id); }}>
                 <Pill color={s.color as PillColor} dot>{s.name}</Pill>{s.id === value && <><span className="grow" /><Icon name="check" size={14} /></>}
@@ -898,7 +899,7 @@ function PriorityPicker({ value, lang, onChange }: { value: string; lang: "es" |
       {rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setRect(null)} />
-          <div className="menu" style={{ position: "fixed", top: rect.bottom + 4, left: rect.left, width: 170, zIndex: 201 }}>
+          <div className="menu" style={menuStyle(rect, { width: 170, height: 220 })}>
             {(["low", "normal", "high", "urgent"] as const).map((p) => (
               <button key={p} className={"menu-item" + (p === value ? " on" : "")} onClick={() => { setRect(null); if (p !== value) onChange(p); }}>
                 <Pill color={priorityColor(p)}><Icon name="flag" size={11} />{PRIO[p][lang]}</Pill>

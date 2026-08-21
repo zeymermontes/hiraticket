@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { CardList, Card, CardTop, CardMeta } from "@/components/MobileCards";
 import { doneStageNames, defaultDoneStageName } from "@/lib/doneStage";
 import { useConfirm } from "@/components/Confirm";
 import { Pill, Avatar, deriveInitials, PayDot } from "@/components/ui";
@@ -249,6 +250,51 @@ export function OrdersTable({
           </div>
         </>
       )}
+
+      {/* Móvil: las mismas filas como tarjetas. Se eligen las cuatro cosas por las que un agente
+          busca un pedido desde el teléfono —- código, cliente, etapa y total —- y el resto (área,
+          agente, artículos, creado) se deja para el detalle, que está a un toque. El dinero se
+          esconde en modo personal, como en toda la app (skill dual-mode). */}
+      <CardList empty={trashView ? (lang === "es" ? "Papelera vacía." : "Trash is empty.") : personal ? (lang === "es" ? "No hay tareas todavía." : "No tasks yet.") : t("empty_orders")}>
+        {view.map((o) => {
+          const overdue = isOverdue(o.due_at, !!o.stage && doneStageNames(stages, doneFromStageId).has(o.stage.name));
+          return (
+            <Card key={o.id} selected={sel.has(o.id)} dim={trashView}
+              onClick={trashView ? undefined : () => router.push(`/orders?order=${o.id}`, { scroll: false })}>
+              <CardTop>
+                <Avatar name={o.contact?.name} initials={deriveInitials(o.contact?.name ?? "?")} size={34} color="#5A6373" />
+                <span className="grow">
+                  <span className="card-title truncate" style={{ display: "block" }}>{o.contact?.name ?? "—"}</span>
+                  <span className="mono t-xs muted">{o.code}</span>
+                </span>
+                {!personal && (
+                  <span className="row gap-1" style={{ alignItems: "center", flex: "none" }}>
+                    <PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} />
+                    <span className="mono" style={{ fontWeight: 800 }}>${formatMoney(o.total)}</span>
+                  </span>
+                )}
+              </CardTop>
+              <CardMeta>
+                {trashView ? <Pill color="red" dot>{lang === "es" ? "Eliminado" : "Deleted"}</Pill>
+                  : o.cancelled_at ? <Pill color="red" dot>{lang === "es" ? "Cancelado" : "Cancelled"}</Pill>
+                    : o.stage ? <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill> : null}
+                <PriorityFlag p={o.priority} lang={lang} />
+                {o.due_at && (
+                  <span className="row gap-1" style={{ color: overdue ? "var(--red)" : "inherit", fontWeight: overdue ? 700 : 400 }}>
+                    {overdue && <Icon name="clock" size={12} />}{relDate(o.due_at)}
+                  </span>
+                )}
+                <span className="grow" />
+                {trashView && (
+                  <span className="row gap-1" onClick={(e) => { e.stopPropagation(); }}>
+                    <button className="iconbtn sm" title={lang === "es" ? "Restaurar" : "Restore"} onClick={async () => { await setOrderDeleted(o.id, false); reload(); }}><Icon name="refresh" size={15} /></button>
+                  </span>
+                )}
+              </CardMeta>
+            </Card>
+          );
+        })}
+      </CardList>
 
       <div className={"tablewrap scroll" + (dense ? " dense" : "")}>
         <table className="tbl">
