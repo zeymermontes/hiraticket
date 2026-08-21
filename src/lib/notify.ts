@@ -208,6 +208,29 @@ export async function subscribeToPush(): Promise<{ ok: true; sub: PushSubJSON } 
   }
 }
 
+/**
+ * Quita de la bandeja del sistema las notificaciones de conversaciones YA LEÍDAS.
+ *
+ * Es lo que hace cualquier app de mensajería y lo que la gente da por hecho: el aviso existe para
+ * decirte que hay algo sin leer, así que en cuanto lo lees sobra. Lo que NO se hace es barrerlas
+ * todas al abrir la app —- las de chats que no has mirado tienen que seguir ahí, o abrir la app se
+ * convierte en una forma de perder recados.
+ *
+ * Cada aviso se manda con la etiqueta `wa-<conversación>` (ver src/lib/push.ts), que es lo que
+ * permite encontrarlo después. Sirve además para el caso de dos aparatos: si lees el chat en la
+ * computadora, al volver al teléfono el aviso viejo se retira solo.
+ */
+export async function clearNotificationsFor(convIds: string[]): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || !convIds.length) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg?.getNotifications) return;   // Safari viejo: no puede, y no pasa nada
+    const wanted = new Set(convIds.map((id) => `wa-${id}`));
+    const open = await reg.getNotifications();
+    for (const n of open) if (wanted.has(n.tag)) n.close();
+  } catch { /* sin permiso o sin worker: no hay nada que cerrar */ }
+}
+
 /** Baja de este dispositivo. Devuelve el endpoint que se dio de baja, para borrarlo del servidor. */
 export async function unsubscribeFromPush(): Promise<string | null> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;

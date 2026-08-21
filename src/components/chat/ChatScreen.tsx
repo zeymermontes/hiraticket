@@ -44,6 +44,7 @@ import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
 import { useComposerFocus } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
+import { clearNotificationsFor } from "@/lib/notify";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
 import { makeImageThumb } from "@/lib/imageThumb";
@@ -1112,6 +1113,28 @@ export function ChatScreen({
     if (detail && detail.unread > 0) { markConvRead(detail.id); setDetail((c) => (c ? { ...c, unread: 0 } : c)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.id, detail?.unread]);
+
+  /**
+   * Retirar de la bandeja del sistema lo que ya se leyó.
+   *
+   * El aviso está para decir que hay algo sin leer; leído, sobra. Se hace en dos momentos: al abrir
+   * un chat (el suyo) y al volver a la app (todos los que la lista da ya por leídos —- así se limpia
+   * también lo que se leyó desde la computadora). Los chats que NO has mirado se quedan: barrerlo
+   * todo al abrir la app convertiría abrirla en una forma de perder recados.
+   */
+  useEffect(() => {
+    const sweep = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      const leidos = listRef.current.filter((c) => !c.unread).map((c) => c.id);
+      const abierto = detailIdRef.current;
+      if (abierto) leidos.push(abierto);
+      void clearNotificationsFor(leidos);
+    };
+    sweep();
+    document.addEventListener("visibilitychange", sweep);
+    window.addEventListener("focus", sweep);
+    return () => { document.removeEventListener("visibilitychange", sweep); window.removeEventListener("focus", sweep); };
+  }, [detail?.id, list]);
 
   // Remember the last chat the agent actually opened (cookie → the server page reopens it
   // when returning to /chat without an explicit ?c). Only persist when the chat was opened

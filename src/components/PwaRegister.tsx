@@ -16,10 +16,24 @@ export function PwaRegister() {
     // Tras la carga: registrar compite por red y CPU con el primer pintado, y aquí no hay prisa.
     const register = () => { navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {}); };
     if (document.readyState === "complete") register();
-    else {
-      window.addEventListener("load", register, { once: true });
-      return () => window.removeEventListener("load", register);
-    }
+    else window.addEventListener("load", register, { once: true });
+
+    // Buscar versión nueva al volver a la app.
+    //
+    // El worker es el único código de la app que NO se renueva al desplegar: el navegador se queda
+    // con el que instaló y solo mira si hay otro cuando le toca. Una app instalada puede pasar días
+    // sin darle esa oportunidad, y mientras tanto arrastra el worker viejo —- que es justo lo que
+    // hizo falta esperar para que llegara el icono correcto de la barra de estado. Preguntar al
+    // volver cuesta una petición condicional y quita ese "y ahora espera a que se actualice solo".
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("load", register);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, []);
   return null;
 }
