@@ -31,4 +31,27 @@ await sharp({ create: { width: 512, height: 512, channels: 4, background: BG } }
 // iOS no soporta transparencia en el icono de la pantalla de inicio: la pinta de negro.
 await sharp(SRC).resize(180, 180).flatten({ background: BG }).png().toFile(`${OUT}/apple-touch-icon.png`);
 
+/**
+ * Icono de la barra de estado de Android ("badge"), y es un formato distinto, no un tamaño.
+ *
+ * Android NO pinta el icono a color ahí arriba: toma solo el CANAL ALFA y lo rellena de blanco.
+ * Un PNG a color, que es opaco de borde a borde, se convierte por tanto en un cuadrado blanco
+ * —- que es justo lo que se veía. Hay que darle una silueta: transparente alrededor y opaco donde
+ * está el dibujo.
+ *
+ * Se saca del propio icono por brillo: el bocadillo amarillo pasa el umbral y el fondo oscuro no,
+ * y como la "H" también es oscura queda calada dentro del bocadillo. Con 10% de aire a los lados,
+ * porque Android lo dibuja pequeño y pegado al reloj.
+ */
+const BADGE = 96, INNER = 76;
+const shape = await sharp(SRC).resize(INNER, INNER).greyscale().threshold(110).raw().toBuffer();
+const rgba = Buffer.alloc(INNER * INNER * 4);
+for (let i = 0; i < INNER * INNER; i++) {
+  rgba[i * 4] = 255; rgba[i * 4 + 1] = 255; rgba[i * 4 + 2] = 255; // blanco puro
+  rgba[i * 4 + 3] = shape[i];                                      // la silueta manda en el alfa
+}
+await sharp({ create: { width: BADGE, height: BADGE, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } } })
+  .composite([{ input: rgba, raw: { width: INNER, height: INNER, channels: 4 }, gravity: "center" }])
+  .png().toFile(`${OUT}/badge-96.png`);
+
 console.log("iconos listos en", OUT);

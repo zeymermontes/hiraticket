@@ -42,7 +42,10 @@ self.addEventListener("push", (event) => {
   const options = {
     body: d.body || "",
     icon: d.icon || "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
+    // OJO: `badge` NO es el icono grande, es el de la barra de estado —- y Android solo usa su
+    // canal alfa, rellenando de blanco lo opaco. Poniendo aquí el icono a color (opaco de borde a
+    // borde) salía un cuadrado blanco. `badge-96.png` es la silueta, ver scripts/make-icons.mjs.
+    badge: "/icons/badge-96.png",
     // Mismo tag = la nueva REEMPLAZA a la anterior. Sin esto, veinte mensajes de un chat dejan
     // veinte notificaciones apiladas y hay que barrerlas una por una.
     tag: d.tag || "ht",

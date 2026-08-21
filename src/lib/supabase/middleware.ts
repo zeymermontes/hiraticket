@@ -9,7 +9,13 @@ type CookieToSet = { name: string; value: string; options: CookieOptions };
 // —- "Manifest: Syntax error" en la consola —- y sin manifest legible Chrome no ofrece instalar
 // NADA. Ese era el "no me dio opción de instalar la app". No filtra nada: dentro solo hay el
 // nombre, los colores y los iconos.
-const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico", "/pay", "/api/plugins", "/api/whatsapp", "/privacy", "/terms", "/manifest.webmanifest"];
+const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico", "/pay", "/api/plugins", "/api/whatsapp", "/privacy", "/terms", "/manifest.webmanifest",
+  // El disparador de push del worker. Tiene que estar aquí por lo mismo que los otros webhooks:
+  // quien llama es un SERVICIO, no una persona, y no trae cookie de sesión. Sin esto el guarda lo
+  // redirigía a /login —- un 307 que el worker seguía con POST y acababa en 405 —- así que ningún
+  // aviso llegaba nunca, y sin ruido: la ruta respondía "ok" a un sitio que no era ella. La puerta
+  // de esta ruta es su propio secreto compartido, y sin secreto configurado queda CERRADA.
+  "/api/push"];
 
 // Where authenticated users land — the native app home.
 const APP_HOME = "/chat";
