@@ -141,6 +141,14 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
   // la lista no oficial) y repetir el filtro en cada uno es justo como se acaban desincronizando.
   const officialSessions = sessions.filter((s) => s.connect_method === "official");
   const bridgeSessions = sessions.filter((s) => s.connect_method !== "official");
+  // Una organización recién creada nace con una sesión de WhatsApp VACÍA (la siembra
+  // create_business con la etiqueta "Principal"). Es un hueco a la espera de que alguien vincule
+  // un número, no un número vinculado —- y contarla como tal hacía que una organización nueva
+  // dijera "esta cuenta ya tiene un número por QR" señalando a la nada. Vinculada de verdad =
+  // tiene teléfono o está conectada.
+  const linked = (x: WaSession) => !!x.phone || x.status === "connected";
+  const linkedBridge = bridgeSessions.filter(linked);
+  const anyLinked = officialSessions.length > 0 || linkedBridge.length > 0;
 
   // Notification sound mute (per-browser preference).
   const [muted, setMuted] = useState(false);
@@ -183,9 +191,9 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                 falta saberlo ANTES de conectar Meta API: en cuanto el negocio tiene número oficial
                 ya no se pueden añadir números por QR (el guarda de settings/actions.ts lo impide),
                 así que descubrirlo al intentarlo es tarde. */}
-            {sessions.length > 0 && (
+            {anyLinked && (
               <Pill color={officialSessions.length > 0 ? "green" : "amber"}>
-                {officialSessions.length > 0 && bridgeSessions.length > 0
+                {officialSessions.length > 0 && linkedBridge.length > 0
                   ? (lang === "es" ? "Meta API + QR" : "Meta API + QR")
                   : officialSessions.length > 0
                     ? (lang === "es" ? "Usa Meta API" : "Using Meta API")
@@ -212,7 +220,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                 ya vinculado por QR era completamente invisible: se podía conectar Meta API sin
                 saber que el negocio ya tenía uno. Aquí se muestra solo como información —- sin
                 ningún control, que es lo que el camino oficial no debe poder tocar. */}
-            {showOfficial && bridgeSessions.length > 0 && (
+            {showOfficial && linkedBridge.length > 0 && (
               <div className="col gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
                 <div className="row gap-2">
                   <Icon name="wifioff" size={15} />
@@ -220,7 +228,7 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                   <Pill color="amber">{lang === "es" ? "No oficial" : "Unofficial"}</Pill>
                 </div>
                 <div className="t-sm muted mono">
-                  {bridgeSessions.map((s) => s.phone ?? s.label).join(", ")}
+                  {linkedBridge.map((s) => s.phone ?? s.label).join(", ")}
                 </div>
                 <div className="t-xs muted">
                   {lang === "es"

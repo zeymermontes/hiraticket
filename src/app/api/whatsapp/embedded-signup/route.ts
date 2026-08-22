@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMyBusiness } from "@/lib/queries";
 import { encryptSecret } from "@/lib/secrets";
 import { subscribeAppToWaba, registerPhone, getPhoneNumberInfo } from "@/lib/whatsapp-cloud";
 
@@ -76,14 +77,14 @@ export async function POST(req: NextRequest) {
   const phone =
     info.ok && info.data.display_phone_number ? "+" + info.data.display_phone_number.replace(/\D/g, "") : null;
 
-  const { data: member } = await supabase
-    .from("business_members")
-    .select("business_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-  if (!member) return NextResponse.json({ ok: false, error: "no_business" }, { status: 400 });
-  const businessId = member.business_id as string;
+  // La organización ACTIVA, no "la primera membresía".
+  //
+  // Con varias organizaciones esa diferencia decide en cuál queda vinculado el número, y el fallo
+  // sería mudo: conectas WhatsApp estando en la organización nueva y la sesión oficial aterriza en
+  // la vieja. getMyBusiness resuelve la activa y ya se ocupa de que solo pueda ser una tuya.
+  const business = await getMyBusiness();
+  if (!business) return NextResponse.json({ ok: false, error: "no_business" }, { status: 400 });
+  const businessId = business.id;
 
   // Upsert the official session (one per business). RLS "members manage wa" covers this client.
   const now = new Date().toISOString();
