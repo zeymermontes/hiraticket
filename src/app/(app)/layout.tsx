@@ -48,7 +48,7 @@ export default async function AppLayout({
     ? ((await supabase.from("profiles").select("full_name, avatar_color").eq("id", user.id).maybeSingle()).data as Record<string, unknown> | null)
     : (pr.data as Record<string, unknown> | null);
   const myName = (prof?.full_name as string) || (user.user_metadata?.full_name as string) || (user.email ? user.email.split("@")[0] : "Agente");
-  const shellUser: ShellUser = { id: user.id, email: user.email ?? "", name: myName, color: (prof?.avatar_color as string) || "#0E8C82", avatarUrl: (prof?.avatar_url as string | null) ?? null };
+  const baseColor = (prof?.avatar_color as string) || "#0E8C82";
 
   // Las insignias van todas juntas en getShellBadges, que es también lo que refresca `/chat/live`
   // en vivo: si se calcularan aquí a mano, el refresco y la carga inicial dirían cosas distintas.
@@ -58,9 +58,15 @@ export default async function AppLayout({
     listMyOrgs(),
     // `notif_prefs` viaja con el rol: los dos son de la MEMBRESÍA, o sea de esta persona en esta
     // organización (0084). Una consulta, no dos.
-    supabase.from("business_members").select("role, notif_prefs").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
+    supabase.from("business_members").select("role, notif_prefs, avatar_color").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
   ]);
   const objectName = (business.object_singular ?? "Pedido") + "s";
+  // El color puede ser distinto en cada organización (0085); nulo en la membresía = el del perfil.
+  const shellUser: ShellUser = {
+    id: user.id, email: user.email ?? "", name: myName,
+    color: ((mem as { avatar_color?: string | null } | null)?.avatar_color) || baseColor,
+    avatarUrl: (prof?.avatar_url as string | null) ?? null,
+  };
 
   return (
     <Shell

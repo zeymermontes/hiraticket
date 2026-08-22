@@ -17,10 +17,9 @@ export interface DetailedAgent {
 export async function getAgentsDetailed(businessId: string): Promise<DetailedAgent[]> {
   const supabase = await createClient();
 
-  const { data: members } = await supabase
-    .from("business_members")
-    .select("user_id, role, area_id")
-    .eq("business_id", businessId);
+  // Igual que en getAgents: el color de la membresía manda sobre el del perfil (0085).
+  let members = (await supabase.from("business_members").select("user_id, role, area_id, avatar_color").eq("business_id", businessId)).data as Record<string, unknown>[] | null;
+  if (!members) members = (await supabase.from("business_members").select("user_id, role, area_id").eq("business_id", businessId)).data as Record<string, unknown>[] | null;
   if (!members?.length) return [];
 
   const ids = members.map((m) => m.user_id as string);
@@ -63,7 +62,7 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
     return {
       id: uid,
       name: (p?.full_name as string) || "Agente",
-      color: (p?.avatar_color as string) || "#5A6373",
+      color: (m.avatar_color as string | null) || (p?.avatar_color as string) || "#5A6373",
       avatar_url: (p?.avatar_url as string | null) ?? null,
       role: m.role as DetailedAgent["role"],
       email: emailMap.get(uid) ?? null,

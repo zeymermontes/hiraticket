@@ -187,10 +187,11 @@ export interface ConvDetail {
 /** Members of a business with their display name + avatar color. */
 async function _getAgents(businessId: string): Promise<Agent[]> {
   const supabase = await createClient();
-  const { data: members } = await supabase
-    .from("business_members")
-    .select("user_id, role")
-    .eq("business_id", businessId);
+  // avatar_color de la MEMBRESÍA (0085): cada quien puede llevar un color distinto en cada
+  // organización, y quien lo mira tiene que ver el de ESTA. Con la migración sin aplicar, la
+  // consulta falla y se cae a la de siempre.
+  let members = (await supabase.from("business_members").select("user_id, role, avatar_color").eq("business_id", businessId)).data as Record<string, unknown>[] | null;
+  if (!members) members = (await supabase.from("business_members").select("user_id, role").eq("business_id", businessId)).data as Record<string, unknown>[] | null;
   if (!members?.length) return [];
 
   const ids = members.map((m) => m.user_id as string);
@@ -204,7 +205,7 @@ async function _getAgents(businessId: string): Promise<Agent[]> {
     return {
       id: m.user_id as string,
       name: (p?.full_name as string) || "Agente",
-      color: (p?.avatar_color as string) || "#5A6373",
+      color: (m.avatar_color as string | null) || (p?.avatar_color as string) || "#5A6373",
       avatar_url: (p?.avatar_url as string | null) ?? null,
       role: m.role as Agent["role"],
     };

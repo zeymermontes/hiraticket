@@ -9,7 +9,7 @@ import { updateMyProfile } from "@/app/(app)/profile/actions";
 import { PALETTE_GROUPS } from "@/lib/palette";
 
 
-export function ProfileScreen({ initial }: { initial: { userId: string; email: string; name: string; color: string; avatarUrl: string | null } }) {
+export function ProfileScreen({ initial, orgName = null }: { initial: { userId: string; email: string; name: string; color: string; avatarUrl: string | null }; /** Nombre de la organización activa, SOLO con más de una: el color es de ella, no de la cuenta. */ orgName?: string | null }) {
   const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
@@ -77,6 +77,14 @@ export function ProfileScreen({ initial }: { initial: { userId: string; email: s
             {/* Color (used when there's no picture) */}
             <div className="col gap-1">
               <label className="lbl">{lang === "es" ? "Color" : "Color"}</label>
+              {/* El nombre y la foto son tuyos en todas partes; el color no. Sirve para saber de un
+                  vistazo en cuál organización estás, así que se guarda en cada una por separado
+                  (0085) —- y conviene decirlo, o cambiarlo aquí parecería cambiarlo en todas. */}
+              {orgName && (
+                <span className="t-xs muted" style={{ marginTop: -2 }}>
+                  {lang === "es" ? `Solo para ${orgName}. En tus otras organizaciones no cambia.` : `For ${orgName} only. It doesn't change in your other organizations.`}
+                </span>
+              )}
               {/* Los tres tonos de un matiz van pegados; el espacio grande separa un matiz del otro. */}
               <div className="row" style={{ flexWrap: "wrap", gap: 10 }}>
                 {PALETTE_GROUPS.map((group) => (
