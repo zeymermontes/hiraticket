@@ -25,7 +25,14 @@ export function ProfileScreen({ initial, orgName = null }: { initial: { userId: 
     setErr(null); optimistic?.();
     start(async () => {
       const r = await updateMyProfile(patch);
-      if (!r.ok) { setErr(r.error === "no-permission" ? (lang === "es" ? "No se pudo guardar (aplica la migración 0045)." : "Couldn't save (apply migration 0045).") : (lang === "es" ? "No se pudo guardar." : "Couldn't save.")); return; }
+      // El motivo se enseña tal cual cuando lo hay: un "no se pudo guardar" a secas ya costó una
+      // ronda de adivinar por qué el color no cambiaba.
+      if (!r.ok) {
+        setErr(r.error === "no-permission"
+          ? (lang === "es" ? "No se pudo guardar (aplica la migración 0045)." : "Couldn't save (apply migration 0045).")
+          : (lang === "es" ? `No se pudo guardar${r.error ? `: ${r.error}` : "."}` : `Couldn't save${r.error ? `: ${r.error}` : "."}`));
+        return;
+      }
       flash(); router.refresh();
     });
   };

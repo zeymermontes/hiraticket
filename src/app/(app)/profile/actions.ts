@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness } from "@/lib/queries";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /** Update the signed-in agent's own profile (display name / color / avatar). RLS: "own profile write". */
 export async function updateMyProfile(patch: { full_name?: string; avatar_color?: string; avatar_url?: string | null }): Promise<{ ok: boolean; error?: string }> {
@@ -23,9 +24,33 @@ export async function updateMyProfile(patch: { full_name?: string; avatar_color?
    */
   if (patch.avatar_color !== undefined) {
     const business = await getMyBusiness();
-    const rpc = business ? await supabase.rpc("set_my_member_color", { p_business: business.id, p_color: patch.avatar_color }) : { error: { message: "no-business" } };
-    // Sin la migración 0085 se guarda donde vivía antes, para no dejar el selector sin efecto.
-    if (rpc.error) await supabase.from("profiles").update({ avatar_color: patch.avatar_color }).eq("id", user.id);
+    if (!business) return { ok: false, error: "no-business" };
+    /**
+     * Se escribe con la llave de servicio y NO por la función `set_my_member_color`.
+     *
+     * La función existía por una buena razón —- RLS filtra filas y no columnas, así que abrir
+     * business_members a que cada quien actualice su fila dejaría cambiarse el `role` de paso —-
+     * pero en producción no escribía nada y sin dar error: `auth.uid()` dentro de ella no estaba
+     * resolviendo al usuario, así que el UPDATE tocaba cero filas y todo parecía haber ido bien.
+     * Ese es el fallo que se veía como "cambio el color y sale igual en las dos organizaciones":
+     * ninguna de las dos guardaba nada, y las dos caían al color del perfil.
+     *
+     * Aquí no hace falta esa función: la acción YA sabe quién llama (la sesión) y en qué
+     * organización está (la cookie, que solo elige entre las suyas), así que la escritura se acota
+     * a mano a esa pareja y a esa única columna. Es más estrecho que lo que permitía la función, y
+     * sin una pieza en medio que pueda fallar en silencio.
+     */
+    const { error } = await createAdminClient()
+      .from("business_members")
+      .update({ avatar_color: patch.avatar_color })
+      .eq("user_id", user.id)
+      .eq("business_id", business.id);
+    // Sin la migración 0085 no existe la columna: se guarda donde vivía antes para no dejar el
+    // selector sin efecto, pero el error se devuelve si tampoco eso funciona.
+    if (error) {
+      const alt = await supabase.from("profiles").update({ avatar_color: patch.avatar_color }).eq("id", user.id);
+      if (alt.error) return { ok: false, error: alt.error.message };
+    }
   }
 
   const clean: Record<string, unknown> = {};

@@ -2,6 +2,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness } from "@/lib/queries";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { parseNotifPrefs, type NotifPrefs } from "@/lib/notifPrefs";
 
 /**
@@ -30,9 +31,15 @@ export async function saveNotifPrefs(prefs: NotifPrefs): Promise<{ ok: boolean }
   const user = await getSessionUser();
   const business = await getMyBusiness();
   if (!user || !business) return { ok: false };
-  // Por RPC y no por update directo: business_members no deja que cada quien escriba su fila, y
-  // abrirlo dejaría cambiarse el `role` de paso (RLS filtra filas, no columnas). Ver 0084.
-  const { error } = await supabase.rpc("set_my_notif_prefs", { p_business: business.id, p_prefs: prefs });
+  // Con la llave de servicio y acotado a mano a (esta persona, esta organización) y a esta única
+  // columna. La función `set_my_notif_prefs` hacía lo mismo con más ceremonia y en producción no
+  // escribía nada sin dar error —- ver el comentario largo en profile/actions.ts. Aquí la acción ya
+  // sabe quién llama y dónde está, así que no hace falta preguntárselo a la base.
+  const { error } = await createAdminClient()
+    .from("business_members")
+    .update({ notif_prefs: prefs })
+    .eq("user_id", user.id)
+    .eq("business_id", business.id);
   if (!error) return { ok: true };
   // Sin la migración: se guardan donde vivían antes, para no dejar Ajustes sin efecto.
   const { error: fallback } = await supabase.from("profiles").update({ notif_prefs: prefs }).eq("id", user.id);
