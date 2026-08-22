@@ -15,7 +15,11 @@ const PUBLIC_PATHS = ["/", "/login", "/auth", "/logout", "/favicon.ico", "/pay",
   // redirigía a /login —- un 307 que el worker seguía con POST y acababa en 405 —- así que ningún
   // aviso llegaba nunca, y sin ruido: la ruta respondía "ok" a un sitio que no era ella. La puerta
   // de esta ruta es su propio secreto compartido, y sin secreto configurado queda CERRADA.
-  "/api/push"];
+  "/api/push",
+  // Solo devuelve qué versión está desplegada, que ya viaja en el HTML de la portada. Público
+  // porque es lo que consulta una pestaña para saber si hay actualización: si la sesión caducó,
+  // rebotar esa comprobación al login la deja muda justo cuando más falta hace.
+  "/api/version"];
 
 // Where authenticated users land — the native app home.
 const APP_HOME = "/chat";
