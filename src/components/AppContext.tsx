@@ -1,5 +1,5 @@
 "use client";
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { type Lang, type StringKey, tr } from "@/lib/i18n";
 import { brandRamp, BRAND_VARS } from "@/lib/palette";
 import { setMyBrandColor } from "@/app/(app)/profile/actions";
@@ -54,18 +54,31 @@ export function AppProvider({ children, personal = false, brandInitial, business
   const [density, setDensityState] = useState<Density>("comfortable");
   const [brand, setBrandState] = useState<string>(brandInitial ?? "");
   const brandKey = businessId ? `brand_${businessId}` : "brand";
+  // Lo último que se eligió aquí, con su hora: mientras la escritura viaja, el layout puede
+  // re-renderizarse con el color ANTERIOR y devolvería el swatch a su sitio de un salto.
+  const recien = useRef<{ color: string; at: number } | null>(null);
 
   // Hydrate from localStorage after mount (matches the prototype's persistence).
   useEffect(() => {
     setLangState(readLS<Lang>("lang", "es"));
     setThemeState(readLS<Theme>("theme", "light"));
     setDensityState(readLS<Density>("density", "comfortable"));
-    // Con organización, el valor bueno llega del servidor: el caché local solo cubre el hueco
-    // hasta que hidrata, y nunca pisa lo que dijo la base.
-    if (!businessId) setBrandState(readLS<string>("brand", ""));
-    else if (brandInitial == null) setBrandState(readLS<string>(brandKey, ""));
+    if (!businessId) { setBrandState(readLS<string>("brand", "")); return; }
+    /**
+     * Al CAMBIAR de organización hay que volver a leerlo del servidor, y esto no lo hacía.
+     *
+     * `useState(brandInitial)` solo mira su argumento la primera vez: cambiar de organización
+     * re-renderiza el layout con el color de la nueva, pero el estado se quedaba con el de la
+     * anterior. De ahí el "a veces no se refleja hasta que recargo" —- recargar monta el proveedor
+     * de cero, que es cuando el valor inicial vuelve a contar.
+     *
+     * Ahora se sincroniza cada vez que cambia la organización o el color que manda el servidor. El
+     * caché local solo cubre el hueco cuando el servidor todavía no dice nada.
+     */
+    if (recien.current && Date.now() - recien.current.at < 5000) return; // ver setBrand
+    setBrandState(brandInitial ?? readLS<string>(brandKey, ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [businessId, brandInitial]);
+  }, [businessId, brandInitial, brandKey]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -109,6 +122,7 @@ export function AppProvider({ children, personal = false, brandInitial, business
     // esperar al servidor para repintar haría que elegir un color se sintiera lento.
     setBrand: (c: string) => {
       setBrandState(c);
+      recien.current = { color: c, at: Date.now() };
       if (businessId) void setMyBrandColor(c).catch(() => {});
     },
     t: (k) => tr(k, lang),
