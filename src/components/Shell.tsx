@@ -558,6 +558,7 @@ export function Shell({
   dueDates = [],
   proofs = 0,
   orgs = [],
+  brandColor = null,
   children,
 }: {
   user: ShellUser;
@@ -576,6 +577,8 @@ export function Shell({
   proofs?: number;
   /** Organizaciones de esta persona. Con una sola, el selector no se pinta (ver OrgSwitcher). */
   orgs?: OrgOption[];
+  /** Color de la app elegido para ESTA organización (0088). Nulo = el amarillo de siempre. */
+  brandColor?: string | null;
   children: React.ReactNode;
 }) {
   // Badges/bell kept live via a targeted refetch (no full route refresh); re-seeded from props.
@@ -670,7 +673,7 @@ export function Shell({
   }, []);
 
   return (
-    <AppProvider personal={personal}>
+    <AppProvider personal={personal} brandInitial={brandColor} businessId={businessId}>
       <ToastProvider>
         <ConfirmProvider>
           <NavProgress />

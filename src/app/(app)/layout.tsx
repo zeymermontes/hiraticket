@@ -58,7 +58,7 @@ export default async function AppLayout({
     listMyOrgs(),
     // `notif_prefs` viaja con el rol: los dos son de la MEMBRESÍA, o sea de esta persona en esta
     // organización (0084). Una consulta, no dos.
-    supabase.from("business_members").select("role, notif_prefs, avatar_color").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
+    supabase.from("business_members").select("role, notif_prefs, avatar_color, brand_color").eq("business_id", business.id).eq("user_id", user.id).maybeSingle(),
   ]);
   const objectName = (business.object_singular ?? "Pedido") + "s";
   // El color puede ser distinto en cada organización (0085); nulo en la membresía = el del perfil.
@@ -83,6 +83,7 @@ export default async function AppLayout({
       dueDates={badges.dueDates}
       proofs={badges.proofs}
       orgs={orgs}
+      brandColor={((mem as { brand_color?: string | null } | null)?.brand_color) ?? null}
     >
       {children}
     </Shell>

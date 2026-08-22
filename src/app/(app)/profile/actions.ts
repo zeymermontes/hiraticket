@@ -40,16 +40,24 @@ export async function updateMyProfile(patch: { full_name?: string; avatar_color?
      * a mano a esa pareja y a esa única columna. Es más estrecho que lo que permitía la función, y
      * sin una pieza en medio que pueda fallar en silencio.
      */
-    const { error } = await createAdminClient()
+    const { data: written, error } = await createAdminClient()
       .from("business_members")
       .update({ avatar_color: patch.avatar_color })
       .eq("user_id", user.id)
-      .eq("business_id", business.id);
+      .eq("business_id", business.id)
+      .select("business_id");
     // Sin la migración 0085 no existe la columna: se guarda donde vivía antes para no dejar el
     // selector sin efecto, pero el error se devuelve si tampoco eso funciona.
     if (error) {
       const alt = await supabase.from("profiles").update({ avatar_color: patch.avatar_color }).eq("id", user.id);
-      if (alt.error) return { ok: false, error: alt.error.message };
+      if (alt.error) return { ok: false, error: `perfil: ${alt.error.message}` };
+      return { ok: true };
+    }
+    // Un UPDATE que no tocó ninguna fila NO es un error para Postgres, y ese silencio es justo lo
+    // que hizo perder dos rondas persiguiendo por qué el color no cambiaba: la pantalla decía que
+    // había guardado. Si no se escribió, se dice, y se dice DÓNDE se intentó.
+    if (!written?.length) {
+      return { ok: false, error: `sin fila para user ${user.id.slice(0, 8)} en negocio ${business.id.slice(0, 8)}` };
     }
   }
 
@@ -64,5 +72,25 @@ export async function updateMyProfile(patch: { full_name?: string; avatar_color?
 
   revalidatePath("/profile");
   revalidatePath("/", "layout"); // refresh the nav-rail avatar/name everywhere
+  return { ok: true };
+}
+
+/**
+ * El color de la APP para la organización activa (0088).
+ *
+ * Aparte de updateMyProfile porque no es del perfil: el nombre y la foto son de la persona, esto
+ * es "cómo se ve la app cuando estoy en ESTA organización". Misma escritura acotada a mano a
+ * (esta persona, esta organización) y a esta única columna.
+ */
+export async function setMyBrandColor(color: string): Promise<{ ok: boolean; error?: string }> {
+  const user = await getSessionUser();
+  const business = await getMyBusiness();
+  if (!user || !business) return { ok: false, error: "no-session" };
+  const { error } = await createAdminClient()
+    .from("business_members")
+    .update({ brand_color: color || null })
+    .eq("user_id", user.id)
+    .eq("business_id", business.id);
+  if (error) return { ok: false, error: error.message };
   return { ok: true };
 }

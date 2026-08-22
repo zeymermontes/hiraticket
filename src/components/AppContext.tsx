@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { type Lang, type StringKey, tr } from "@/lib/i18n";
 import { brandRamp, BRAND_VARS } from "@/lib/palette";
+import { setMyBrandColor } from "@/app/(app)/profile/actions";
 
 type Theme = "light" | "dark";
 type Density = "comfortable" | "compact";
@@ -35,19 +36,36 @@ function readLS<T>(key: string, fallback: T): T {
   }
 }
 
-export function AppProvider({ children, personal = false }: { children: React.ReactNode; personal?: boolean }) {
+/**
+ * `brandInitial` / `businessId`: el color de la app viene de la ORGANIZACIÓN activa (0088).
+ *
+ * Antes vivía solo en el localStorage del navegador, así que era el mismo en todas las
+ * organizaciones y no viajaba a otro dispositivo —- justo lo contrario de para lo que se usa, que
+ * es saber de un vistazo dónde estás. Ahora manda la base; el localStorage se queda como caché
+ * POR ORGANIZACIÓN, solo para que no se vea un parpadeo del color anterior mientras carga.
+ *
+ * Sin `businessId` (login, alta inicial) se comporta como siempre: localStorage y ya.
+ */
+export function AppProvider({ children, personal = false, brandInitial, businessId }: {
+  children: React.ReactNode; personal?: boolean; brandInitial?: string | null; businessId?: string;
+}) {
   const [lang, setLangState] = useState<Lang>("es");
   const [theme, setThemeState] = useState<Theme>("light");
   const [density, setDensityState] = useState<Density>("comfortable");
-  const [brand, setBrandState] = useState<string>("");
+  const [brand, setBrandState] = useState<string>(brandInitial ?? "");
+  const brandKey = businessId ? `brand_${businessId}` : "brand";
 
   // Hydrate from localStorage after mount (matches the prototype's persistence).
   useEffect(() => {
     setLangState(readLS<Lang>("lang", "es"));
     setThemeState(readLS<Theme>("theme", "light"));
     setDensityState(readLS<Density>("density", "comfortable"));
-    setBrandState(readLS<string>("brand", ""));
-  }, []);
+    // Con organización, el valor bueno llega del servidor: el caché local solo cubre el hueco
+    // hasta que hidrata, y nunca pisa lo que dijo la base.
+    if (!businessId) setBrandState(readLS<string>("brand", ""));
+    else if (brandInitial == null) setBrandState(readLS<string>(brandKey, ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessId, brandInitial]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -73,10 +91,10 @@ export function AppProvider({ children, personal = false }: { children: React.Re
       // empty/default → fall back to tokens.css (Hirata yellow + its ramp)
       BRAND_VARS.forEach((v) => root.style.removeProperty(v));
     }
-    // Vive en localStorage, igual que el tema, el idioma y la densidad: es una preferencia de quien
-    // la elige y no toca a nadie más del equipo. El precio es que no viaja a otro navegador.
-    try { localStorage.setItem("ht_brand", JSON.stringify(brand)); } catch {}
-  }, [brand]);
+    // Caché local por organización: evita el parpadeo en la siguiente carga. La verdad está en la
+    // membresía (ver setBrand más abajo), esto solo se adelanta.
+    try { localStorage.setItem("ht_" + brandKey, JSON.stringify(brand)); } catch {}
+  }, [brand, brandKey]);
 
   const value: AppState = {
     lang,
@@ -87,7 +105,12 @@ export function AppProvider({ children, personal = false }: { children: React.Re
     setLang: setLangState,
     setTheme: setThemeState,
     setDensity: setDensityState,
-    setBrand: setBrandState,
+    // Se guarda en la organización activa. La pantalla cambia al instante y la escritura va detrás:
+    // esperar al servidor para repintar haría que elegir un color se sintiera lento.
+    setBrand: (c: string) => {
+      setBrandState(c);
+      if (businessId) void setMyBrandColor(c).catch(() => {});
+    },
     t: (k) => tr(k, lang),
   };
 

@@ -24,7 +24,16 @@ export function ProfileScreen({ initial, orgName = null }: { initial: { userId: 
   const save = (patch: Parameters<typeof updateMyProfile>[0], optimistic?: () => void) => {
     setErr(null); optimistic?.();
     start(async () => {
-      const r = await updateMyProfile(patch);
+      // Con try/catch: si la acción LANZA (y no devuelve error), antes no se enseñaba nada —- la
+      // pantalla se quedaba con el color puesto de forma optimista y al recargar volvía el viejo,
+      // sin una sola pista de por qué.
+      let r: Awaited<ReturnType<typeof updateMyProfile>>;
+      try {
+        r = await updateMyProfile(patch);
+      } catch (e) {
+        setErr((lang === "es" ? "No se pudo guardar: " : "Couldn't save: ") + (e instanceof Error ? e.message : String(e)));
+        return;
+      }
       // El motivo se enseña tal cual cuando lo hay: un "no se pudo guardar" a secas ya costó una
       // ronda de adivinar por qué el color no cambiaba.
       if (!r.ok) {
