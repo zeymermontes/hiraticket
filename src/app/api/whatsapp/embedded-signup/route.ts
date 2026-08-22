@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/secrets";
 import { subscribeAppToWaba, registerPhone, getPhoneNumberInfo } from "@/lib/whatsapp-cloud";
 
@@ -85,9 +86,52 @@ export async function POST(req: NextRequest) {
   const business = await getMyBusiness();
   if (!business) return NextResponse.json({ ok: false, error: "no_business" }, { status: 400 });
   const businessId = business.id;
+  const now = new Date().toISOString();
+
+  /**
+   * Mover el número desde donde estuviera: otra organización, u otra cuenta.
+   *
+   * `idx_wa_sessions_phone_number_id` es único a propósito y tiene que seguir siéndolo: el webhook
+   * de Meta encuentra el negocio POR el phone_number_id, así que dos filas con el mismo número
+   * serían mensajes entrando por dos puertas. Pero "desconectar" en Ajustes no suelta el número
+   * —- guarda los identificadores para que reconectar no exija repetir el alta —- así que la fila
+   * vieja lo seguía reclamando y volver a vincularlo moría con un choque de llave en crudo.
+   *
+   * Quién puede quitárselo a quién no lo decidimos aquí: **lo decidió Meta**. Para llegar a esta
+   * línea hubo que completar el Embedded Signup de ESE número y obtener un token que funciona
+   * —- se acaban de llamar registerPhone y getPhoneNumberInfo con él —- y Meta solo lo entrega a
+   * quien administra la cuenta de WhatsApp dueña del número. Un número además solo puede vivir en
+   * UNA cuenta de WhatsApp Business: si llegó hasta aquí, en la anterior ya no estaba.
+   *
+   * O sea que la fila vieja no es un derecho que se esté pisando, es un rastro de algo que ya
+   * cambió afuera. Se libera, se deja constancia en el log, y quien la tenía ve su sesión sin
+   * número —- que es exactamente lo que ocurrió.
+   *
+   * Se busca con la llave de servicio porque RLS no deja ver filas de otros negocios.
+   */
+  const admin = createAdminClient();
+  const { data: claimed } = await admin
+    .from("whatsapp_sessions")
+    .select("id, business_id")
+    .eq("phone_number_id", phoneNumberId)
+    .maybeSingle();
+  if (claimed && claimed.business_id !== businessId) {
+    const { error: freeErr } = await admin
+      .from("whatsapp_sessions")
+      // `phone` también se limpia: si se quedara, la sesión vieja seguiría pareciendo vinculada y
+      // su botón de Conectar prometería algo que ya no puede cumplir (no queda token).
+      .update({ waba_id: null, phone_number_id: null, cloud_token: null, phone: null, status: "disconnected", updated_at: now })
+      .eq("id", claimed.id as string);
+    if (freeErr) {
+      return NextResponse.json({ ok: false, error: "release_failed", detail: freeErr.message }, { status: 500 });
+    }
+    console.log("[embedded-signup] número liberado de otro negocio", {
+      phoneNumberId, from: claimed.business_id, to: businessId, by: user.id,
+    });
+    warnings.push(`moved_from:${claimed.business_id}`);
+  }
 
   // Upsert the official session (one per business). RLS "members manage wa" covers this client.
-  const now = new Date().toISOString();
   const patch = {
     phone,
     status: "connected",

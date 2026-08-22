@@ -34,8 +34,12 @@ async function blockUnofficial(businessId?: string | null): Promise<boolean> {
 export async function connectSession(sessionId: string): Promise<void> {
   const supabase = await createClient();
   const { data: s } = await supabase
-    .from("whatsapp_sessions").select("connect_method, business_id").eq("id", sessionId).maybeSingle();
+    .from("whatsapp_sessions").select("connect_method, business_id, phone_number_id").eq("id", sessionId).maybeSingle();
   if (s?.connect_method === "official") {
+    // Sin phone_number_id no hay a dónde reconectar —- pasa cuando el número se movió a otra
+    // cuenta. Marcarla "conectada" aquí sería una mentira cómoda: no queda token con el que
+    // enviar ni número por el que recibir. Se deja como está y la pantalla ofrece rehacer el alta.
+    if (!s.phone_number_id) { revalidatePath("/settings"); return; }
     await supabase
       .from("whatsapp_sessions")
       .update({ status: "connected", updated_at: new Date().toISOString() })

@@ -107,7 +107,15 @@ export function EmbeddedSignup({ appId, configId }: { appId: string; configId: s
               setMsg({ kind: "ok", text: lang === "es" ? "¡Número conectado por la API oficial!" : "Number connected via the official API!" });
               router.refresh();
             } else {
-              setMsg({ kind: "err", text: lang === "es" ? "No se pudo completar la conexión." : "Could not complete the connection." });
+              // "No se pudo" a secas deja a la persona sin nada que hacer. Los casos que sí tienen
+              // una salida concreta se dicen con nombre y apellido.
+              const es = lang === "es";
+              const texto = d?.error === "release_failed"
+                ? (es ? "El número estaba vinculado en otro lugar y no se pudo liberar. Inténtalo de nuevo." : "The number was linked elsewhere and couldn't be released. Try again.")
+                : d?.error === "no_business"
+                  ? (es ? "No encontramos tu organización. Recarga y vuelve a intentar." : "We couldn't find your organization. Reload and try again.")
+                  : (es ? "No se pudo completar la conexión." : "Could not complete the connection.");
+              setMsg({ kind: "err", text: texto });
             }
           })
           .catch(() => {

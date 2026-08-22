@@ -109,7 +109,9 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
 
       <div className="row gap-2">
         {session.status === "connected" ? (
-          <button className="btn btn-sm btn-outline" onClick={() => run(() => disconnectSession(session.id))}><Icon name="x" size={14} />{lang === "es" ? "Desconectar" : "Disconnect"}</button>
+          <button className="btn btn-sm btn-outline"
+            title={official ? (lang === "es" ? "Pausa la recepción. El número sigue reservado para esta organización; para soltarlo, elimínalo." : "Pauses receiving. The number stays reserved for this organization; to release it, delete it.") : undefined}
+            onClick={() => run(() => disconnectSession(session.id))}><Icon name="x" size={14} />{lang === "es" ? "Desconectar" : "Disconnect"}</button>
         ) : (
           <button className="btn btn-sm btn-primary"
             onClick={() => run(async () => { if (!official && method === "pairing") await setConnectMethod(session.id, "pairing", phone); await connectSession(session.id); })}>
@@ -117,7 +119,11 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
           </button>
         )}
         <button className="iconbtn sm" title={lang === "es" ? "Eliminar número" : "Delete number"}
-          onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar número" : "Delete number", message: lang === "es" ? "Se desconecta esta sesión de WhatsApp." : "This WhatsApp session gets disconnected.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) run(() => deleteSession(session.id)); }}>
+          onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar número" : "Delete number", message: official
+              ? (lang === "es"
+                ? "Se libera el número: podrás conectarlo en otra organización, pero para volver a usarlo aquí habrá que reconectarlo con Meta."
+                : "This releases the number: you'll be able to connect it in another organization, but using it here again means reconnecting with Meta.")
+              : (lang === "es" ? "Se desconecta esta sesión de WhatsApp." : "This WhatsApp session gets disconnected."), confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) run(() => deleteSession(session.id)); }}>
           <Icon name="trash" size={15} />
         </button>
       </div>
