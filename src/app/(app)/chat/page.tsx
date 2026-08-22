@@ -4,7 +4,7 @@ import { getConversationListPage, getConversationDetail, getAgents, getChatListC
 import { getAreas, getStages } from "@/lib/business";
 import { getProducts } from "@/lib/extras";
 import { getSessions, isConnected } from "@/lib/whatsapp";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveIntegrations } from "@/lib/plugins";
 import { ChatScreen } from "@/components/chat/ChatScreen";
@@ -41,10 +41,24 @@ export default async function ChatPage({
   ]);
   const list = firstPage.rows;
 
-  // No explicit ?c → reopen the last chat the agent viewed (cookie), else the most recent one.
-  // Both are resolved directly instead of scanning the list, which is only a window now.
+  /**
+   * Sin `?c=` explícito se reabre el último chat que se miró (cookie), y si no, el más reciente.
+   * Se resuelven directo en vez de buscarlos en la lista, que ahora es solo una ventana.
+   *
+   * PERO en un teléfono no: ahí la lista y el hilo no caben a la vez, así que abrir un chat solo
+   * significa TAPAR la lista. Entras a Chats y aterrizas dentro de una conversación que no pediste,
+   * con el botón de atrás como única salida. En escritorio es lo contrario —- la columna del hilo
+   * existe siempre y dejarla vacía es desperdiciar media pantalla.
+   *
+   * La decisión es del servidor porque el pintado también: si se corrigiera en el cliente, el
+   * teléfono ya habría pintado el hilo antes de hidratar y se vería el parpadeo. El servidor no
+   * puede medir la ventana, así que mira el user-agent —- impreciso por naturaleza, pero aquí lo
+   * peor que pasa al equivocarse es abrir o no abrir un chat, y el gesto para corregirlo es uno.
+   */
+  const ua = (await headers()).get("user-agent") ?? "";
+  const phone = /Mobi/i.test(ua) && !/iPad/i.test(ua);
   let detail = urlDetail;
-  if (!detail && !sp.c) {
+  if (!detail && !sp.c && !phone) {
     // La cookie lleva el id del negocio: con varias organizaciones, un "último chat" sin dueño
     // apunta a una conversación ajena al cambiar. Hoy eso NO filtra nada —- getConversationDetail
     // usa el cliente con RLS y devuelve null—, pero es una consulta tirada y un comportamiento

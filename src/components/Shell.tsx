@@ -643,7 +643,7 @@ export function Shell({
               {children}
               {/* Abajo y no arriba: en un teléfono la parte de arriba ya la ocupan buscador y campana,
                   y el pulgar vive cerca del borde inferior. */}
-              <PushNudge />
+              <PushNudge businessId={businessId} />
               {navDest && (
                 <div style={{ position: "absolute", inset: 0, top: 57, background: "var(--surface)", zIndex: 30 }}>
                   <PageSkeleton />

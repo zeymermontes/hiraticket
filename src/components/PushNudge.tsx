@@ -6,7 +6,13 @@ import { browserSupportsPush, pushKeyPresent, subscribeToPush, currentPushEndpoi
 import { savePushSubscription, listPushDevices } from "@/app/(app)/settings/push-actions";
 import { isStandalone } from "@/lib/useIsMobile";
 
-const DISMISSED = "ht_pushNudge";
+/** La marca de "ahora no" es POR ORGANIZACIÓN.
+ *
+ *  Con una sola clave global pasaba esto: activas los avisos en tu organización de siempre, o
+ *  descartas el aviso una vez, y al entrar a la segunda —- donde no tienes ninguna suscripción y por
+ *  tanto no puede llegarte nada —- el aviso ya no vuelve a salir. Te quedas sin notificaciones de esa
+ *  organización sin que nada te lo diga, que es exactamente el fallo que hay que evitar. */
+const dismissedKey = (businessId: string) => `ht_pushNudge_${businessId}`;
 
 /**
  * "Ya instalé la app y no me llegan notificaciones".
@@ -20,7 +26,7 @@ const DISMISSED = "ht_pushNudge";
  * ofrecer: el navegador sabe recibir push, el despliegue trae la clave, este aparato no está ya
  * suscrito y nadie ha dicho que no.
  */
-export function PushNudge() {
+export function PushNudge({ businessId }: { businessId: string }) {
   const { lang } = useApp();
   const es = lang === "es";
   const [show, setShow] = useState(false);
@@ -28,7 +34,7 @@ export function PushNudge() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    try { if (localStorage.getItem(DISMISSED) === "off") return; } catch { /* modo privado */ }
+    try { if (localStorage.getItem(dismissedKey(businessId)) === "off") return; } catch { /* modo privado */ }
     if (!browserSupportsPush() || !pushKeyPresent()) return;
     // "denegado" es una decisión tomada: insistir no abre ningún diálogo, solo estorba.
     if (typeof Notification !== "undefined" && Notification.permission === "denied") return;
@@ -43,9 +49,9 @@ export function PushNudge() {
       const devices = await listPushDevices(ep ?? undefined);
       if (!devices.some((d) => d.current)) setShow(true);
     })().catch(() => {});
-  }, []);
+  }, [businessId]);
 
-  const dismiss = () => { setShow(false); try { localStorage.setItem(DISMISSED, "off"); } catch {} };
+  const dismiss = () => { setShow(false); try { localStorage.setItem(dismissedKey(businessId), "off"); } catch {} };
 
   const enable = async () => {
     setErr(null); setBusy(true);
