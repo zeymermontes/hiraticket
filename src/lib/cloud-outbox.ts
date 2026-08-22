@@ -102,7 +102,11 @@ async function sendOne(supabase: Admin, session: CloudSession, businessId: strin
       }
     : await buildPayload(supabase, m, body);
   if (!payload) {
-    await fail(`type '${m.type}' is not supported on the official API yet`);
+    // El caso del sticker se nombra aparte: "no soportado" mandaría a buscar el problema al sitio
+    // equivocado cuando lo que pasa es que pesa más de lo que Meta admite y no se pudo encoger.
+    await fail(m.type === "sticker"
+      ? "El sticker excede el límite de WhatsApp oficial (100 KB estático / 500 KB animado) y no se pudo comprimir"
+      : `type '${m.type}' is not supported on the official API yet`);
     return;
   }
 
@@ -137,7 +141,9 @@ async function buildPayload(
 
   const media = ["image", "video", "audio", "document", "sticker"];
   if (media.includes(m.type)) {
-    const link = await mediaLink(supabase, m.media_url);
+    const link = m.type === "sticker"
+      ? await stickerLink(supabase, m.media_url)
+      : await mediaLink(supabase, m.media_url);
     if (!link) return null;
     const part: Record<string, unknown> = { link };
     if (body && (m.type === "image" || m.type === "video" || m.type === "document")) part.caption = body;
@@ -171,6 +177,60 @@ export async function sendCloudReactionFor(messageId: string, emoji: string): Pr
   });
   // The op is done — don't leave a pending_op the (absent) worker would never clear.
   await supabase.from("messages").update({ pending_op: null, react_emoji: null }).eq("id", messageId);
+}
+
+/**
+ * El enlace de un sticker para la API oficial, encogiéndolo si hace falta.
+ *
+ * Meta es estricta con los stickers y no lo dice claro: WebP, y como mucho **100 KB** si es
+ * estático (500 KB si es animado). Un sticker que llegó por WhatsApp puede pesar más —- el puente
+ * de whatsmeow no aplica esos límites —- así que reenviarlo por la vía oficial moría con un
+ * "Media upload error" a secas. Medido en producción: 113.7 KB, estático. Nada en pantalla decía
+ * que el problema era el peso.
+ *
+ * Así que se vuelve a comprimir hasta que quepa, bajando calidad y, si aún no cabe, tamaño. El
+ * resultado se guarda con un nombre derivado del original, así que un sticker que se usa a diario
+ * se re-comprime UNA vez y las siguientes ya está hecho.
+ *
+ * Si aun así no cabe, se devuelve null y quien llama lo marca fallido —- pero con un motivo que se
+ * entiende, que es lo que faltaba.
+ */
+const STICKER_MAX = 100 * 1024;      // estático, límite de Meta
+const STICKER_MAX_ANIM = 500 * 1024; // animado
+
+async function stickerLink(supabase: Admin, mediaUrl: string | null): Promise<string | null> {
+  if (!mediaUrl || /^https?:\/\//.test(mediaUrl)) return mediaLink(supabase, mediaUrl);
+  const { data: file } = await supabase.storage.from("media").download(mediaUrl);
+  if (!file) return mediaLink(supabase, mediaUrl); // no se pudo mirar: que lo intente tal cual
+  const buf = Buffer.from(await file.arrayBuffer());
+  // El trozo ANIM del contenedor WebP es lo que distingue uno animado de uno fijo.
+  const animado = buf.includes(Buffer.from("ANIM"));
+  const tope = animado ? STICKER_MAX_ANIM : STICKER_MAX;
+  if (buf.length <= tope) return mediaLink(supabase, mediaUrl);
+
+  const derivado = `${mediaUrl.replace(/\.[^.]+$/, "")}.wa${tope}.webp`;
+  // ¿Ya se comprimió antes? Entonces no hay nada que hacer dos veces.
+  const { data: yaEsta } = await supabase.storage.from("media").list(derivado.split("/").slice(0, -1).join("/"), {
+    search: derivado.split("/").pop(),
+  });
+  if (yaEsta?.length) return mediaLink(supabase, derivado);
+
+  const sharp = (await import("sharp")).default;
+  let out: Buffer | null = null;
+  for (const [calidad, lado] of [[80, 512], [60, 512], [45, 512], [60, 384], [45, 320]] as const) {
+    try {
+      const intento = await sharp(buf, { animated: animado })
+        .resize(lado, lado, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: calidad, effort: 4 })
+        .toBuffer();
+      if (intento.length <= tope) { out = intento; break; }
+    } catch { return null; } // no es un WebP que sepamos leer
+  }
+  if (!out) return null;
+
+  const up = await supabase.storage.from("media").upload(derivado, out, { contentType: "image/webp", upsert: true });
+  if (up.error) return null;
+  return mediaLink(supabase, derivado);
 }
 
 async function mediaLink(supabase: Admin, mediaUrl: string | null): Promise<string | null> {
