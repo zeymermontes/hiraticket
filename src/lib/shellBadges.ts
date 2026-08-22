@@ -14,6 +14,8 @@ export interface ShellBadges {
   internal: number;
   /** Pedidos que no han llegado a la etapa final. */
   orders: number;
+  /** Comprobantes de transferencia esperando aprobación. Trabajo del equipo, no de una persona. */
+  proofs: number;
   /** Lo que cuelga de la campana. */
   notifications: Notif[];
   /** Fechas (ISO) de pedidos con fecha límite y citas —- las banderitas del calendario. Los cubos
@@ -44,7 +46,7 @@ export async function getShellBadges(
     .eq("business_id", businessId).is("deleted_at", null);
   if (doneIds.length) openQ = openQ.not("stage_id", "in", `(${doneIds.join(",")})`);
 
-  const [chat, internal, notifications, { count: orders }, dueOrders, { data: dueAppts }] = await Promise.all([
+  const [chat, internal, notifications, { count: orders }, dueOrders, { data: dueAppts }, proofsRes] = await Promise.all([
     getChatBadges(businessId, userId),
     getInternalUnread(businessId, userId),
     getNotifications(businessId, userId, myName),
@@ -53,6 +55,10 @@ export async function getShellBadges(
     supabase.from("appointments").select("starts_at").eq("business_id", businessId).eq("status", "scheduled")
       .gte("starts_at", new Date(Date.now() - 60 * 86400000).toISOString())
       .lte("starts_at", new Date(Date.now() + 7 * 86400000).toISOString()),
+    // Cuenta por cabecera. Si 0048 no está aplicada, la consulta falla y se cuenta cero —- lo que
+    // no puede pasar es que reviente la barra entera por una tabla que quizá no existe.
+    supabase.from("payment_proofs").select("id", { count: "exact", head: true })
+      .eq("business_id", businessId).eq("status", "pending"),
   ]);
 
   return {
@@ -60,6 +66,7 @@ export async function getShellBadges(
     unassigned: chat.unassigned,
     internal,
     orders: orders ?? 0,
+    proofs: proofsRes.count ?? 0,
     notifications,
     dueDates: [
       ...dueOrders.map((o) => o.due_at),

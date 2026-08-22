@@ -81,6 +81,7 @@ export default async function AppLayout({
       isAdmin={mem?.role === "admin"}
       notifPrefs={parseNotifPrefs((mem as { notif_prefs?: unknown } | null)?.notif_prefs ?? prof?.notif_prefs)}
       dueDates={badges.dueDates}
+      proofs={badges.proofs}
       orgs={orgs}
     >
       {children}

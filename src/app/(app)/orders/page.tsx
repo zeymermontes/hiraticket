@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function OrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ new?: string; order?: string; contact?: string }>;
+  searchParams: Promise<{ new?: string; order?: string; contact?: string; proofs?: string }>;
 }) {
   const business = await getMyBusiness();
   if (!business) return null;
@@ -22,7 +22,7 @@ export default async function OrdersPage({
   const supabase = await createClient();
   // Only the first page — the table asks the server for the rest as you search / filter / paginate.
   const [firstPage, areas, stages, agents, products, { data: contacts }] = await Promise.all([
-    getOrdersPage(business.id, { page: 0 }),
+    getOrdersPage(business.id, { page: 0, proofs: sp.proofs === "1" }),
     getAreas(business.id),
     getStages(business.id),
     getAgents(business.id),
@@ -46,6 +46,7 @@ export default async function OrdersPage({
       agents={agents}
       openOrder={openOrder}
       autoOpen={sp.new === "1"}
+      proofsOnly={sp.proofs === "1"}
       defaultContact={sp.contact}
       convDetail={convDetail}
       connected={connected}

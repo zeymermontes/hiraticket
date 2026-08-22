@@ -141,6 +141,8 @@ export interface OrderQuery {
   page?: number;
   per?: number;
   trash?: boolean; // soft-deleted orders instead of live ones
+  /** Solo pedidos con comprobante de transferencia esperando aprobación (0048). */
+  proofs?: boolean;
 }
 
 export interface OrdersPage {
@@ -215,11 +217,28 @@ export async function getOrdersPage(businessId: string, f: OrderQuery = {}): Pro
     capped = contactIds.length === CONTACT_MATCH_CAP;
   }
 
-  const build = (cols: string, withDeleted: boolean) =>
-    applyOrderFilters(
+  /**
+   * "Solo los que tienen un pago por aprobar": el destino del indicador de la barra.
+   *
+   * Se resuelve como una lista de ids y no como un join porque el filtro vive en OTRA tabla, y
+   * PostgREST no filtra la principal por una condición de la hija sin traérsela entera. Son pocos
+   * por naturaleza —- si hubiera 500 comprobantes esperando, el problema no es la consulta.
+   */
+  let proofIds: string[] | null = null;
+  if (f.proofs) {
+    const { data, error } = await supabase.from("payment_proofs").select("order_id")
+      .eq("business_id", businessId).eq("status", "pending").limit(500);
+    proofIds = error ? [] : [...new Set((data ?? []).map((r) => r.order_id as string))];
+    if (!proofIds.length) return { rows: [], total: 0, capped: false };
+  }
+
+  const build = (cols: string, withDeleted: boolean) => {
+    const base = applyOrderFilters(
       supabase.from("orders").select(cols, { count: "exact" }).eq("business_id", businessId),
       f, needle, contactIds, withDeleted,
     );
+    return proofIds ? base.in("id", proofIds) : base;
+  };
   // nullsFirst:false keeps "no deadline" at the bottom in both directions, matching the old
   // client-side sort (which forced nulls to "9999").
   const ordered = (b: ReturnType<typeof build>, col: string) =>

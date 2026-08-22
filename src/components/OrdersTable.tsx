@@ -29,9 +29,11 @@ function PriorityFlag({ p, lang }: { p: string; lang: "es" | "en" }) {
 }
 
 export function OrdersTable({
-  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
+  initial, objectName, businessId, areas, stages, agents, openOrder, autoOpen, defaultContact, convDetail, connected, products, contacts, invoice, shipping, invoicing, doneFromStageId = null, manualMarginPct = 50, proofsOnly: proofsOnlyInit = false,
 }: {
   initial: OrdersPage; // first page, rendered on the server; the rest is fetched on demand
+  /** Abrir ya filtrado a los pedidos con pago por aprobar (llega del indicador de la barra). */
+  proofsOnly?: boolean;
   objectName: string;
   businessId: string;
   areas: Area[];
@@ -71,6 +73,8 @@ export function OrdersTable({
   const flowToast = useFlowToast();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const [trashView, setTrashView] = useState(false);
+  // Llega del indicador de la barra: /orders?proofs=1 abre la lista ya acotada a lo que hay que aprobar.
+  const [proofsOnly, setProofsOnly] = useState(proofsOnlyInit);
   const PER = 25;
 
   // Server-side window. Search/filters/sort/paging are query params now: the table holds one page,
@@ -87,8 +91,8 @@ export function OrdersTable({
   const filters: OrderQuery = useMemo(() => ({
     q: debouncedQ, stageId: stageF || undefined, areaId: areaF || undefined,
     assigneeId: assigneeF || undefined, priority: prioF || undefined,
-    sort: sortKey, dir, trash: trashView,
-  }), [debouncedQ, stageF, areaF, assigneeF, prioF, sortKey, dir, trashView]);
+    sort: sortKey, dir, trash: trashView, proofs: proofsOnly || undefined,
+  }), [debouncedQ, stageF, areaF, assigneeF, prioF, sortKey, dir, trashView, proofsOnly]);
 
   // A changed filter invalidates the page number — go back to the first page.
   useEffect(() => { setPage(0); }, [filters]);
@@ -228,6 +232,13 @@ export function OrdersTable({
           <Icon name="sliders" size={14} />{lang === "es" ? "Filtros" : "Filters"}
           {activeFilters > 0 && <span className="badge badge-soft">{activeFilters}</span>}
         </button>
+        {/* Un filtro activo tiene que verse y poder quitarse: si no, la lista parece incompleta. */}
+        {proofsOnly && (
+          <button className="btn btn-sm btn-danger" type="button" onClick={() => setProofsOnly(false)}
+            title={lang === "es" ? "Quitar el filtro" : "Clear the filter"}>
+            <Icon name="checks" size={14} />{lang === "es" ? "Con pago por aprobar" : "With payment to approve"}<Icon name="x" size={13} />
+          </button>
+        )}
         {FILTERS.map((f) => (
           <select key={f.key} className="select select-sm hide-mobile" value={f.value} onChange={(e) => f.set(e.target.value)}>
             <option value="">{f.all}</option>

@@ -75,5 +75,5 @@ export async function POST(req: NextRequest) {
   }
 }
 
-const EMPTY_BADGES = { mine: 0, unassigned: 0, internal: 0, orders: 0, notifications: [], dueDates: [] };
+const EMPTY_BADGES = { mine: 0, unassigned: 0, internal: 0, orders: 0, proofs: 0, notifications: [], dueDates: [] };
 const EMPTY_COUNTS = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };

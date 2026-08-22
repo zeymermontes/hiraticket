@@ -159,6 +159,8 @@ export interface ChatOrderCard {
   area: { name: string; color: string } | null;
   items: { name: string; qty: number; unit_price: number; subtotal: number }[];
   cancelled_at?: string | null; // 0065
+  /** Tiene un comprobante de transferencia esperando aprobación (0048). */
+  pending_proof?: boolean;
 }
 
 export interface ConvDetail {
@@ -527,6 +529,24 @@ async function ordersOfContact(supabase: any, contactId: string) {
   return res.error ? await q("") : res;
 }
 
+/**
+ * Cuáles de estos pedidos tienen un pago esperando aprobación.
+ *
+ * El mismo distintivo que ya llevan la tabla de Pedidos y el tablero, que aquí faltaba: desde el
+ * chat se ve el pedido del cliente y no se veía que su transferencia seguía sin aprobar —- justo
+ * donde alguien está atendiendo a esa persona y podría resolverlo en el momento.
+ *
+ * Solo para los pedidos que se van a pintar, no para todo el negocio.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function proofsFor(supabase: any, orderIds: string[]): Promise<Set<string>> {
+  if (!orderIds.length) return new Set();
+  const { data, error } = await supabase.from("payment_proofs").select("order_id")
+    .eq("status", "pending").in("order_id", orderIds);
+  // Sin 0048 aplicada, simplemente no hay distintivo que poner.
+  return error ? new Set<string>() : new Set((data ?? []).map((r: { order_id: string }) => r.order_id));
+}
+
 export async function getConversationDetail(
   convId: string,
 ): Promise<ConvDetail | null> {
@@ -567,6 +587,10 @@ export async function getConversationDetail(
       conv.contact_id ? ordersOfContact(supabase, conv.contact_id) : Promise.resolve({ data: [] as unknown[] }),
     ]);
 
+  const orderRows = (orders ?? []) as unknown as ChatOrderCard[];
+  const conProof = await proofsFor(supabase, orderRows.map((o) => o.id));
+  const ordersWithProof: ChatOrderCard[] = orderRows.map((o) => ({ ...o, pending_proof: conProof.has(o.id) }));
+
   return {
     id: conv.id,
     status: conv.status,
@@ -587,7 +611,7 @@ export async function getConversationDetail(
     messages: (messages ?? []) as ChatMessage[],
     notes: (notes ?? []) as ConvNote[],
     events: (events ?? []) as ConvEvent[],
-    orders: (orders ?? []) as unknown as ChatOrderCard[],
+    orders: ordersWithProof,
   };
 }
 

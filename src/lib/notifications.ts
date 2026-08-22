@@ -38,7 +38,7 @@ export interface Notif {
   name: string;
   unread: number;
   at: string | null;
-  kind: "chat" | "mention" | "internal";
+  kind: "chat" | "mention" | "internal" | "payment";
   href: string;
   text?: string;
 }
@@ -78,6 +78,27 @@ export async function getNotificationFeed(
     if (before) q = q.lt("created_at", before);
     intP = q as unknown as typeof empty;
   }
+  /**
+   * Comprobantes de pago por aprobar.
+   *
+   * Van en la campana y no solo en un toast porque son de otra naturaleza: un mensaje se lee y ya,
+   * pero esto es TRABAJO PENDIENTE —- alguien tiene que aprobarlo o rechazarlo —- y hasta que se
+   * decide sigue ahí. Un aviso que solo aparece en el momento en que llega se pierde en cuanto
+   * cierras la pestaña, y el pago se queda esperando sin que nadie lo sepa.
+   *
+   * Son del equipo, no de una persona: no se filtran por asignado. Y como no hay "leído", el
+   * criterio de "sin leer" es el propio estado: pendiente = sin resolver.
+   */
+  let proofsP = empty;
+  if (filter === "all") {
+    let q = supabase.from("payment_proofs")
+      .select("id, order_id, amount, created_at, orders(code)")
+      .eq("business_id", businessId).eq("status", "pending")
+      .order("created_at", { ascending: false }).limit(limit);
+    if (before) q = q.lt("created_at", before);
+    proofsP = q as unknown as typeof empty;
+  }
+
   // unread WhatsApp chats assigned to you — scoped to the connected number, like the chat list.
   let chatP = empty;
   if (filter === "all") {
@@ -88,7 +109,7 @@ export async function getNotificationFeed(
     chatP = q as unknown as typeof empty;
   }
 
-  const [notesRes, intRes, chatsRes] = await Promise.all([notesP, intP, chatP]);
+  const [notesRes, intRes, chatsRes, proofsRes] = await Promise.all([notesP, intP, chatP, proofsP]);
 
   const authorIds = Array.from(new Set([...(notesRes.data ?? []), ...(intRes.data ?? [])].map((x: Record<string, unknown>) => x.author_id as string).filter(Boolean)));
   const nameMap = new Map<string, string>();
@@ -114,7 +135,22 @@ export async function getNotificationFeed(
     return { id: c.id as string, name, unread: (c.unread as number) ?? 0, at: (c.last_message_at as string) ?? null, kind: "chat" as const, href: `/chat?c=${c.id as string}` };
   });
 
-  return [...mentions, ...internal, ...chats].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, limit);
+  const proofs: Notif[] = (proofsRes.data ?? []).map((p: Record<string, unknown>) => {
+    const o = p.orders as { code?: string } | { code?: string }[] | null;
+    const code = ((Array.isArray(o) ? o[0] : o)?.code) ?? "";
+    const monto = p.amount != null ? `$${Number(p.amount).toLocaleString("es-MX")}` : "";
+    return {
+      id: "proof-" + (p.id as string),
+      name: code || "Pedido",
+      unread: 1,
+      at: (p.created_at as string) ?? null,
+      kind: "payment" as const,
+      href: `/orders?order=${p.order_id as string}`,
+      text: `Pago por aprobar${code ? ` · ${code}` : ""}${monto ? ` · ${monto}` : ""}`,
+    };
+  });
+
+  return [...mentions, ...internal, ...chats, ...proofs].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, limit);
 }
 
 /** Recent notifications for the bell + badge (first page of the unified feed). */

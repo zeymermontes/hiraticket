@@ -59,6 +59,8 @@ function playChime() {
 
 function notifIcon(kind: Notif["kind"]) {
   if (kind === "chat") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>;
+  // Un pago por aprobar no es un mensaje: es trabajo pendiente, y se distingue con su propio color.
+  if (kind === "payment") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--amber-bg)", color: "var(--amber)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="checks" size={15} /></span>;
   const name = kind === "internal" ? "chat" : "at";
   return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={name} size={15} /></span>;
 }
@@ -291,9 +293,9 @@ function NavRail({ badges, secondaryBadges = {}, objectName, user, isAdmin, onNa
  * `useIsMobile`: así el servidor pinta el correcto de una vez. Con JavaScript habría un parpadeo
  * de riel en cada carga, porque en el servidor no hay ventana que medir.
  */
-function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, connected, dueDates, onNavigate, orgs = [], activeOrg }: {
+function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, connected, dueDates, proofs = 0, onNavigate, orgs = [], activeOrg }: {
   badges: Record<string, number | null>; secondaryBadges?: Record<string, number | null>;
-  objectName: string; user: ShellUser; isAdmin: boolean; connected: boolean; dueDates: string[];
+  objectName: string; user: ShellUser; isAdmin: boolean; connected: boolean; dueDates: string[]; proofs?: number;
   onNavigate?: (href: string) => void; orgs?: OrgOption[]; activeOrg: string;
 }) {
   const pathname = usePathname();
@@ -363,6 +365,7 @@ function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, co
               <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
             </Link>
             <DueFlags dates={dueDates} onNavigate={onNavigate} />
+            <ProofFlag n={proofs} onNavigate={onNavigate} />
 
             {/* En un teléfono esto es lo que convierte la pestaña en app —- y en iPhone, lo único
                 que habilita los avisos con la app cerrada. Por eso va arriba y en grande, no
@@ -469,7 +472,31 @@ function DueFlags({ dates, onNavigate }: { dates: string[]; onNavigate?: (href: 
   );
 }
 
-function TopBar({ notifications, connected, businessId, dueDates = [], onNavigate }: { notifications: Notif[]; connected: boolean; businessId: string; dueDates?: string[]; onNavigate?: (href: string) => void }) {
+/**
+ * Pagos por revisar, en la barra —- el mismo trato que las entregas del calendario.
+ *
+ * Un comprobante de transferencia es dinero que alguien está esperando que aprueben, y hasta ahora
+ * el único rastro era entrar al pedido a mano. Un aviso que aparece y se va no sirve para eso: esto
+ * es trabajo pendiente, y tiene que verse mientras siga pendiente.
+ *
+ * Sin nada por revisar no se pinta: una barra llena de indicadores en cero es ruido.
+ */
+function ProofFlag({ n, onNavigate }: { n: number; onNavigate?: (href: string) => void }) {
+  const { lang, personal } = useApp();
+  if (!n || personal) return null; // en gestión personal no hay dinero (skill dual-mode)
+  const es = lang === "es";
+  const titulo = es ? `${n} pago(s) por revisar · clic para verlos` : `${n} payment(s) to review · click to see them`;
+  return (
+    <Link href="/orders?proofs=1" prefetch={false} title={titulo} onClick={() => onNavigate?.("/orders?proofs=1")}
+      className="conn-chip" style={{ background: "var(--amber-bg)", borderColor: "var(--amber-bd)" }}>
+      <Icon name="checks" size={15} />
+      <span style={{ fontWeight: 800 }}>{n}</span>
+      <span className="hide-narrow">{es ? "por revisar" : "to review"}</span>
+    </Link>
+  );
+}
+
+function TopBar({ notifications, connected, businessId, dueDates = [], proofs = 0, onNavigate }: { notifications: Notif[]; connected: boolean; businessId: string; dueDates?: string[]; proofs?: number; onNavigate?: (href: string) => void }) {
   const { lang, setLang, theme, setTheme, t, personal } = useApp();
   return (
     <header className="topbar">
@@ -481,6 +508,7 @@ function TopBar({ notifications, connected, businessId, dueDates = [], onNavigat
       {/* `hide-mobile`: en un teléfono estas cuatro cosas no caben en la barra y viven en el panel
           "Más" (ver MobileNav). Arriba se quedan solo buscador, campana y crear. */}
       <span className="hide-mobile"><DueFlags dates={dueDates} onNavigate={onNavigate} /></span>
+      <span className="hide-mobile"><ProofFlag n={proofs} onNavigate={onNavigate} /></span>
 
       <Link className={"conn-chip hide-mobile " + (connected ? "ok" : "down")} title="WhatsApp" href="/settings" prefetch={false}>
         <span className="conn-dot" />
@@ -522,6 +550,7 @@ export function Shell({
   personal = false,
   isAdmin = false,
   dueDates = [],
+  proofs = 0,
   orgs = [],
   children,
 }: {
@@ -537,6 +566,8 @@ export function Shell({
   isAdmin?: boolean;
   /** Fechas (ISO) de pedidos con fecha límite y citas programadas, para las banderitas del TopBar. */
   dueDates?: string[];
+  /** Comprobantes de pago esperando aprobación: el indicador de la barra, como las banderitas. */
+  proofs?: number;
   /** Organizaciones de esta persona. Con una sola, el selector no se pinta (ver OrgSwitcher). */
   orgs?: OrgOption[];
   children: React.ReactNode;
@@ -546,7 +577,8 @@ export function Shell({
   const [sb, setSb] = useState(secondaryBadges);
   const [notifs, setNotifs] = useState(notifications);
   const [due, setDue] = useState(dueDates);
-  useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); setDue(dueDates); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications, JSON.stringify(dueDates)]);
+  const [prf, setPrf] = useState(proofs);
+  useEffect(() => { setB(badges); setSb(secondaryBadges); setNotifs(notifications); setDue(dueDates); setPrf(proofs); /* eslint-disable-next-line */ }, [JSON.stringify(badges), JSON.stringify(secondaryBadges), notifications, JSON.stringify(dueDates), proofs]);
   const refreshBadges = useCallback(() => {
     liveBadges(businessId).then((r) => {
       // Se refresca TODO lo que pinta la barra, no solo el chat. Antes esto solo tocaba chat e
@@ -556,6 +588,7 @@ export function Shell({
       setSb({ chat: r.unassigned });
       setNotifs(r.notifications);
       setDue(r.dueDates);
+      setPrf(r.proofs);
     }).catch(() => {});
   }, [businessId]);
 
@@ -580,7 +613,9 @@ export function Shell({
     const stop = keepSubscribed(supabase, `shell-${businessId}`, (ch) => ch
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `business_id=eq.${businessId}` }, poke)
       .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `business_id=eq.${businessId}` }, poke)
-      .on("postgres_changes", { event: "*", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, poke));
+      .on("postgres_changes", { event: "*", schema: "public", table: "internal_messages", filter: `business_id=eq.${businessId}` }, poke)
+      // Un comprobante que llega o que alguien aprueba cambia el indicador de pagos por revisar.
+      .on("postgres_changes", { event: "*", schema: "public", table: "payment_proofs", filter: `business_id=eq.${businessId}` }, poke));
     return () => { clearTimeout(t); stop(); };
   }, [businessId, refreshBadges]);
   // Pendientes en el título de la pestaña: "(3) Hiraticket". Es lo único que se ve sin cambiar de
@@ -639,7 +674,7 @@ export function Shell({
           <div className="app">
             <NavRail badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin} onNavigate={onNavigate} orgs={orgs} activeOrg={businessId} />
             <div className="main" style={{ position: "relative" }}>
-              <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={due} onNavigate={onNavigate} />
+              <TopBar notifications={notifs} connected={connected} businessId={businessId} dueDates={due} proofs={prf} onNavigate={onNavigate} />
               {children}
               {/* Abajo y no arriba: en un teléfono la parte de arriba ya la ocupan buscador y campana,
                   y el pulgar vive cerca del borde inferior. */}
@@ -652,7 +687,7 @@ export function Shell({
             </div>
             {/* Riel y barra inferior conviven en el DOM; el CSS decide cuál se ve. Ver MobileNav. */}
             <MobileNav badges={b} secondaryBadges={sb} objectName={objectName} user={user} isAdmin={isAdmin}
-              connected={connected} dueDates={due} onNavigate={onNavigate} orgs={orgs} activeOrg={businessId} />
+              connected={connected} dueDates={due} proofs={prf} onNavigate={onNavigate} orgs={orgs} activeOrg={businessId} />
           </div>
         </ConfirmProvider>
       </ToastProvider>

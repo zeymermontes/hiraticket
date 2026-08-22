@@ -2702,7 +2702,9 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               <button key={o.id} className="ocard" style={{ textAlign: "left", cursor: "pointer", font: "inherit", opacity: loadingOrder === o.id ? 0.6 : 1 }} disabled={loadingOrder === o.id} onClick={() => openOrderDrawer(o.id)}>
                 <div className="ocard-top"><span className="ocard-id mono">{o.code}</span><span className="grow" />{o.cancelled_at ? <Pill color="red" dot>{lang === "es" ? "Cancelado" : "Cancelled"}</Pill> : o.stage && <Pill color={o.stage.color as PillColor} dot>{o.stage.name}</Pill>}</div>
                 {o.items?.[0]?.name && <div className="t-xs muted truncate">{o.items[0].name}{o.items.length > 1 ? ` +${o.items.length - 1}` : ""}</div>}
-                <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" />{!personal && <span className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}</div>
+                {/* El mismo distintivo que llevan la tabla de Pedidos y el tablero. Aquí es donde
+                    más sirve: se está atendiendo a esa persona y su transferencia sigue sin aprobar. */}
+                <div className="ocard-foot">{o.area && <Pill color={o.area.color as PillColor}>{o.area.name}</Pill>}<span className="grow" />{!personal && o.pending_proof && <Pill color="amber" title={lang === "es" ? "Comprobante por revisar" : "Receipt to review"}><Icon name="checks" size={10} />{lang === "es" ? "Por aprobar" : "To approve"}</Pill>}{!personal && <span className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 700, color: "var(--text)" }}>${o.total.toLocaleString("es-MX")}</span></span>}</div>
               </button>
             ))}
         </div>
