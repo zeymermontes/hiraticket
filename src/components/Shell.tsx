@@ -356,16 +356,22 @@ function MobileNav({ badges, secondaryBadges = {}, objectName, user, isAdmin, co
           </div>
 
           <div className="more-body scroll">
-            {/* El chip de conexión y las banderitas de fechas no caben en la barra de arriba en un
-                teléfono, pero son de lo primero que un agente quiere ver: se mudan aquí, no se
-                pierden. */}
-            <Link className={"conn-chip " + (connected ? "ok" : "down")} href="/settings" prefetch={false} style={{ width: "100%", justifyContent: "flex-start", height: 44 }}>
-              <span className="conn-dot" />
-              <Icon name={connected ? "whatsapp" : "wifioff"} size={16} />
-              <span>{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
-            </Link>
-            <DueFlags dates={dueDates} onNavigate={onNavigate} />
-            <ProofFlag n={proofs} onNavigate={onNavigate} />
+            {/* El chip de conexión y las banderitas no caben en la barra de arriba en un teléfono,
+                pero son de lo primero que un agente quiere ver: se mudan aquí, no se pierden.
+                En UNA fila y no apilados: son avisos cortos, y tres renglones de ancho completo se
+                comían el espacio de lo que la gente viene a tocar. El de conexión va SIEMPRE a la
+                derecha, incluso cuando es el único —- así se busca siempre en el mismo sitio en vez
+                de bailar según cuántos avisos haya. Con `wrap`, si un día no caben, el que sobra
+                baja de línea en vez de desbordar. */}
+            <div className="indic-row">
+              <DueFlags dates={dueDates} onNavigate={onNavigate} />
+              <ProofFlag n={proofs} onNavigate={onNavigate} />
+              <Link className={"conn-chip " + (connected ? "ok" : "down")} href="/settings" prefetch={false}>
+                <span className="conn-dot" />
+                <Icon name={connected ? "whatsapp" : "wifioff"} size={16} />
+                <span className="truncate">{connected ? t("connected") : (lang === "es" ? "Desconectado · Conectar" : "Disconnected · Connect")}</span>
+              </Link>
+            </div>
 
             {/* En un teléfono esto es lo que convierte la pestaña en app —- y en iPhone, lo único
                 que habilita los avisos con la app cerrada. Por eso va arriba y en grande, no

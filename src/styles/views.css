@@ -560,6 +560,21 @@ body.dragging-card .kcard { cursor: grabbing; }
   html[data-kb="open"] .more-sheet, html[data-kb="open"] .ws-sheet { bottom: var(--kb, 0px); }
   .more-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .more-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  /* Los avisos del panel "Más" (fechas, pagos por revisar, conexión) en una sola fila. El de
+     conexión se ancla a la derecha con `margin-left: auto`, así que su sitio no depende de cuántos
+     avisos lo acompañen —- ni siquiera cuando va solo. Alto fijo para que la fila no cambie de
+     altura al aparecer o desaparecer un aviso. */
+  .indic-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+  .indic-row > * { height: 44px; min-width: 0; }
+  .indic-row > .conn-chip { margin-left: auto; }
+
+  /* El selector de idioma del panel "Más" se estira a lo ancho (va junto al botón de tema), y sus
+     botones se quedaban pegados a la izquierda con 28px de alto dentro de una caja de 42: dos
+     etiquetas pequeñas flotando en un hueco. Aquí se reparten el ancho a partes iguales y llenan el
+     alto, que es lo que un control segmentado debe parecer —- y de paso son un objetivo decente
+     para un pulgar. */
+  .more-body .seg { padding: 4px; }
+  .more-body .seg button { flex: 1; justify-content: center; height: 100%; font-size: 13.5px; }
   .more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .more-item {
     display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px;
