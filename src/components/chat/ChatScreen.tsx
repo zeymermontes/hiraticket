@@ -1754,7 +1754,21 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Lo que ya estaba escrito viaja al comentario del adjunto.
+   *
+   * Antes se quedaba huérfano en el campo del chat: escribías "mira cómo quedó", adjuntabas la
+   * foto, y el texto se quedaba atrás —- o lo mandabas suelto en otro mensaje. Es casi siempre lo
+   * que se quería decir sobre ESE archivo.
+   *
+   * Solo al abrir (de cero a algo) y solo si el comentario está vacío, para no pisar algo que ya
+   * se escribió ahí. Y se recuerda lo que se llevó: al enviar, el campo del chat se limpia SI
+   * sigue teniendo exactamente eso —- si mientras tanto se escribió otra cosa, esa otra cosa se
+   * respeta. Cancelar tampoco borra nada: el texto nunca se movió, se copió.
+   */
+  const carried = useRef<string | null>(null);
   function stageFiles(files: FileList | File[]) {
+    if (!staged.length && !caption && text.trim()) { setCaption(text); carried.current = text; }
     setStaged((s) => [...s, ...Array.from(files)]);
   }
   const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
@@ -1762,7 +1776,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   // Cancelar SIEMPRE debe funcionar. Antes, si un envío fallaba o se quedaba colgado, el modal
   // quedaba con `sending` en true: la X y el scrim están deshabilitados mientras envía, así que la
   // conversación se quedaba bloqueada hasta recargar o cambiar de chat (que remonta el componente).
-  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); };
+  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); carried.current = null; };
 
   // Cambiar de conversación no debe arrastrar un envío a medias de la anterior.
   useEffect(() => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); }, [detail.id]);
@@ -1802,6 +1816,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           : `Couldn't send ${failed.length} of ${staged.length}. Retry or cancel.`);
       } else {
         setStaged([]); setCaption("");
+        // El texto se fue con el archivo: dejarlo también en el campo del chat invita a mandarlo
+        // dos veces. Solo si sigue siendo el mismo que se llevó.
+        if (carried.current !== null && text === carried.current) setText("");
+        carried.current = null;
       }
       refresh();
     } finally {

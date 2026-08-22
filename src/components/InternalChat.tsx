@@ -268,12 +268,28 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     setExtra((e) => [...e, opt]);
     start(async () => { await sendInternalMessage(ch, body, rt, mentioned); refreshMsgs(selRef.current); refreshThreads(); });
   }
-  const stageFiles = (files: FileList | File[]) => setStaged((s) => [...s, ...Array.from(files)]);
+  /**
+   * Lo que ya estaba escrito viaja al comentario del adjunto.
+   *
+   * Antes se quedaba huérfano en el campo del chat: escribías "mira cómo quedó", adjuntabas la
+   * foto, y el texto se quedaba atrás —- o lo mandabas suelto en otro mensaje. Es casi siempre lo
+   * que se quería decir sobre ESE archivo.
+   *
+   * Solo al abrir (de cero a algo) y solo si el comentario está vacío, para no pisar algo que ya
+   * se escribió ahí. Y se recuerda lo que se llevó: al enviar, el campo del chat se limpia SI
+   * sigue teniendo exactamente eso —- si mientras tanto se escribió otra cosa, esa otra cosa se
+   * respeta. Cancelar tampoco borra nada: el texto nunca se movió, se copió.
+   */
+  const carried = useRef<string | null>(null);
+  const stageFiles = (files: FileList | File[]) => {
+    if (!staged.length && !caption && text.trim()) { setCaption(text); carried.current = text; }
+    setStaged((s) => [...s, ...Array.from(files)]);
+  };
   const { dragOver, dragProps } = useFileDrop((files) => stageFiles(files));
   // Upload staged files, then send (caption goes on the first item, like the WhatsApp chat).
   // Cancelar SIEMPRE debe funcionar: si un envío fallaba, `sending` dejaba el modal sin salida
   // (la X y el scrim se deshabilitan mientras envía) y el canal quedaba bloqueado hasta recargar.
-  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); };
+  const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); carried.current = null; };
 
   async function sendStaged() {
     if (!staged.length || sending) return;
@@ -306,6 +322,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           : `Couldn't send ${failed.length} of ${staged.length}. Retry or cancel.`);
       } else {
         setStaged([]); setCaption("");
+        if (carried.current !== null && text === carried.current) setText("");
+        carried.current = null;
       }
       refreshMsgs(ch); refreshThreads();
     } finally { setSending(false); }
