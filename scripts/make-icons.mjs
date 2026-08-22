@@ -83,4 +83,36 @@ await sharp({ create: { width: BADGE, height: BADGE, channels: 4, background: { 
   .composite([{ input: cropped, gravity: "center" }])
   .png().toFile(`${OUT}/badge-96.png`);
 
+/**
+ * Un icono por color de la paleta, para las notificaciones.
+ *
+ * La API de push no deja pintar una notificación de un color: lo único que se puede elegir es la
+ * imagen. Así que el color de la persona en cada organización —- que existe justo para distinguir
+ * en cuál está pasando algo —- viaja como fondo del icono, con la misma H encima.
+ *
+ * Se generan aquí y se suben al repo en vez de dibujarlos al vuelo en el servidor: la paleta es
+ * fija (18 matices x 3 tonos), son 3 KB en total, y un icono que se genera por petición es una
+ * dependencia de imágenes en el camino de un aviso que tiene que salir rápido.
+ */
+const PALETA = [
+  "#14B8A6","#0E8C82","#0B5F58","#3B82F6","#2563EB","#1D4ED8","#8B5CF6","#7C3AED","#6D28D9",
+  "#EC4899","#DB2777","#BE185D","#EF4444","#DC2626","#B91C1C","#F97316","#EA580C","#C2410C",
+  "#D97706","#CA8A04","#92400E","#22C55E","#16A34A","#15803D","#06B6D4","#0891B2","#0E7490",
+  "#6366F1","#4F46E5","#4338CA","#A855F7","#9333EA","#7E22CE","#2DD4BF","#0D9488","#0F766E",
+  "#F43F5E","#E11D48","#BE123C","#D946EF","#C026D3","#A21CAF","#0EA5E9","#0284C7","#0369A1",
+  "#10B981","#059669","#047857","#84CC16","#65A30D","#4D7C0F","#94A3B8","#64748B","#475569",
+];
+await mkdir(`${OUT}/org`, { recursive: true });
+const ICON = 192, LETRA = 118;
+const hMask = await sharp(letter, { raw: { width: W, height: W, channels: 4 } })
+  .extract({ left: x0, top: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 })
+  .resize(LETRA, LETRA, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
+  .png().toBuffer();
+for (const hex of PALETA) {
+  const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  await sharp({ create: { width: ICON, height: ICON, channels: 4, background: { r, g, b: bl, alpha: 1 } } })
+    .composite([{ input: hMask, gravity: "center" }])
+    .png().toFile(`${OUT}/org/${hex.slice(1).toLowerCase()}.png`);
+}
+
 console.log("iconos listos en", OUT);

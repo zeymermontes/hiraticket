@@ -66,6 +66,39 @@ function onSkewDetected() {
   });
 }
 
+/**
+ * Preguntar si hay versión nueva, al volver a la app.
+ *
+ * El aviso de arriba solo salta cuando una ACCIÓN de servidor devuelve "ese action ya no existe", y
+ * eso dejó de ser fiable a propósito: las lecturas del chat se movieron a una ruta normal (ver
+ * src/lib/chatLive.ts), así que una app instalada puede pasar días sin disparar una sola acción y
+ * sin enterarse de que hay una versión nueva.
+ *
+ * Así que se pregunta directamente, en el único momento en que importa: cuando alguien vuelve a la
+ * app. Una petición diminuta, como mucho una por minuto, y solo con la pantalla a la vista. Si el
+ * servidor dice otra versión, aparece el mismo aviso de siempre y se recarga con un toque.
+ *
+ * En desarrollo no hay versión que comparar (RENDER_GIT_COMMIT no existe) y esto no hace nada.
+ */
+let lastCheck = 0;
+const CHECK_EVERY_MS = 60_000;
+
+export async function checkForNewBuild(): Promise<void> {
+  if (stale || typeof document === "undefined" || document.visibilityState !== "visible") return;
+  if (Date.now() - lastCheck < CHECK_EVERY_MS) return;
+  lastCheck = Date.now();
+  const mine = document.querySelector('meta[name="ht-build"]')?.getAttribute("content") ?? "";
+  if (!mine) return;
+  try {
+    const r = await fetch("/api/version", { cache: "no-store" });
+    if (!r.ok) return;
+    const { build } = (await r.json()) as { build?: string };
+    // Solo se actúa con una respuesta que de verdad trae versión: si la sesión caducó y esto
+    // acabó en el HTML del login, `build` viene vacío y no hay nada que concluir.
+    if (build && build !== mine) onSkewDetected();
+  } catch { /* sin red: se vuelve a preguntar al siguiente regreso */ }
+}
+
 /** Envuelve `fetch` una sola vez para mirar (sin tocar) las respuestas de server actions. */
 export function installBuildSkewGuard() {
   if (installed || typeof window === "undefined") return;

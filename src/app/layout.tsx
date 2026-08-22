@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { BUILD_ID } from "@/lib/buildId";
 import "@/styles/tokens.css";
 import "@/styles/ui.css";
 import "@/styles/views.css";
@@ -106,6 +107,9 @@ export default function RootLayout({
             inicio abre dentro de Safari con su barra —- y ahí NO hay Web Push. Una línea que
             decide si las notificaciones existen o no en la mitad de los iPhone. */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
+        {/* La versión con la que se cargó esta pestaña. La comprobación de "hay una versión nueva"
+            la compara contra /api/version al volver a la app —- ver src/lib/buildSkew.ts. */}
+        {BUILD_ID && <meta name="ht-build" content={BUILD_ID} />}
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
         <script dangerouslySetInnerHTML={{ __html: threadPinBoot }} />
         <script dangerouslySetInnerHTML={{ __html: installBoot }} />

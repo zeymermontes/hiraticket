@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { BUILD_SKEW_EVENT, installBuildSkewGuard, reloadForNewBuild } from "@/lib/buildSkew";
+import { BUILD_SKEW_EVENT, installBuildSkewGuard, reloadForNewBuild, checkForNewBuild } from "@/lib/buildSkew";
 import { useToast } from "@/components/Toast";
 
 /**
@@ -24,7 +24,17 @@ export function BuildSkewGuard() {
         onClick: reloadForNewBuild,
       });
     window.addEventListener(BUILD_SKEW_EVENT, onSkew);
-    return () => window.removeEventListener(BUILD_SKEW_EVENT, onSkew);
+    // Al volver a la app se pregunta si hay versión nueva: una app instalada puede estar días
+    // abierta sin disparar una acción de servidor, que era el único disparador que había.
+    const onBack = () => { void checkForNewBuild(); };
+    document.addEventListener("visibilitychange", onBack);
+    window.addEventListener("focus", onBack);
+    onBack();
+    return () => {
+      window.removeEventListener(BUILD_SKEW_EVENT, onSkew);
+      document.removeEventListener("visibilitychange", onBack);
+      window.removeEventListener("focus", onBack);
+    };
   }, [push]);
 
   return null;

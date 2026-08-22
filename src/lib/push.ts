@@ -52,6 +52,16 @@ interface SubRow {
   endpoint: string;
   p256dh: string;
   auth: string;
+  user_id: string;
+}
+
+/** El icono coloreado de esta organización para esta persona, o el de siempre si no hay color.
+ *  Los archivos se generan en el build a partir de la paleta; un color fuera de ella cae al normal. */
+function orgIcon(color: string | null): string | undefined {
+  if (!color) return undefined;
+  const hex = color.trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(hex)) return undefined;
+  return `/icons/org/${hex.slice(1)}.png`;
 }
 
 /**
@@ -99,14 +109,16 @@ export async function sendPushToUsers(
     // defecto, que es "avisar" —- perder un aviso es peor que mandar uno de más a quien lo tenía
     // apagado. Por eso también la caída a profiles: sin la migración, ahí es donde vivían.
     let prefsBy = new Map<string, unknown>();
+    const colorBy = new Map<string, string | null>();
     const { data: mems, error: memErr } = await admin
-      .from("business_members").select("user_id, notif_prefs")
+      .from("business_members").select("user_id, notif_prefs, avatar_color")
       .eq("business_id", businessId).in("user_id", uniq);
     if (memErr) {
       const { data: profs } = await admin.from("profiles").select("id, notif_prefs").in("id", uniq);
       prefsBy = new Map((profs ?? []).map((p) => [p.id as string, p.notif_prefs]));
     } else {
       prefsBy = new Map((mems ?? []).map((m) => [m.user_id as string, m.notif_prefs]));
+      for (const m of mems ?? []) colorBy.set(m.user_id as string, (m.avatar_color as string | null) ?? null);
     }
     const wants = new Map<string, boolean>();
     for (const id of uniq) {
@@ -117,12 +129,42 @@ export async function sendPushToUsers(
 
     const { data: subs } = await admin
       .from("push_subscriptions")
-      .select("id, endpoint, p256dh, auth")
+      .select("id, endpoint, p256dh, auth, user_id")
       .eq("business_id", businessId)
       .in("user_id", targets);
     if (!subs || subs.length === 0) return;
 
-    const body = JSON.stringify({ ...payload, at: new Date().toISOString() });
+    /**
+     * De qué organización es el aviso, y de qué color.
+     *
+     * El nombre solo se añade a quien está en MÁS DE UNA: para quien tiene una sola sería repetir
+     * lo mismo en cada notificación. Y el color es el que esa persona eligió para esa organización
+     * (0085), que es justo para lo que existe: distinguir de un vistazo en cuál está pasando algo.
+     * Como la web no deja pintar una notificación, el color viaja en el ICONO —- uno por color de
+     * la paleta, generados en el build (scripts/make-icons.mjs).
+     */
+    const [{ data: biz }, { data: allMems }] = await Promise.all([
+      admin.from("businesses").select("name").eq("id", businessId).maybeSingle(),
+      admin.from("business_members").select("user_id, business_id").in("user_id", targets),
+    ]);
+    const orgName = (biz?.name as string) ?? "";
+    const orgCount = new Map<string, number>();
+    for (const m of allMems ?? []) orgCount.set(m.user_id as string, (orgCount.get(m.user_id as string) ?? 0) + 1);
+
+    // Sin color propio en esta organización se cae al del perfil, y si tampoco, al icono de siempre.
+    const { data: profColors } = await admin.from("profiles").select("id, avatar_color").in("id", targets);
+    const profColorBy = new Map((profColors ?? []).map((p) => [p.id as string, (p.avatar_color as string | null) ?? null]));
+
+    const payloadFor = (userId: string) => {
+      const varias = (orgCount.get(userId) ?? 1) > 1;
+      const color = colorBy.get(userId) || profColorBy.get(userId) || null;
+      return JSON.stringify({
+        ...payload,
+        title: varias && orgName ? `${payload.title} · ${orgName}` : payload.title,
+        icon: orgIcon(color),
+        at: new Date().toISOString(),
+      });
+    };
     const dead: string[] = [];
 
     // Las que ni siquiera pueden cifrarse se descartan aquí: no hay a qué reintentar y así no
@@ -137,7 +179,7 @@ export async function sendPushToUsers(
       try {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-          body,
+          payloadFor(s.user_id),
           { TTL: 60 * 60 * 12 }, // 12 h: pasado eso, el aviso ya no le sirve a nadie
         );
       } catch (e) {
@@ -202,7 +244,9 @@ export async function pushInboundMessage(opts: {
     await sendPushToUsers(opts.businessId, userIds, {
       title: opts.title,
       body: opts.body,
-      href: `/chat?c=${opts.conversationId}`,
+      // Pasa por /chat/open para CAMBIAR de organización antes de abrir el chat: si el aviso es de
+      // una y estás parado en la otra, la conversación no existe para ti y no se abriría nada.
+      href: `/chat/open?c=${opts.conversationId}&org=${opts.businessId}`,
       // Por conversación: diez mensajes seguidos de la misma persona dejan UNA notificación, la
       // última, en vez de diez que hay que barrer una por una.
       tag: `wa-${opts.conversationId}`,
