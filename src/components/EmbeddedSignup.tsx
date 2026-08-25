@@ -72,7 +72,21 @@ export function EmbeddedSignup({ appId, configId }: { appId: string; configId: s
     return () => window.removeEventListener("message", onMessage);
   }, [configured]);
 
-  function launch() {
+  /**
+   * Dos altas distintas, no una.
+   *
+   * `whatsapp_business_app_onboarding` es el flujo de COEXISTENCIA: el número ya está funcionando
+   * en la app de WhatsApp Business y se le añade la API sin perder el historial ni el teléfono.
+   * Es el caso que teníamos en mente al construir esto, y estaba puesto a fuego para todo el mundo.
+   *
+   * Pero no es el caso general. Un cliente con un número NUEVO —- o con uno que no está en la app
+   * de WhatsApp Business —- necesita el alta normal, y forzarle la coexistencia lo manda por un
+   * camino cuyos requisitos no cumple. La coexistencia además tiene su propia elegibilidad del
+   * lado de Meta, así que un rechazo ahí no distingue "no puedes" de "no aplica".
+   *
+   * Se deja elegir, y la coexistencia sigue siendo el primer botón: es lo que ya funcionaba.
+   */
+  function launch(coexistencia: boolean) {
     if (!window.FB) return;
     setBusy(true);
     setMsg(null);
@@ -127,8 +141,10 @@ export function EmbeddedSignup({ appId, configId }: { appId: string; configId: s
         config_id: configId,
         response_type: "code",
         override_default_response_type: true,
-        // Coexistence flow: onboard a number already on the WhatsApp Business app.
-        extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+        // Sin featureType, Meta abre el alta normal (número nuevo o no vinculado a la app).
+        extras: coexistencia
+          ? { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" }
+          : { setup: {}, sessionInfoVersion: "3" },
       },
     );
   }
@@ -143,18 +159,26 @@ export function EmbeddedSignup({ appId, configId }: { appId: string; configId: s
     );
   }
 
+  const es = lang === "es";
   return (
     <div className="col gap-2">
-      <button className="btn btn-sm btn-primary" style={{ width: "fit-content" }} disabled={!ready || busy} onClick={launch}>
-        <Icon name="whatsapp" size={15} />
-        {busy
-          ? lang === "es"
-            ? "Conectando…"
-            : "Connecting…"
-          : lang === "es"
-            ? "Conectar con WhatsApp oficial"
-            : "Connect with official WhatsApp"}
-      </button>
+      <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+        <button className="btn btn-sm btn-primary" disabled={!ready || busy} onClick={() => launch(true)}>
+          <Icon name="whatsapp" size={15} />
+          {busy ? (es ? "Conectando…" : "Connecting…") : (es ? "Mi número ya está en WhatsApp" : "My number is already on WhatsApp")}
+        </button>
+        <button className="btn btn-sm btn-outline" disabled={!ready || busy} onClick={() => launch(false)}>
+          <Icon name="plus" size={15} />
+          {es ? "Es un número nuevo" : "It's a new number"}
+        </button>
+      </div>
+      {/* La diferencia importa y no es evidente: elegir mal manda al cliente por un camino cuyos
+          requisitos no cumple, y Meta rechaza sin explicar cuál de los dos era. */}
+      <div className="t-xs muted">
+        {es
+          ? "El primero conserva tu historial y deja WhatsApp funcionando en el teléfono (coexistencia). El segundo es para un número que aún no usa WhatsApp."
+          : "The first keeps your history and leaves WhatsApp working on the phone (coexistence). The second is for a number not yet on WhatsApp."}
+      </div>
       {msg && (
         <div className="t-xs" style={{ color: msg.kind === "ok" ? "var(--green, #16a34a)" : "var(--red, #dc2626)" }}>
           {msg.text}
