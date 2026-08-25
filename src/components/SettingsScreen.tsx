@@ -10,7 +10,7 @@ import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEn
   browserSupportsPush, pushKeyPresent, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
 import { isStandalone } from "@/lib/useIsMobile";
 import { InstallAppRow } from "@/components/InstallApp";
-import { savePushSubscription, removePushSubscription, removePushDevice, listPushDevices, type PushDevice } from "@/app/(app)/settings/push-actions";
+import { savePushSubscription, removePushSubscription, removePushDevice, listPushDevices, listPushGaps, type PushDevice } from "@/app/(app)/settings/push-actions";
 import { DEFAULT_NOTIF_PREFS, type NotifPrefs } from "@/lib/notifPrefs";
 import { loadNotifPrefs, saveNotifPrefs } from "@/app/(app)/settings/notif-actions";
 import { NOTIF_PREFS_EVENT } from "@/components/RealtimeNotifier";
@@ -444,6 +444,8 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
   const [keyed, setKeyed] = useState(true);   // ¿el despliegue trae la clave VAPID?
   const [endpoint, setEndpoint] = useState<string | null>(null);
   const [devices, setDevices] = useState<PushDevice[]>([]);
+  // Organizaciones donde este mismo aparato NO recibe avisos. Ver listPushGaps.
+  const [gaps, setGaps] = useState<{ id: string; name: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [standalone, setStandalone] = useState(true);
@@ -453,6 +455,7 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
     const cur = ep !== undefined ? ep : await currentPushEndpoint();
     setEndpoint(cur);
     setDevices(await listPushDevices(cur ?? undefined));
+    setGaps(cur ? await listPushGaps(cur) : []);
   };
 
   useEffect(() => {
@@ -506,6 +509,20 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
     } finally { setBusy(false); }
   };
 
+  /** Activar los avisos de OTRA organización desde aquí, sin cambiarse a ella. El permiso y la
+   *  suscripción del navegador ya existen (por eso aparece el aviso); lo único que falta es la fila
+   *  de esa organización, así que obligar a cambiarse, entrar a Ajustes y volver sería pura fricción. */
+  const enableFor = async (orgId: string) => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await subscribeToPush();
+      if (!r.ok) { setErr(es ? "No se pudo activar aquí." : "Couldn't enable it here."); return; }
+      const saved = await savePushSubscription(r.sub, orgId);
+      if (!saved.ok) { setErr(es ? "No se pudo guardar en el servidor." : "Couldn't save it on the server."); return; }
+      await refresh(r.sub.endpoint);
+    } finally { setBusy(false); }
+  };
+
   const forget = async (d: PushDevice) => {
     setBusy(true);
     try {
@@ -553,6 +570,27 @@ function PushRow({ lang }: { lang: "es" | "en" }) {
           </button>
         )}
       </div>
+      {/* El agujero de multiempresa, dicho por su nombre. La suscripción es por (organización,
+          dispositivo): activarla aquí no la activa en las demás, y hasta ahora nada lo decía —- de
+          la otra organización simplemente no llegaba nada. Se nombran las que faltan y se activan
+          desde aquí, sin tener que cambiarse a cada una. */}
+      {gaps.length > 0 && (
+        <div className="col gap-1" style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-bd)", borderRadius: 10, padding: "8px 10px" }}>
+          <span className="t-xs">
+            {es
+              ? "Este dispositivo no recibe avisos de tus otras organizaciones:"
+              : "This device doesn't get alerts from your other workspaces:"}
+          </span>
+          {gaps.map((g) => (
+            <div key={g.id} className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="grow truncate t-sm">{g.name}</span>
+              <button className="btn btn-sm btn-outline" disabled={busy || !supported || !keyed || iosBlocked} onClick={() => enableFor(g.id)}>
+                <Icon name="bell" size={13} />{es ? "Activar" : "Turn on"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {/* Decir "instala la app primero" sin dar el botón para hacerlo era dejar la frase a medias.
           Se pinta sola: si ya está instalada o el navegador no sabe instalar, no aparece. */}
       {!standalone && <InstallAppRow variant="block" />}

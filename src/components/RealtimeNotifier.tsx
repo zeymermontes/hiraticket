@@ -53,6 +53,45 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
     const supabase = createClient();
     const notify = () => { clearTimeout(tRef.current); tRef.current = setTimeout(() => onChangeRef.current?.(), 600); };
 
+    /**
+     * Las transferencias se juntan antes de avisar.
+     *
+     * La transferencia masiva escribe un evento `swap` POR CHAT, así que pasarle veinte chats a
+     * alguien le dejaba veinte avisos fijos que hay que cerrar uno por uno. Se esperan 900 ms —-
+     * los eventos de un mismo lote llegan casi juntos —- y lo que haya caído en esa ventana sale
+     * como un solo aviso con el total. Uno solo sigue viéndose exactamente igual que antes.
+     */
+    const xferBuf: { convId: string; actorId: string | null }[] = [];
+    let xferTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushTransfers = async () => {
+      const batch = xferBuf.splice(0, xferBuf.length);
+      if (!batch.length) return;
+      const n = batch.length;
+      let who = "", client = "";
+      try {
+        const [{ data: prof }, conv] = await Promise.all([
+          supabase.from("profiles").select("full_name").eq("id", batch[0].actorId ?? "").maybeSingle(),
+          // El nombre del cliente solo se busca cuando es UNO: con varios no cabe y no se usa.
+          n === 1
+            ? supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", batch[0].convId).maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
+        who = ((prof as { full_name?: string } | null)?.full_name ?? "").trim();
+        const c = (conv.data as { contact?: unknown } | null)?.contact;
+        const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
+        client = (cc?.name || cc?.phone || "").trim();
+      } catch {}
+      if (!who) who = "Alguien";
+      const title = n === 1 ? `${who} te transfirió un chat` : `${who} te transfirió ${n} chats`;
+      const body = n === 1 ? (client || "un cliente") : "Toca para verlos";
+      const href = n === 1 ? `/chat?c=${batch[0].convId}` : "/chat";
+      const tag = n === 1 ? `xfer-${batch[0].convId}` : "xfer-many";
+      // Fijo: una transferencia es trabajo que pasa a ser tuyo; perderla por mirar a otro lado
+      // seis segundos es justo lo que hay que evitar.
+      push({ kind: "mention", title, message: body, href, sticky: true, key: tag });
+      alertIncoming({ title, body, href, tag });
+    };
+
     // keepSubscribed en vez de .subscribe(): el canal se reconecta solo con backoff y re-autentica
     // el socket. Antes, si se caía, los avisos se apagaban en silencio hasta recargar la página.
     const stop = keepSubscribed(supabase, `notify-${businessId}`, (ch) => ch
@@ -176,32 +215,14 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
           notify();
           return;
         }
-        if (e.kind !== "swap" || e.target_id !== userId || e.actor_id === userId) return;
+        // `parent_type` importa: los pedidos también escriben eventos `swap` sobre la misma tabla,
+        // y sin este filtro un pedido asignado saldría como "te transfirió un chat" y llevaría a un
+        // chat que no existe.
+        if (e.kind !== "swap" || e.parent_type !== "conversation" || e.target_id !== userId || e.actor_id === userId) return;
         if (!notifOn(prefsRef.current, "transfers")) return;
-        let who = "", client = "";
-        try {
-          const [{ data: prof }, { data: conv }] = await Promise.all([
-            supabase.from("profiles").select("full_name").eq("id", e.actor_id ?? "").maybeSingle(),
-            supabase.from("conversations").select("contact:contacts(name, phone)").eq("id", e.parent_id ?? "").maybeSingle(),
-          ]);
-          who = ((prof as { full_name?: string } | null)?.full_name ?? "").trim();
-          const c = (conv as { contact?: unknown } | null)?.contact;
-          const cc = (Array.isArray(c) ? c[0] : c) as { name?: string; phone?: string } | undefined;
-          client = (cc?.name || cc?.phone || "").trim();
-        } catch {}
-        if (!who) who = "Alguien";
-        if (!client) client = "un cliente";
-        // Fijo: una transferencia es trabajo que pasa a ser tuyo; perderla por mirar a otro lado
-        // seis segundos es justo lo que hay que evitar.
-        push({
-          kind: "mention",
-          title: `${who} te transfirió un chat`,
-          message: client,
-          href: `/chat?c=${e.parent_id}`,
-          sticky: true,
-          key: `xfer-${e.parent_id}`,
-        });
-        alertIncoming({ title: `${who} te transfirió un chat`, body: client, href: `/chat?c=${e.parent_id}`, tag: `xfer-${e.parent_id}` });
+        xferBuf.push({ convId: e.parent_id ?? "", actorId: e.actor_id ?? null });
+        clearTimeout(xferTimer);
+        xferTimer = setTimeout(() => { void flushTransfers(); }, 900);
         notify();
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "notes", filter: `business_id=eq.${businessId}` }, (payload) => {
@@ -239,7 +260,7 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
       onHealthy: (reconnected) => { if (reconnected) notify(); },
     });
 
-    return () => { clearTimeout(tRef.current); stop(); };
+    return () => { clearTimeout(tRef.current); clearTimeout(xferTimer); stop(); };
   }, [businessId, userId, myName, push]);
 
   return null;

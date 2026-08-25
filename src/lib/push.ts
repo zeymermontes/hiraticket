@@ -256,3 +256,72 @@ export async function pushInboundMessage(opts: {
     // idem: nunca romper lo que lo llamó
   }
 }
+
+/**
+ * Aviso de que un chat pasó a ser TUYO.
+ *
+ * Hasta ahora la transferencia solo existía como toast: `RealtimeNotifier` escucha el evento `swap`
+ * y pinta un aviso. Eso es el navegador reaccionando, así que con la app cerrada —- que es cuando
+ * de verdad hace falta —- no llegaba nada, y con varias organizaciones tampoco llegaba con la app
+ * ABIERTA: el notificador está suscrito al `business_id` de la organización que tienes puesta, así
+ * que de la otra no oye nada. Este es el servidor empujando, y no le importa dónde estés parado.
+ *
+ * Se acepta una LISTA de conversaciones porque la transferencia masiva existe: veinte chats a la
+ * misma persona tienen que ser un aviso, no veinte.
+ *
+ * `targetId` puede ser null (quitar la asignación, o un área sin agente de ruteo): ahí no hay a
+ * quién avisar y no es un error. Tampoco se avisa a quien hizo la transferencia —- ya lo sabe.
+ */
+export async function pushTransfer(opts: {
+  businessId: string;
+  actorId: string | null;
+  targetId: string | null;
+  conversationIds: string[];
+  /** Nombre del área, cuando la transferencia fue a un área y esta enruta a esta persona. */
+  areaName?: string | null;
+}): Promise<void> {
+  const { businessId, actorId, targetId, conversationIds } = opts;
+  if (!pushConfigured() || !targetId || !conversationIds.length) return;
+  if (targetId === actorId) return;
+  const admin = createAdminClient();
+  try {
+    const n = conversationIds.length;
+    const [{ data: prof }, { data: convs }] = await Promise.all([
+      actorId
+        ? admin.from("profiles").select("full_name").eq("id", actorId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      // Solo hacen falta los nombres para el cuerpo; con tres basta para que se entienda de qué va.
+      admin.from("conversations").select("contact:contacts(name, phone)").in("id", conversationIds.slice(0, 3)),
+    ]);
+    const who = ((prof as { full_name?: string } | null)?.full_name ?? "").trim() || "Alguien";
+    const names = (convs ?? []).map((c) => {
+      const raw = (c as { contact?: unknown }).contact;
+      const cc = (Array.isArray(raw) ? raw[0] : raw) as { name?: string; phone?: string } | undefined;
+      return (cc?.name || cc?.phone || "").trim();
+    }).filter(Boolean);
+
+    const area = (opts.areaName ?? "").trim();
+    const title = n === 1
+      ? (area ? `${who} te pasó un chat de ${area}` : `${who} te transfirió un chat`)
+      : `${who} te transfirió ${n} chats`;
+    // Con más de tres, los que faltan se cuentan en vez de listarse: el cuerpo de una notificación
+    // se corta a las dos líneas y una lista larga solo tapa el nombre de quien la mandó.
+    const body = names.length
+      ? (n > names.length ? `${names.join(", ")} y ${n - names.length} más` : names.join(", "))
+      : (n === 1 ? "un cliente" : `${n} chats`);
+
+    await sendPushToUsers(businessId, [targetId], {
+      title,
+      body,
+      // Una sola lleva al chat; varias, a la lista —- abrir una de veinte al azar no ayuda. En los
+      // dos casos por /chat/open, que cambia de organización antes de entrar: el aviso puede ser de
+      // una organización distinta a la que tienes abierta, que es justo el caso que esto arregla.
+      href: n === 1 ? `/chat/open?c=${conversationIds[0]}&org=${businessId}` : `/chat/open?org=${businessId}`,
+      // Mismo tag que el aviso en vivo del navegador (`xfer-…` en RealtimeNotifier): si la app está
+      // abierta, el push reemplaza al toast en la bandeja del sistema en vez de duplicarlo.
+      tag: n === 1 ? `xfer-${conversationIds[0]}` : `xfer-bulk-${businessId}`,
+    }, "transfers");
+  } catch {
+    // Un aviso que no sale no puede tumbar la transferencia que lo disparó.
+  }
+}

@@ -1,7 +1,7 @@
 "use server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
-import { getMyBusiness } from "@/lib/queries";
+import { getMyBusiness, listMyOrgs } from "@/lib/queries";
 
 /**
  * Alta y baja de este dispositivo para recibir push.
@@ -20,19 +20,25 @@ export interface PushDevice {
 
 export async function savePushSubscription(sub: {
   endpoint: string; p256dh: string; auth: string; ua?: string;
-}): Promise<{ ok: boolean; error?: string }> {
+}, forBusinessId?: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const business = await getMyBusiness();
   if (!user || !business) return { ok: false, error: "no-session" };
   if (!sub.endpoint || !sub.p256dh || !sub.auth) return { ok: false, error: "bad-subscription" };
 
+  // `forBusinessId` deja activar los avisos de OTRA organización sin cambiarse a ella: es lo que
+  // usa el aviso de Ajustes que las nombra. No se comprueba la membresía aquí porque ya la
+  // comprueba quien manda —- la política de inserción de 0082 exige `is_business_member`, así que
+  // un id ajeno no se guarda aunque llegue hasta aquí, y el error sube tal cual.
+  const businessId = forBusinessId || business.id;
+
   // Upsert por (organización, endpoint): el navegador reusa el mismo endpoint al volver a
   // suscribir, y sin upsert cada "activar" dejaría una fila más apuntando al mismo aparato. La
   // organización va en la llave porque un aparato puede recibir de VARIAS —- con `endpoint` a
   // secas, activar en la segunda pisaba en silencio la suscripción de la primera. Ver 0083.
   const row = {
-    business_id: business.id,
+    business_id: businessId,
     user_id: user.id,
     endpoint: sub.endpoint,
     p256dh: sub.p256dh,
@@ -109,4 +115,32 @@ export async function listPushDevices(currentEndpoint?: string): Promise<PushDev
     created_at: d.created_at as string,
     current: !!currentEndpoint && d.endpoint === currentEndpoint,
   }));
+}
+
+/**
+ * Las OTRAS organizaciones en las que este mismo navegador no recibe avisos.
+ *
+ * El fallo que esto destapa no daba ninguna señal: la suscripción es por (organización,
+ * dispositivo) —- ver 0083 —- así que activarla en una NO la activa en las demás. Quien tiene dos
+ * activa los avisos una vez, los ve funcionar, y da por hecho que ya está; de la segunda no le
+ * llega nada y en ningún sitio decía por qué. Ajustes solo miraba la organización activa, o sea,
+ * justo la que sí funciona.
+ *
+ * Devuelve las que faltan para poder nombrarlas: "activa también en X" es accionable, "puede que te
+ * falte alguna" no lo es.
+ */
+export async function listPushGaps(endpoint: string): Promise<{ id: string; name: string }[]> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const business = await getMyBusiness();
+  if (!user || !endpoint) return [];
+  const orgs = await listMyOrgs();
+  if (orgs.length < 2) return []; // con una sola, el botón de arriba ya lo dice todo
+  const { data, error } = await supabase.from("push_subscriptions")
+    .select("business_id").eq("user_id", user.id).eq("endpoint", endpoint);
+  if (error) return []; // 0082 sin aplicar todavía
+  const have = new Set((data ?? []).map((r) => r.business_id as string));
+  // La activa se excluye: para esa ya manda el botón "Activar aquí" de la misma fila, y repetirla
+  // en la lista de pendientes sería decir dos veces lo mismo con palabras distintas.
+  return orgs.filter((o) => o.id !== business?.id && !have.has(o.id)).map((o) => ({ id: o.id, name: o.name }));
 }

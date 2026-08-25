@@ -11,6 +11,7 @@ import { flushCloudOutbox, sendCloudReactionFor } from "@/lib/cloud-outbox";
 import { officialSessionOf } from "@/lib/cloud-session";
 import { listTemplates } from "@/lib/whatsapp-cloud";
 import { VAR_RE } from "@/lib/template-rules";
+import { pushTransfer } from "@/lib/push";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
 export async function loadConvDetail(convId: string): Promise<ConvDetail | null> {
@@ -370,14 +371,23 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
         await flushCloudOutbox(businessId);
       }
     } else if (a.action_type === "transfer_area" && payload.area) {
-      const { data: ar } = await supabase.from("areas").select("route_to").eq("id", payload.area).maybeSingle();
-      await supabase.from("conversations").update({ area_id: payload.area, assignee_id: (ar?.route_to as string) ?? null }).eq("id", convId);
-      await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: transferido de área" });
+      const { data: ar } = await supabase.from("areas").select("route_to, name").eq("id", payload.area).maybeSingle();
+      const routed = (ar?.route_to as string) ?? null;
+      await supabase.from("conversations").update({ area_id: payload.area, assignee_id: routed }).eq("id", convId);
+      // Con `target_id` el evento dice a QUIÉN le tocó, y eso es lo que enciende tanto el aviso en
+      // vivo como el push. Sin él, un flujo podía dejarte un chat encima sin que nada te lo dijera.
+      const row = { business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: transferido de área" };
+      const { error: e1 } = await supabase.from("events").insert({ ...row, target_id: routed });
+      if (e1) await supabase.from("events").insert(row); // 0068 sin aplicar
+      await pushTransfer({ businessId, actorId: userId, targetId: routed, conversationIds: [convId], areaName: ((ar?.name as string) ?? "").trim() || null });
     } else if (a.action_type === "notify_agent") {
       await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente" });
     } else if (a.action_type === "assign_agent" && payload.agent) {
       await supabase.from("conversations").update({ assignee_id: payload.agent }).eq("id", convId);
-      await supabase.from("events").insert({ business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: asignado a agente" });
+      const row = { business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: "Auto: asignado a agente" };
+      const { error: e2 } = await supabase.from("events").insert({ ...row, target_id: payload.agent });
+      if (e2) await supabase.from("events").insert(row); // 0068 sin aplicar
+      await pushTransfer({ businessId, actorId: userId, targetId: payload.agent, conversationIds: [convId] });
     } else if (a.action_type === "add_tag" && payload.tag) {
       const { data: conv } = await supabase.from("conversations").select("contact_id").eq("id", convId).maybeSingle();
       if (conv?.contact_id) {
@@ -472,11 +482,35 @@ export async function bulkSetStatus(convIds: string[], status: "open" | "pending
   await supabase.from("conversations").update(status === "resolved" ? { status, unread: 0 } : { status }).in("id", convIds);
 }
 
-/** Bulk-assign several conversations to an agent (or null to unassign). Releases any lock. */
+/**
+ * Transferencia MASIVA: varios chats a un agente (o a nadie). Suelta cualquier "mantener conmigo".
+ *
+ * Hacía exactamente lo mismo que la transferencia de uno en uno pero sin dejar rastro ni avisar a
+ * nadie: ni evento en la bitácora ni notificación. O sea, mover un chat quedaba registrado y mover
+ * veinte no —- justo al revés de lo que conviene. Ahora escribe el mismo evento `swap` por chat y
+ * manda UN aviso con el total, que es como se lee bien: "te transfirió 20 chats", no veinte avisos.
+ */
 export async function bulkAssign(convIds: string[], agentId: string | null): Promise<void> {
   if (!convIds.length) return;
-  const { supabase } = await ctx();
+  const { supabase, userId } = await ctx();
   await supabase.from("conversations").update({ assignee_id: agentId, locked_to: null }).in("id", convIds);
+
+  const businessId = await businessOf(convIds[0]);
+  if (!businessId) return;
+  let label = "Devuelto a sin asignar";
+  if (agentId) {
+    const { data: p } = await supabase.from("profiles").select("full_name").eq("id", agentId).maybeSingle();
+    label = `Transferido a ${(p?.full_name as string) || "un agente"}`;
+  }
+  const rows = convIds.map((id) => ({
+    business_id: businessId, parent_type: "conversation", parent_id: id,
+    actor_id: userId, kind: "swap", text: label,
+  }));
+  // Mismo repliegue que en la transferencia de uno: `target_id` es 0068 y puede no estar aplicada.
+  const { error } = await supabase.from("events").insert(rows.map((r) => ({ ...r, target_id: agentId })));
+  if (error) await supabase.from("events").insert(rows);
+
+  await pushTransfer({ businessId, actorId: userId, targetId: agentId, conversationIds: convIds });
 }
 
 /** Bulk-delete several conversations (messages cascade; notes/events cleared). */
@@ -575,6 +609,7 @@ async function transferConvImpl(
   // A quién queda asignado. Se guarda el ID (no solo el nombre en el texto) para poder avisarle
   // solo a esa persona: con el nombre suelto, nadie puede saber si el destinatario es él.
   let targetId: string | null = null;
+  let areaName: string | null = null;
   if (mode === "unassign") {
     await supabase.from("conversations").update({ assignee_id: null, locked_to: null }).eq("id", convId);
   } else if (mode === "agent") {
@@ -590,13 +625,20 @@ async function transferConvImpl(
       .from("conversations")
       .update({ area_id: destId, assignee_id: (area?.route_to as string) ?? null, locked_to: null })
       .eq("id", convId);
-    label = `Transferido al área ${(area?.name as string) ?? ""}`.trim();
+    areaName = ((area?.name as string) ?? "").trim() || null;
+    label = `Transferido al área ${areaName ?? ""}`.trim();
     targetId = (area?.route_to as string) ?? null; // el área puede enrutar a un agente concreto
   }
   const row = { business_id: businessId, parent_type: "conversation", parent_id: convId, actor_id: userId, kind: "swap", text: label };
   // target_id es 0068 — si aún no está aplicada, el evento se guarda igual sin él.
   const { error } = await supabase.from("events").insert({ ...row, target_id: targetId });
   if (error) await supabase.from("events").insert(row);
+
+  // El aviso va DESPUÉS de guardar y con await: si la transferencia no se guardó no hay nada que
+  // avisar, y `pushTransfer` se traga sus errores, así que no puede tumbar la acción. Sin esto la
+  // transferencia solo existía como toast del navegador —- o sea, nada con la app cerrada, y nada
+  // tampoco si el destinatario está parado en otra organización.
+  await pushTransfer({ businessId, actorId: userId, targetId, conversationIds: [convId], areaName });
 }
 
 /** Pide al worker que baje un adjunto que se dejó pendiente por pesado.
