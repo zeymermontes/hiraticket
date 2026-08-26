@@ -1,3 +1,5 @@
+import { runPaymentAutomations } from "@/lib/flows";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
@@ -23,6 +25,11 @@ export async function markOrderPaid(supabase: AnySupabase, orderId: string, user
   // pedido saldado: el cajón diría pagado y la lista de cobros diría que falta dinero, y sus links
   // seguirían pidiéndole al cliente algo que ya no debe. Se ignora `void`: anulado es anulado.
   await supabase.from("charges").update({ status: "paid" }).eq("order_id", orderId).in("status", ["draft", "sent"]);
+  // "Marcar pagado" también es que entró dinero: si no disparara los flujos, un negocio que cobra
+  // en efectivo en el mostrador nunca vería ejecutarse el flujo que configuró para sus pagos.
+  await runPaymentAutomations(supabase, {
+    orderId, businessId: order.business_id as string, userId, chargeKind: null, settled: true,
+  });
 }
 
 /**
@@ -34,10 +41,10 @@ export async function markOrderPaid(supabase: AnySupabase, orderId: string, user
  *
  * Un cobro anulado no se toca: `void` es una decisión de una persona, no un cálculo.
  */
-export async function recomputeChargeStatus(supabase: AnySupabase, chargeId: string): Promise<void> {
-  if (!chargeId) return;
-  const { data: charge } = await supabase.from("charges").select("amount, status, sent_at").eq("id", chargeId).maybeSingle();
-  if (!charge || charge.status === "void") return;
+export async function recomputeChargeStatus(supabase: AnySupabase, chargeId: string): Promise<string | null> {
+  if (!chargeId) return null;
+  const { data: charge } = await supabase.from("charges").select("amount, status, sent_at, kind").eq("id", chargeId).maybeSingle();
+  if (!charge || charge.status === "void") return null;
   const { data: pays } = await supabase.from("payments").select("amount").eq("charge_id", chargeId);
   const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
   // Un centavo de tolerancia: repartir un total en tercios deja colas de redondeo, y dejar un cobro
@@ -45,11 +52,16 @@ export async function recomputeChargeStatus(supabase: AnySupabase, chargeId: str
   const covered = paid >= (Number(charge.amount) || 0) - 0.01;
   if (covered) {
     if (charge.status !== "paid") await supabase.from("charges").update({ status: "paid" }).eq("id", chargeId);
-  } else if (charge.status === "paid") {
+    // Devuelve el concepto cuando el cobro queda cubierto: es lo que necesita el disparador de
+    // flujos "se acredita un pago" para distinguir "pagó el anticipo" de "abonó algo".
+    return (charge.kind as string) ?? null;
+  }
+  if (charge.status === "paid") {
     // Se borró o se corrigió un pago: vuelve a donde estaba, no a "sent" siempre —- un cobro que
     // nunca se envió no puede acabar marcado como enviado por haber devuelto un abono.
     await supabase.from("charges").update({ status: charge.sent_at ? "sent" : "draft" }).eq("id", chargeId);
   }
+  return null;
 }
 
 /**

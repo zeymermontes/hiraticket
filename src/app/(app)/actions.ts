@@ -4,10 +4,8 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { ORG_COOKIE, listMyOrgs } from "@/lib/queries";
 import { getSessionUser } from "@/lib/auth";
-import { encryptBody } from "@/lib/msgcrypto";
-import { ensureTag } from "@/lib/tags";
+import { runOrderFlowAction, type FlowRow } from "@/lib/flows";
 import { markOrderPaid } from "@/lib/payments";
-import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
 async function actorCtx() {
@@ -79,57 +77,12 @@ export async function runStageAutomations(orderId: string, businessId: string, s
 
   for (const a of autos ?? []) {
     if (a.trigger_value && a.trigger_value !== stageId) continue;
-    const payload = (a.action_payload as { template?: string; area?: string; agent?: string; tag?: string }) ?? {};
     const tconfig = (a.trigger_config as { mark_paid?: boolean }) ?? {};
     if (markPaidPref === null && typeof tconfig.mark_paid === "boolean") markPaidPref = tconfig.mark_paid;
 
-    if (a.action_type === "send_template" && payload.template) {
-      const { data: order } = await supabase
-        .from("orders").select("code,total,contact_id,conversation_id").eq("id", orderId).maybeSingle();
-      if (order?.conversation_id) {
-        const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
-        const { data: tpl } = await supabase.from("canned_messages").select("body").eq("business_id", businessId).eq("title", payload.template).maybeSingle();
-        if (tpl) {
-          const first = (contact?.name ?? "").split(" ")[0];
-          const body = String(tpl.body)
-            .replace(/\{\{name\}\}/g, first)
-            .replace(/\{\{order_number\}\}/g, order.code as string)
-            .replace(/\{\{total\}\}/g, String(order.total));
-          await supabase.from("messages").insert({
-            business_id: businessId, conversation_id: order.conversation_id,
-            direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued",
-            // Stagger bulk sends so the worker spaces them out (anti-spam); null = send now.
-            next_retry_at: sendAfter ?? null,
-          });
-          await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
-          // Official sessions: send now if due; staggered ones drain on later flushes (webhook ticks).
-          if (!sendAfter) await flushCloudOutbox(businessId);
-        }
-      }
-    } else if (a.action_type === "transfer_area" && payload.area) {
-      const { data: ar } = await supabase.from("areas").select("route_to").eq("id", payload.area).maybeSingle();
-      await supabase.from("orders").update({ area_id: payload.area, assignee_id: (ar?.route_to as string) ?? null }).eq("id", orderId);
-      await supabase.from("events").insert({
-        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "swap", text: "Auto: transferido de área",
-      });
-    } else if (a.action_type === "notify_agent") {
-      await supabase.from("events").insert({
-        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "bell", text: "Auto: notificación al agente",
-      });
-    } else if (a.action_type === "assign_agent" && payload.agent) {
-      await supabase.from("orders").update({ assignee_id: payload.agent }).eq("id", orderId);
-      await supabase.from("events").insert({
-        business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: userId, kind: "swap", text: "Auto: asignado a agente",
-      });
-    } else if (a.action_type === "add_tag" && payload.tag) {
-      const { data: o } = await supabase.from("orders").select("contact_id").eq("id", orderId).maybeSingle();
-      if (o?.contact_id) {
-        const { data: c } = await supabase.from("contacts").select("tags").eq("id", o.contact_id).maybeSingle();
-        const tags = Array.from(new Set([...((c?.tags as string[]) ?? []), payload.tag]));
-        await supabase.from("contacts").update({ tags }).eq("id", o.contact_id);
-        await ensureTag(supabase, businessId, payload.tag as string);
-      }
-    }
+    // El cuerpo de las acciones vive en `runOrderFlowAction` (src/lib/flows.ts). Estaba duplicado
+    // aquí y el disparador de pagos habría hecho una tercera copia del mismo switch.
+    await runOrderFlowAction(supabase, { automation: a as FlowRow, orderId, businessId, userId, sendAfter });
 
     await supabase.from("automations").update({ runs: (a.runs ?? 0) + 1 }).eq("id", a.id);
     fired.push((a.name as string) || "Flujo");

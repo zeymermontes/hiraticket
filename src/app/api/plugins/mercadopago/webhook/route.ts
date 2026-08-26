@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { resolvePayToken, recomputeChargeStatus } from "@/lib/payments";
+import { runPaymentAutomations } from "@/lib/flows";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +65,10 @@ export async function POST(req: NextRequest) {
     const total = Number(order.total) || 0;
     const status = total > 0 && paid >= total ? "paid" : paid > 0 ? "partial" : "pending";
     await admin.from("orders").update({ pay_status: status }).eq("id", order.id);
-    if (chargeId) await recomputeChargeStatus(admin, chargeId);
+    const chargeKind = chargeId ? await recomputeChargeStatus(admin, chargeId) : null;
+    // Sin sesión: el runner recibe el cliente de servicio a propósito. Con el de RLS no vería
+    // ninguna automatización y no dispararía nada, en silencio.
+    await runPaymentAutomations(admin, { orderId: order.id as string, businessId: biz, userId: null, chargeKind, settled: status === "paid" });
 
     await admin.from("events").insert({
       business_id: biz, parent_type: "order", parent_id: order.id, actor_id: null,

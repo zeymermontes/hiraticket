@@ -13,12 +13,26 @@ const TRIGGERS: Record<string, { es: string; en: string }> = {
   order_stage: { es: "Un pedido cambia de etapa", en: "An order changes stage" },
   conversation_status: { es: "Una conversación cambia de estado", en: "A conversation changes status" },
   conversation_new: { es: "Inicia un chat nuevo", en: "A new chat starts" },
+  payment_approved: { es: "Se acredita un pago", en: "A payment is credited" },
   message_hours: { es: "Llega un mensaje fuera de horario", en: "A message arrives outside hours" },
   message_date: { es: "Llega un mensaje en un día de asueto", en: "A message arrives on a holiday" },
 };
 const TRIGGER_ICON: Record<string, string> = {
   order_stage: "orders", conversation_status: "chat", conversation_new: "bell",
-  message_hours: "moon", message_date: "calendar",
+  message_hours: "moon", message_date: "calendar", payment_approved: "check",
+};
+
+/**
+ * Qué pago dispara el flujo.
+ *
+ * "Se acredita" y no "se aprueba" a propósito: se dispara con el comprobante aprobado, pero también
+ * con el efectivo, la tarjeta y "marcar pagado". Un flujo que corriera solo con la transferencia
+ * sería una trampa para quien lo configuró creyendo que cubre "cuando me paguen".
+ */
+const PAYMENT_WHEN: Record<string, { es: string; en: string }> = {
+  any: { es: "Cualquier pago", en: "Any payment" },
+  anticipo: { es: "Se cubre el anticipo", en: "The deposit is covered" },
+  settled: { es: "El pedido queda saldado", en: "The order is fully paid" },
 };
 const isSchedule = (t: string) => t === "message_hours" || t === "message_date";
 
@@ -82,7 +96,9 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
       : w.trigger_value
         ? (w.trigger_type === "conversation_status"
             ? CONV_STATUS[w.trigger_value]?.[lang]
-            : stages.find((s) => s.id === w.trigger_value)?.name)
+            : w.trigger_type === "payment_approved"
+              ? PAYMENT_WHEN[w.trigger_value]?.[lang]
+              : stages.find((s) => s.id === w.trigger_value)?.name)
         : null;
   const areaName = payload.area ? areas.find((a) => a.id === payload.area)?.name : null;
   const agentName = payload.agent ? agents.find((a) => a.id === payload.agent)?.name : null;
@@ -154,6 +170,7 @@ export function FlowsScreen({
   // 0075: si el trigger es justo la etapa de "confirmar pago" del negocio, este flujo puede
   // contestar de antemano si se marca pagado — sin esto, se le pregunta a quien mueva el pedido.
   const [markPaidOnTrigger, setMarkPaidOnTrigger] = useState(false);
+  const [payVal, setPayVal] = useState("any");
   const isConfirmPaymentTrigger = trigger === "order_stage" && !!stageId && stageId === confirmPaymentStageId;
 
   const filtered = useMemo(() => {
@@ -166,7 +183,7 @@ export function FlowsScreen({
     setTrigger("order_stage"); setStageId(""); setStatusVal("open"); setAction("send_template");
     setTemplate(cannedTitles[0] ?? ""); setAreaId(areas[0]?.id ?? ""); setAgentId(agents[0]?.id ?? "");
     setHourDays(defaultDays()); setHolidayDate(""); setRecurring(true); setCooldown("6");
-    setMarkPaidOnTrigger(false);
+    setMarkPaidOnTrigger(false); setPayVal("any");
   }
 
   function startEdit(w: Automation) {
@@ -178,6 +195,7 @@ export function FlowsScreen({
     setTrigger(w.trigger_type);
     setStageId(w.trigger_type === "order_stage" ? (w.trigger_value ?? "") : "");
     setStatusVal(w.trigger_type === "conversation_status" ? (w.trigger_value ?? "open") : "open");
+    setPayVal(w.trigger_type === "payment_approved" ? (w.trigger_value ?? "any") : "any");
     // Schedule triggers always send a template; otherwise keep the stored action.
     setAction(isSchedule(w.trigger_type) ? "send_template" : w.action_type);
     setTemplate(p.template ?? cannedTitles[0] ?? "");
@@ -212,7 +230,10 @@ export function FlowsScreen({
     const input = {
       name,
       trigger_type: trigger,
-      trigger_value: trigger === "order_stage" ? (stageId || null) : trigger === "conversation_status" ? statusVal : null,
+      trigger_value: trigger === "order_stage" ? (stageId || null)
+        : trigger === "conversation_status" ? statusVal
+        : trigger === "payment_approved" ? payVal
+        : null,
       action_type: effAction,
       template: effAction === "send_template" ? template : undefined,
       area: effAction === "transfer_area" ? areaId : undefined,
@@ -266,7 +287,11 @@ export function FlowsScreen({
 
             <label className="lbl">{lang === "es" ? "Cuando" : "When"}</label>
             <select className="select" value={trigger} onChange={(e) => setTrigger(e.target.value)}>
-              {Object.keys(TRIGGERS).map((k) => <option key={k} value={k}>{triggerLabel(k, personal, lang)}</option>)}
+              {Object.keys(TRIGGERS)
+                // En modo personal no hay dinero en ninguna pantalla, así que tampoco un
+                // disparador que hable de pagos.
+                .filter((k) => !(personal && k === "payment_approved"))
+                .map((k) => <option key={k} value={k}>{triggerLabel(k, personal, lang)}</option>)}
             </select>
             {trigger === "order_stage" && (
               <select className="select" value={stageId} onChange={(e) => setStageId(e.target.value)}>
@@ -287,6 +312,18 @@ export function FlowsScreen({
                   <button type="button" className={!markPaidOnTrigger ? "on" : ""} onClick={() => setMarkPaidOnTrigger(false)}>{lang === "es" ? "No" : "No"}</button>
                 </div>
               </div>
+            )}
+            {trigger === "payment_approved" && (
+              <>
+                <select className="select" value={payVal} onChange={(e) => setPayVal(e.target.value)}>
+                  {Object.keys(PAYMENT_WHEN).map((k) => <option key={k} value={k}>{PAYMENT_WHEN[k][lang]}</option>)}
+                </select>
+                <span className="t-xs muted">
+                  {lang === "es"
+                    ? "Cuenta cualquier forma de cobro: comprobante aprobado, efectivo registrado, tarjeta y \"marcar pagado\"."
+                    : "Counts every way money lands: approved receipt, recorded cash, card and \"mark paid\"."}
+                </span>
+              </>
             )}
             {trigger === "conversation_status" && (
               <select className="select" value={statusVal} onChange={(e) => setStatusVal(e.target.value)}>

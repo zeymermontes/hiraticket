@@ -9,6 +9,7 @@ import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 import { encryptBody } from "@/lib/msgcrypto";
 import { markOrderPaid, recomputeChargeStatus } from "@/lib/payments";
 import { chargeTitle, suggestKind, CHARGE_KINDS } from "@/lib/charges";
+import { runPaymentAutomations } from "@/lib/flows";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
@@ -213,11 +214,15 @@ export async function getChargeLink(chargeId: string): Promise<string | null> {
 type SB = Awaited<ReturnType<typeof createClient>>;
 
 /** order.pay_status from the sum of its payments vs total. */
-async function recomputePayStatus(supabase: SB, orderId: string, total: number): Promise<void> {
+async function recomputePayStatus(supabase: SB, orderId: string, total: number): Promise<{ paid: number; settled: boolean }> {
   const { data: pays } = await supabase.from("payments").select("amount").eq("order_id", orderId);
   const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
-  const status = total > 0 && paid >= total ? "paid" : paid > 0 ? "partial" : "pending";
+  const settled = total > 0 && paid >= total;
+  const status = settled ? "paid" : paid > 0 ? "partial" : "pending";
   await supabase.from("orders").update({ pay_status: status }).eq("id", orderId);
+  // Se devuelve para que quien acredita el dinero sepa si ESE pago fue el que saldó el pedido —-
+  // es lo que distingue el flujo "cuando me paguen algo" del "cuando quede saldado".
+  return { paid, settled };
 }
 
 /** Record a (partial) payment against an order, then recompute its pay status.
@@ -235,8 +240,9 @@ export async function addPayment(orderId: string, amount: number, method?: strin
   let { error } = await supabase.from("payments").insert({ ...row, charge_id: chargeId || null });
   if (error) ({ error } = await supabase.from("payments").insert(row));
   if (error) return;
-  await recomputePayStatus(supabase, orderId, order.total as number);
-  if (chargeId) await recomputeChargeStatus(supabase, chargeId);
+  const { settled } = await recomputePayStatus(supabase, orderId, order.total as number);
+  const kind = chargeId ? await recomputeChargeStatus(supabase, chargeId) : null;
+  await runPaymentAutomations(supabase, { orderId, businessId: order.business_id as string, userId: user?.id ?? null, chargeKind: kind, settled });
   revalidatePath("/orders");
 }
 
@@ -291,8 +297,11 @@ export async function reviewPaymentProof(proofId: string, decision: "approved" |
       let { error } = await supabase.from("payments").insert({ ...row, charge_id: proofCharge });
       if (error) ({ error } = await supabase.from("payments").insert(row));
     }
-    await recomputePayStatus(supabase, orderId, total);
-    if (proofCharge) await recomputeChargeStatus(supabase, proofCharge);
+    const { settled } = await recomputePayStatus(supabase, orderId, total);
+    const kind = proofCharge ? await recomputeChargeStatus(supabase, proofCharge) : null;
+    // Aprobar un comprobante es el caso literal de "pago aprobado", pero no el único: el flujo se
+    // dispara igual desde el efectivo, la tarjeta y "marcar pagado". Ver runPaymentAutomations.
+    await runPaymentAutomations(supabase, { orderId, businessId, userId: user?.id ?? null, chargeKind: kind, settled });
   }
 
   await supabase.from("payment_proofs").update({ status: decision, reviewed_by: user?.id ?? null, reviewed_at: new Date().toISOString() }).eq("id", proofId);
