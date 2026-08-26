@@ -663,11 +663,42 @@ export function Shell({
   const navPath = usePathname();
   const [navDest, setNavDest] = useState<string | null>(null);
   useEffect(() => { setNavDest(null); }, [navPath]);
+
+  /**
+   * Si la navegación no llega, se fuerza. No se abandona.
+   *
+   * El fallo que esto arregla: das clic en otra sección, aparece el esqueleto —- y ahí se queda. No
+   * cambia la URL, no cambias de sección, y a los 8 segundos el esqueleto desaparecía dejándote
+   * exactamente donde estabas, sin un error, sin un reintento, sin nada que explicara qué pasó.
+   *
+   * El porqué: el prefetch automático está apagado (renderizaba media app de fondo, ver más abajo) y
+   * TODAS las páginas son force-dynamic, así que cada clic tiene que ir al servidor por el payload
+   * de la ruta. Si esa petición se cae o se queda colgada —- el teléfono que salta de wifi a datos,
+   * el servidor ocupado —- el enrutador de Next se queda quieto y no avisa a nadie. No hay evento
+   * al que suscribirse: lo único observable es que el pathname no cambió.
+   *
+   * Así que se le pone plazo, igual que a las lecturas del chat (ver `src/lib/chatLive.ts`, misma
+   * idea y por la misma razón). Pasado el plazo se navega a mano: una navegación del navegador es
+   * un documento nuevo, sin enrutador, sin caché y sin payload que se pueda perder. Cuesta un
+   * segundo más que la buena y funciona siempre —- que es infinitamente mejor que no ir a ningún
+   * lado. Si mientras tanto la navegación normal llegó, el efecto de arriba ya limpió `navDest` y
+   * este nunca se dispara.
+   */
   useEffect(() => {
     if (!navDest) return;
-    const t = setTimeout(() => setNavDest(null), 8000); // por si la navegación nunca llega
+    const t = setTimeout(() => {
+      // Comprobación final contra la URL de verdad y no contra el estado de React: si el enrutador
+      // acabó de aterrizar en este mismo tick, recargar sería tirar la página recién pintada.
+      if (window.location.pathname === navDest.split("?")[0]) { setNavDest(null); return; }
+      // Sin red, navegar a mano cambia un esqueleto por la página de "sin conexión" del navegador:
+      // pierdes la app entera a cambio de nada. Ahí se quita el esqueleto y te quedas donde estabas,
+      // que con el teléfono fuera de cobertura es lo correcto.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) { setNavDest(null); return; }
+      window.location.assign(navDest);
+    }, 5000);
     return () => clearTimeout(t);
   }, [navDest]);
+
   const onNavigate = useCallback((href: string) => {
     if (href.split("?")[0] !== window.location.pathname) setNavDest(href);
   }, []);
