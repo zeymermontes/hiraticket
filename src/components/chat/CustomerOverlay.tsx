@@ -12,12 +12,14 @@ import type { Product } from "@/lib/extras";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { loadOrderDetail } from "@/app/(app)/orders/actions";
 import { useApp } from "@/components/AppContext";
+import { useChatRefresh } from "@/components/chat/ChatScreen";
 
 const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX");
 
 /** Customer 360 — full-screen takeover that replaces the chat columns (prototype's cust360). */
 export function CustomerOverlay({ detail, agents, areas, stages, products = [], businessId, connected, onClose, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products?: Product[]; businessId: string; connected: boolean; onClose: () => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
   const router = useRouter();
+  const chatRefresh = useChatRefresh();
   const { personal, lang } = useApp();
   const ORDERS = personal ? "Tareas" : "Pedidos";
   const [tab, setTab] = useState<"orders" | "history" | "notes">("orders");
@@ -123,7 +125,11 @@ export function CustomerOverlay({ detail, agents, areas, stages, products = [], 
           connected={connected}
           doneFromStageId={doneFromStageId}
           manualMarginPct={manualMarginPct}
-          onClose={() => { setOpenOrder(null); router.refresh(); }}
+          // Los pedidos de esta vista salen de `detail`, que ChatScreen guarda en estado: sin
+          // avisarle, la lista de atrás se quedaba con la etapa vieja hasta recargar. Se renderiza
+          // dentro de su proveedor, así que el hook del chat funciona aquí.
+          onChanged={chatRefresh}
+          onClose={() => { setOpenOrder(null); chatRefresh(); router.refresh(); }}
         />
       )}
     </div>

@@ -299,7 +299,11 @@ export function KanbanBoard({
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={catalog} businessId={businessId}
           convDetail={null} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct}
-          onClose={() => { setOpenOrder(null); router.refresh(); }} />
+          // El tablero vive en estado local (`cols`), así que `router.refresh()` no lo toca: hay
+          // que volver a pedirlo. Sin esto, cambiar la etapa desde el cajón dejaba la tarjeta en
+          // su columna vieja hasta recargar la sección.
+          onChanged={() => { void refetch(filters, colIds); }}
+          onClose={() => { setOpenOrder(null); void refetch(filters, colIds); router.refresh(); }} />
       )}
     </div>
   );

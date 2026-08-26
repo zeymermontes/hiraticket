@@ -475,6 +475,10 @@ export function OrdersTable({
           invoicing={invoicing}
           doneFromStageId={doneFromStageId}
           manualMarginPct={manualMarginPct}
+          // La tabla también vive en estado local (`view`, paginada y filtrada), así que se recarga
+          // en cada cambio y no solo al cerrar: con el cajón abierto, la fila de atrás se quedaba
+          // con la etapa y el estado de pago viejos.
+          onChanged={reload}
           onClose={() => { router.push("/orders", { scroll: false }); reload(); }}
         />
       )}

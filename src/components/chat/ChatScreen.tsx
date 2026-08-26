@@ -154,7 +154,7 @@ export function LinkPreview({ url, onReady }: { url: string; onReady?: () => voi
  *  whole route. Provided by ChatScreen; falls back to refresh() outside it (e.g. the
  *  order-drawer's floating Thread). */
 const ChatRefreshContext = createContext<(() => void) | null>(null);
-function useChatRefresh() {
+export function useChatRefresh() {
   const ctx = useContext(ChatRefreshContext);
   const router = useRouter();
   return ctx ?? (() => router.refresh());
@@ -2882,6 +2882,10 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
       {openOrder && (
         <OrderDrawer detail={openOrder} stages={stages} areas={areas} agents={agents} products={products} businessId={businessId}
           convDetail={detail} connected={connected} shipping={shipping} invoicing={invoicing} doneFromStageId={doneFromStageId} manualMarginPct={manualMarginPct}
+          // Los pedidos del chat salen del detalle de la conversación, que este componente guarda
+          // en estado: `refresh()` lo vuelve a pedir. Sin esto, cambiar la etapa desde el cajón
+          // dejaba la tarjeta del pedido en el chat con la etapa anterior.
+          onChanged={refresh}
           onClose={() => { setOpenOrder(null); refresh(); }} />
       )}
       {showNewTask && (

@@ -42,9 +42,21 @@ function toLocalInput(iso: string | null): string {
 }
 
 export function OrderDrawer({
-  detail: detailProp, stages, areas, agents, onClose, businessId, convDetail, connected, products = [], shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
+  detail: detailProp, stages, areas, agents, onClose, onChanged, businessId, convDetail, connected, products = [], shipping, invoicing, doneFromStageId = null, manualMarginPct = 50,
 }: {
   detail: OrderDetail; stages: Stage[]; areas: Area[]; agents: Agent[]; onClose: () => void;
+  /**
+   * Avisa al padre que el pedido cambió, para que refresque SU lista.
+   *
+   * `router.refresh()` no basta y por eso existe este prop: Kanban, la tabla de pedidos y el chat
+   * guardan sus tarjetas en estado local (paginado, arrastrable, filtrado en vivo), y un refresh
+   * del enrutador no toca ese estado. Cambiabas la etapa desde el cajón, cerrabas, y el tablero de
+   * atrás seguía enseñando la tarjeta en la columna vieja hasta recargar la sección.
+   *
+   * Quien lo pasa decide cómo refrescar lo suyo; quien no lo pasa se queda con el `router.refresh()`
+   * de siempre, que es lo correcto para las pantallas que sí se pintan desde el servidor.
+   */
+  onChanged?: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean; products?: Product[];
   shipping?: string | null; // active shipping plugin id — gates the Envío block entirely
   invoicing?: boolean; // Facturapi active — gates the Factura (CFDI) block entirely
@@ -119,11 +131,15 @@ export function OrderDrawer({
   const [wasteReason, setWasteReason] = useState("");
   const [wasteErr, setWasteErr] = useState<string | null>(null);
   const [editWaste, setEditWaste] = useState(false);
+  // En un ref para que cambiar el callback no invalide nada: se lee al vuelo, dentro de la acción.
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
   const run = (fn: () => Promise<unknown>) => start(async () => {
     await fn();
     const fresh = await loadOrderDetail(detailProp.id);
     if (fresh) setDetail(fresh);
     router.refresh();
+    onChangedRef.current?.();
   });
   // Optimistic: reflect the change in the drawer immediately, then run + reconcile in the background.
   const runOpt = (patch: Partial<OrderDetail>, fn: () => Promise<unknown>) => {
