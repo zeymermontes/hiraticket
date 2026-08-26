@@ -847,12 +847,41 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// pollContacts fulfils on-demand "fetch name & photo" requests from the app.
+// pollContacts atiende las peticiones de "búscame el nombre y la foto" de este contacto.
+//
+// Solo mira los negocios que tienen sesión VIVA, y ese filtro arregla un atasco real. La consulta
+// pedía 20 peticiones pendientes cualesquiera y `fetchContactInfo` descartaba después las de
+// negocios desconectados —- sin limpiarles la bandera, a propósito, para reintentarlas cuando se
+// vuelva a vincular un número. El efecto: esas filas se volvían a elegir cada 3 segundos para
+// siempre, ocupando sitio en el lote de 20. Con veinte atascadas, ninguna petición de verdad
+// habría entrado nunca en el lote, y nadie se habría enterado de por qué.
+//
+// Ahora las de negocios apagados ni se consultan: siguen esperando su turno en la tabla, que es lo
+// que se quería, pero sin quitárselo a nadie. `ORDER BY fetch_requested` reparte por antigüedad,
+// para que un negocio con muchas no deje sin turno a otro.
 func (m *Manager) pollContacts(ctx context.Context) {
+	sweeps := 0
 	for {
+		// Los negocios con cliente conectado, copiados bajo el candado: no se puede sostener
+		// mientras se consulta la base, y menos mientras se llama a fetchContactInfo (que lo pide).
+		m.mu.Lock()
+		live := make([]string, 0, len(m.byBiz))
+		for biz := range m.byBiz {
+			live = append(live, biz)
+		}
+		m.mu.Unlock()
+
+		// Sin ninguna sesión conectada no hay nada que se pueda resolver: se ahorra la consulta.
+		if len(live) == 0 {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
 		qctx, cancel := withDBTimeout(ctx)
 		rows, err := m.db.QueryContext(qctx,
-			`SELECT id, business_id, phone FROM contacts WHERE fetch_requested IS NOT NULL LIMIT 20`)
+			`SELECT id, business_id, phone FROM contacts
+			  WHERE fetch_requested IS NOT NULL AND business_id = ANY($1)
+			  ORDER BY fetch_requested LIMIT 20`, pq.Array(live))
 		if err != nil {
 			cancel()
 			m.log.Errorf("contacts fetch query: %v", err)
@@ -873,6 +902,15 @@ func (m *Manager) pollContacts(ctx context.Context) {
 			for _, x := range list {
 				m.fetchContactInfo(ctx, x.id, x.biz, x.phone)
 			}
+		}
+
+		// Barrido cada ~5 min: una petición que lleva una semana esperando ya no le importa a nadie.
+		// No se pierde nada al soltarla —- si ese contacto vuelve a escribir, `wantContactInfo` la
+		// encola otra vez —- y así la bandera significa siempre "alguien pidió esto hace poco".
+		sweeps++
+		if sweeps >= 100 {
+			sweeps = 0
+			m.exec(ctx, `UPDATE contacts SET fetch_requested=NULL WHERE fetch_requested < now() - interval '7 days'`)
 		}
 		time.Sleep(3 * time.Second)
 	}
