@@ -70,17 +70,26 @@ export async function getMyPendingInvite(): Promise<PendingInvite | null> {
   return { id: valid.id, businessName, inviterName, role: valid.role };
 }
 
-/** Validate a share-link token and describe the team (for the /join page). */
-export async function getTokenInvite(token: string): Promise<{ ok: boolean; businessName?: string; inviterName?: string | null; role?: Role; error?: string }> {
+/**
+ * Valida un enlace de invitación y describe el equipo (para la página /join).
+ *
+ * `alreadyMember` se comprueba ANTES que la vigencia y el cupo, y ese orden importa: a quien ya
+ * está dentro no le sirve de nada enterarse de que el enlace expiró —- lo que quiere es entrar a
+ * esa organización. Se le manda directo y no se le enseña ninguna tarjeta de invitación.
+ */
+export async function getTokenInvite(token: string): Promise<{ ok: boolean; businessName?: string; inviterName?: string | null; role?: Role; error?: string; alreadyMember?: boolean; businessId?: string }> {
   const admin = createAdminClient();
-  const { data: inv } = await admin.from("team_invites").select("role, expires_at, max_uses, used_count, created_by, businesses(name)").eq("token", token).maybeSingle();
+  const { data: inv } = await admin.from("team_invites").select("business_id, role, expires_at, max_uses, used_count, created_by, businesses(name)").eq("token", token).maybeSingle();
   if (!inv) return { ok: false, error: "invalid" };
+  const businessId = inv.business_id as string;
+  const u = await me();
+  if (u && (await alreadyInThisTeam(u.id, businessId))) return { ok: true, alreadyMember: true, businessId };
   if (inv.expires_at && new Date(inv.expires_at as string) < new Date()) return { ok: false, error: "expired" };
   if (inv.max_uses != null && (inv.used_count as number) >= (inv.max_uses as number)) return { ok: false, error: "used" };
   let inviterName: string | null = null;
   if (inv.created_by) { const { data: p } = await admin.from("profiles").select("full_name").eq("id", inv.created_by as string).maybeSingle(); inviterName = (p?.full_name as string) ?? null; }
   const biz = inv.businesses as { name?: string } | { name?: string }[] | null; const businessName = ((Array.isArray(biz) ? biz[0] : biz)?.name) ?? "un equipo";
-  return { ok: true, businessName, inviterName, role: inv.role as Role };
+  return { ok: true, businessName, inviterName, role: inv.role as Role, businessId };
 }
 
 /**
@@ -100,7 +109,7 @@ async function alreadyInThisTeam(userId: string, businessId: string): Promise<bo
 }
 
 /** Accept a direct (email) invite by id. */
-export async function acceptInvite(inviteId: string): Promise<{ ok: boolean; error?: string }> {
+export async function acceptInvite(inviteId: string): Promise<{ ok: boolean; error?: string; businessId?: string }> {
   const u = await me();
   if (!u) return { ok: false, error: "auth" };
   const admin = createAdminClient();
@@ -116,7 +125,11 @@ export async function acceptInvite(inviteId: string): Promise<{ ok: boolean; err
   // aterrizarías en la primera que tengas y parecería que la invitación no hizo nada.
   (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
-  return { ok: true };
+  // Se devuelve el id además de dejar la cookie puesta: quien llama aterriza por /chat/open?org=…,
+  // que vuelve a fijarla en una navegación completa. La cookie de aquí viaja en la respuesta de la
+  // acción, y una navegación del enrutador puede servirse de RSC ya en caché —- o sea, de la
+  // organización ANTERIOR. Con el id explícito el destino no depende de ese detalle.
+  return { ok: true, businessId: inv.business_id as string };
 }
 
 /** Decline (dismiss) a direct invite addressed to me. */
@@ -129,7 +142,7 @@ export async function declineInvite(inviteId: string): Promise<void> {
 }
 
 /** Join a team via a share-link token. */
-export async function acceptToken(token: string): Promise<{ ok: boolean; error?: string }> {
+export async function acceptToken(token: string): Promise<{ ok: boolean; error?: string; businessId?: string }> {
   const u = await me();
   if (!u) return { ok: false, error: "auth" };
   const admin = createAdminClient();
@@ -143,5 +156,5 @@ export async function acceptToken(token: string): Promise<{ ok: boolean; error?:
   await admin.from("team_invites").update({ used_count: (inv.used_count as number) + 1 }).eq("id", inv.id as string);
   (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
-  return { ok: true };
+  return { ok: true, businessId: inv.business_id as string };
 }

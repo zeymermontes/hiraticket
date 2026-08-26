@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { AppProvider, useApp } from "@/components/AppContext";
@@ -10,9 +9,8 @@ const ROLE: Record<string, { es: string; en: string }> = {
   admin: { es: "Administrador", en: "Admin" }, agent: { es: "Agente", en: "Agent" }, viewer: { es: "Solo lectura", en: "Viewer" },
 };
 
-function Inner({ businessName, inviterName, role, inviteId, token }: { businessName: string; inviterName?: string | null; role: string; inviteId?: string; token?: string }) {
+function Inner({ businessName, inviterName, role, inviteId, token, businessId }: { businessName: string; inviterName?: string | null; role: string; inviteId?: string; token?: string; businessId?: string }) {
   const { lang } = useApp();
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -22,17 +20,36 @@ function Inner({ businessName, inviterName, role, inviteId, token }: { businessN
         : e === "used" ? (lang === "es" ? "Este enlace ya se usó." : "This link was already used.")
           : (lang === "es" ? "No se pudo aceptar la invitación." : "Couldn't accept the invitation.");
 
+  /**
+   * Aceptar te deja DENTRO de la organización a la que te invitaron.
+   *
+   * Se va por `/chat/open?org=…` con una navegación completa (`location.assign`) y no con
+   * `router.replace("/chat")`. Los dos detalles importan y por la misma razón: la acción de
+   * servidor deja la cookie de organización en su respuesta, pero una navegación del enrutador
+   * puede servirse del RSC ya en caché —- el de la organización ANTERIOR —- y aterrizabas en los
+   * chats de siempre, como si la invitación no hubiera hecho nada. `/chat/open` vuelve a fijar la
+   * cookie en el servidor y redirige, así que el destino no depende de ninguna caché.
+   */
+  const goToOrg = (id?: string) => {
+    window.location.assign(id ? `/chat/open?org=${id}` : "/chat");
+  };
+
   function accept() {
     setBusy(true); setErr(null);
     (token ? acceptToken(token) : acceptInvite(inviteId!)).then((r) => {
-      if (r.ok) { router.replace("/chat"); router.refresh(); }
-      else { setErr(errMsg(r.error)); setBusy(false); }
+      // "Ya perteneces a esta organización" no es un error que haya que leer: es que ya estás
+      // dentro. Se entra y ya —- exactamente lo mismo que si acabaras de aceptar.
+      if (r.ok || r.error === "already-in-team") { goToOrg(r.businessId ?? businessId); return; }
+      setErr(errMsg(r.error)); setBusy(false);
     });
   }
+
+  /** "Ahora no": a TUS chats, los de la organización que ya tenías. No se toca la cookie, y un
+   *  enlace compartido no se consume por rechazarlo —- otra persona puede seguir usándolo. */
   function decline() {
     setBusy(true);
-    if (inviteId) declineInvite(inviteId).finally(() => { router.replace("/chat"); router.refresh(); });
-    else { router.replace("/chat"); router.refresh(); }
+    if (inviteId) declineInvite(inviteId).finally(() => goToOrg());
+    else goToOrg();
   }
 
   return (
@@ -62,7 +79,7 @@ function Inner({ businessName, inviterName, role, inviteId, token }: { businessN
   );
 }
 
-export function InvitePopup(props: { businessName: string; inviterName?: string | null; role: string; inviteId?: string; token?: string }) {
+export function InvitePopup(props: { businessName: string; inviterName?: string | null; role: string; inviteId?: string; token?: string; businessId?: string }) {
   return <AppProvider><Inner {...props} /></AppProvider>;
 }
 
