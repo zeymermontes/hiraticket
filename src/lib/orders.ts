@@ -1,9 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
+import type { Charge } from "@/lib/charges";
 
 export interface OrderItem { id: string; name: string; qty: number; unit_price: number; subtotal: number; stage_id: string | null; stage: { name: string; color: string } | null; note: string | null }
 export interface OrderNote { id: string; body: string; author_id: string | null; created_at: string; item_id: string | null }
 export interface OrderEvent { id: string; kind: string; text: string | null; created_at: string; actor_id: string | null }
-export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string }
+export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string; charge_id: string | null }
 export interface PaymentProof { id: string; method: string; account_ref: string | null; image_url: string; image_mime: string | null; amount: number | null; payer_note: string | null; status: string; reviewed_by: string | null; created_at: string }
 export interface OrderShipment { id: string; provider: string; carrier: string | null; service: string | null; tracking_number: string | null; label_url: string | null; cost: number | null; status: string; created_at: string }
 export interface OrderInvoice { id: string; uuid: string | null; total: number | null; pdf_url: string | null; verification_url: string | null; status: string; created_at: string }
@@ -47,6 +48,8 @@ export interface OrderDetail {
   shipments: OrderShipment[];
   invoices: OrderInvoice[];
   waste: OrderWaste[];
+  /** Órdenes de cobro del pedido (0089), en orden. Vacío = se cobra como siempre, de un solo tirón. */
+  charges: Charge[];
   paid: number;
   product_stages: boolean;
 }
@@ -72,15 +75,16 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   if (orderErr) ({ data: order } = await supabase.from("orders").select(base("", "")).eq("id", orderId).maybeSingle());
   if (!order) return null;
 
-  const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes, wasteRes] = await Promise.all([
+  const [itemsRes, notesRes, { data: events }, payRes, proofRes, shipRes, invRes, wasteRes, chargeRes] = await Promise.all([
     supabase.from("order_items").select("id, name, qty, unit_price, subtotal, stage_id, note, stage:stages!stage_id(name,color)").eq("order_id", orderId),
     supabase.from("notes").select("id, body, author_id, created_at, item_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true }),
     supabase.from("events").select("id, kind, text, created_at, actor_id").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: false }),
-    supabase.from("payments").select("id, amount, method, note, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("payments").select("id, amount, method, note, created_by, created_at, charge_id").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payment_proofs").select("id, method, account_ref, image_url, image_mime, amount, payer_note, status, reviewed_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("shipments").select("id, provider, carrier, service, tracking_number, label_url, cost, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("order_waste").select("id, order_item_id, product_id, name, qty, cost, reason, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("charges").select("id, seq, kind, label, amount, due_at, status, pay_token, sent_at, created_at").eq("order_id", orderId).order("seq", { ascending: true }),
   ]);
   // Fall back to base item columns if stage_id/stage isn't available yet.
   let items = itemsRes.data;
@@ -94,9 +98,35 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     const r = await supabase.from("notes").select("id, body, author_id, created_at").eq("parent_type", "order").eq("parent_id", orderId).order("created_at", { ascending: true });
     notes = ((r.data ?? []) as Record<string, unknown>[]).map((n) => ({ ...n, item_id: null })) as unknown as typeof notes;
   }
-  // payments table may not exist yet (0025 not applied).
-  const payments = (payRes.error ? [] : (payRes.data ?? [])) as unknown as OrderPayment[];
+  // payments table may not exist yet (0025 not applied); charge_id is 0089 and may not either —
+  // sin esa columna la consulta entera falla, así que se reintenta sin ella y los pagos quedan sin
+  // cobro asociado, que es exactamente lo que eran antes de 0089.
+  let payRows = payRes.data;
+  if (payRes.error) {
+    const r = await supabase.from("payments").select("id, amount, method, note, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false });
+    payRows = r.error ? [] : ((r.data ?? []) as Record<string, unknown>[]).map((p) => ({ ...p, charge_id: null })) as unknown as typeof payRows;
+  }
+  const payments = (payRows ?? []) as unknown as OrderPayment[];
   const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  // charges table may not exist yet (0089 not applied) → sin cobros, el pedido se comporta igual
+  // que antes. Lo pagado de cada cobro se suma aquí y no en la base: es una lectura más y ya
+  // tenemos los pagos en la mano.
+  const charges: Charge[] = (chargeRes.error ? [] : (chargeRes.data ?? [])).map((c) => {
+    const row = c as Record<string, unknown>;
+    return {
+      id: row.id as string,
+      seq: Number(row.seq) || 1,
+      kind: (row.kind as string) ?? "parcialidad",
+      label: (row.label as string | null) ?? null,
+      amount: Number(row.amount) || 0,
+      due_at: (row.due_at as string | null) ?? null,
+      status: (row.status as string) ?? "draft",
+      pay_token: (row.pay_token as string | null) ?? null,
+      sent_at: (row.sent_at as string | null) ?? null,
+      created_at: row.created_at as string,
+      paid: payments.filter((p) => p.charge_id === row.id).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    };
+  });
   // payment_proofs table may not exist yet (0048 not applied).
   const proofs = (proofRes.error ? [] : (proofRes.data ?? [])) as unknown as PaymentProof[];
   // shipments table may not exist yet (0054 not applied).
@@ -124,6 +154,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     shipments,
     invoices,
     waste,
+    charges,
     paid,
     product_stages: ((order.business as unknown as { product_stages?: boolean } | null)?.product_stages) ?? false,
   };

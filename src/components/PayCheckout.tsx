@@ -15,8 +15,17 @@ type Method = "branch" | "transfer" | "card";
  *  interna del renglón —- y las mermas ni siquiera viven en esta tabla (0074, `order_waste`). */
 export type PayItem = { id: string; name: string; qty: number; unitPrice: number; subtotal: number };
 
+/** Un renglón del estado de cuenta: una orden de cobro del pedido (0089), ya sin las anuladas. */
+export type PayCharge = {
+  id: string; seq: number; title: string; amount: number; paid: number;
+  status: string; dueAt: string | null;
+  /** true = es el cobro que este link está pidiendo. Es lo que deja marcarlo en la lista. */
+  current: boolean;
+};
+
 export function PayCheckout({
   token, businessName, contactName, code, total, balance, payStatus,
+  orderBalance, paid: paidTotal, charges, chargeTitle, chargeSeq, chargeCount, chargeSettled,
   branchEnabled, transferEnabled, cardEnabled, branches, accounts, hasPending, mpResult,
   items, discount, discountPct, discountNote, taxRate, promoUrl, promoPlacement,
 }: {
@@ -25,8 +34,20 @@ export function PayCheckout({
   contactName: string | null;
   code: string;
   total: number;
+  /** Lo que ESTE link pide: el monto del cobro, o el saldo entero si es el link del pedido. */
   balance: number;
   payStatus: string;
+  /** Lo que le falta al pedido COMPLETO. Distinto de `balance` cuando esto es un cobro parcial. */
+  orderBalance?: number;
+  /** Lo que el cliente lleva pagado del pedido. */
+  paid?: number;
+  charges?: PayCharge[];
+  /** Concepto del cobro que se está viendo ("Anticipo"); null = es el link del pedido. */
+  chargeTitle?: string | null;
+  chargeSeq?: number | null;
+  chargeCount?: number;
+  /** Este cobro en concreto ya está cubierto (aunque al pedido le falte). */
+  chargeSettled?: boolean;
   branchEnabled: boolean;
   transferEnabled: boolean;
   cardEnabled: boolean;
@@ -42,7 +63,19 @@ export function PayCheckout({
   promoUrl: string | null;
   promoPlacement: PayPromoPlacement;
 }) {
-  const paid = payStatus === "paid";
+  const orderPaid = payStatus === "paid";
+  // "Ya no hay nada que hacer aquí" es del COBRO, no del pedido: un anticipo cubierto cierra esta
+  // página aunque al pedido le falten dos pagos más.
+  const settled = orderPaid || !!chargeSettled;
+  const list = charges ?? [];
+  const already = paidTotal ?? 0;
+  const left = orderBalance ?? Math.max(0, total - already);
+  /**
+   * El estado de cuenta solo aparece cuando hay algo que contar: más de un cobro, o dinero ya
+   * abonado. Con un pago único sería repetir el total con otras palabras —- ruido en la única
+   * pantalla donde el cliente tiene que entender de un vistazo cuánto y por qué.
+   */
+  const showStatement = list.length > 1 || already > 0;
   const promo = promoUrl && promoPlacement !== "off" ? promoUrl : null;
   const [showPromo, setShowPromo] = useState(promoPlacement === "popup" && !!promo);
   const methods = ([
@@ -58,21 +91,35 @@ export function PayCheckout({
         {/* header */}
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <div style={{ fontWeight: 800, fontSize: 15, color: "var(--brand)" }}>{businessName}</div>
-          <div className="muted t-sm">Pedido {code}</div>
+          <div className="muted t-sm">
+            Pedido {code}
+            {/* "Pago 2 de 3" solo si de verdad hay varios: en un cobro suelto diría "1 de 1". */}
+            {chargeSeq != null && (chargeCount ?? 0) > 1 && <> · Pago {chargeSeq} de {chargeCount}</>}
+          </div>
         </div>
 
         {/* amount card */}
         <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 16, padding: "20px 18px", textAlign: "center", marginBottom: 16 }}>
           {contactName && <div className="muted t-sm" style={{ marginBottom: 4 }}>Hola {contactName.split(" ")[0]} 👋</div>}
-          <div className="muted t-xs" style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>{balance < total ? "Saldo a pagar" : "Total a pagar"}</div>
-          <div style={{ fontSize: 34, fontWeight: 900, marginTop: 2 }}>{money(paid ? total : balance)}</div>
-          {balance < total && !paid && <div className="muted t-xs" style={{ marginTop: 2 }}>Total {money(total)}</div>}
+          <div className="muted t-xs" style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {chargeTitle ? chargeTitle : balance < total ? "Saldo a pagar" : "Total a pagar"}
+          </div>
+          <div style={{ fontSize: 34, fontWeight: 900, marginTop: 2 }}>{money(orderPaid ? total : balance)}</div>
+          {balance < total && !orderPaid && <div className="muted t-xs" style={{ marginTop: 2 }}>Total del pedido {money(total)}</div>}
         </div>
+
+        {showStatement && <Statement charges={list} total={total} paid={already} left={left} />}
 
         <ItemsBreakdown items={items} total={total} discount={discount} discountPct={discountPct} discountNote={discountNote} taxRate={taxRate} />
 
-        {paid ? (
-          <Banner tone="ok" icon="check" title="Este pedido ya está pagado" text="¡Gracias! No necesitas hacer nada más." />
+        {settled ? (
+          <Banner
+            tone="ok" icon="check"
+            title={orderPaid ? "Este pedido ya está pagado" : `${chargeTitle ?? "Este cobro"} ya está cubierto`}
+            text={orderPaid
+              ? "¡Gracias! No necesitas hacer nada más."
+              : `¡Gracias! Quedan ${money(left)} del pedido, y te los cobraremos por separado.`}
+          />
         ) : (
           <>
             {mpResult === "success" && <Banner tone="ok" icon="check" title="¡Pago recibido!" text="Tu pago con tarjeta fue aprobado. Se está acreditando al pedido — recarga en unos segundos." />}
@@ -121,6 +168,65 @@ export function PayCheckout({
 /** Desglose del pedido. El Total siempre es el del pedido (la cifra que se cobra); el IVA se deriva
  *  de esa cifra —- igual que en el drawer interno —- para que las líneas siempre sumen exacto aunque
  *  algún ajuste viejo no cuadre al centavo. Subtotal y descuento solo salen si hay algo que explicar. */
+/**
+ * Estado de cuenta: lo que ya se pagó y lo que falta.
+ *
+ * Es la mitad del problema que resuelven las órdenes de cobro. Sin esto, quien dio un anticipo
+ * abría el link de su parcialidad y veía un número suelto —- ni de dónde salía, ni cuánto llevaba,
+ * ni cuánto faltaba después—, y la siguiente pregunta llegaba por WhatsApp cinco minutos más tarde.
+ *
+ * Se pinta solo cuando hay más de un cobro o ya hay dinero abonado; con un pago único sería el
+ * total dicho dos veces.
+ */
+function Statement({ charges, total, paid, left }: { charges: PayCharge[]; total: number; paid: number; left: number }) {
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 16, padding: "14px 16px", marginBottom: 16 }}>
+      <div className="t-sm" style={{ fontWeight: 700, marginBottom: 10 }}>Estado de cuenta</div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: charges.length ? 10 : 0 }}>
+        <span className="grow t-sm muted">Total del pedido</span>
+        <span className="mono t-sm">{amount(total)}</span>
+      </div>
+
+      {charges.length > 0 && (
+        <div className="col" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+          {charges.map((c) => {
+            const done = c.status === "paid" || c.paid >= c.amount - 0.01;
+            return (
+              <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                <span className="grow t-sm" style={{ minWidth: 0 }}>
+                  {/* El cobro que este link está pidiendo va en negritas: en una lista de tres,
+                      saber "cuál de estos es el que me acaban de mandar" es la primera pregunta. */}
+                  <span style={{ fontWeight: c.current ? 700 : 400 }}>{c.title}</span>
+                  {c.dueAt && <span className="muted t-xs"> · {new Date(c.dueAt).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}</span>}
+                  {c.current && <span className="muted t-xs"> · este cobro</span>}
+                </span>
+                <span className="mono t-sm" style={{ flex: "none", textDecoration: done ? "none" : undefined, color: done ? "var(--green)" : undefined }}>
+                  {amount(c.amount)}
+                </span>
+                <span className="t-xs" style={{ flex: "none", width: 62, textAlign: "right", color: done ? "var(--green)" : "var(--muted)" }}>
+                  {done ? "pagado" : "pendiente"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 10 }}>
+        <div style={{ display: "flex", gap: 10 }}>
+          <span className="grow t-sm muted">Pagado</span>
+          <span className="mono t-sm" style={{ color: "var(--green)" }}>-{amount(paid)}</span>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+          <span className="grow t-sm" style={{ fontWeight: 700 }}>Falta por pagar</span>
+          <span className="mono" style={{ fontWeight: 800, fontSize: 15 }}>{amount(left)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ItemsBreakdown({ items, total, discount, discountPct, discountNote, taxRate }: {
   items: PayItem[]; total: number; discount: number; discountPct: number | null; discountNote: string | null; taxRate: number;
 }) {

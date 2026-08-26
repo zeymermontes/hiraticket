@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
+import { resolvePayToken, recomputeChargeStatus } from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,13 @@ export async function POST(req: NextRequest) {
     if (pay.status !== "approved" || !pay.external_reference) return NextResponse.json({ ok: true });
 
     const admin = createAdminClient();
-    const { data: order } = await admin.from("orders").select("id, total").eq("pay_token", pay.external_reference).eq("business_id", biz).maybeSingle();
+    // external_reference es el token con el que arrancó el checkout, y desde 0089 puede ser el de
+    // una ORDEN DE COBRO en vez del pedido. Sin resolver las dos, un pago de anticipo con tarjeta
+    // no encontraría pedido y se perdería en silencio.
+    const tokenRef = await resolvePayToken(admin, pay.external_reference);
+    if (!tokenRef || tokenRef.businessId !== biz) return NextResponse.json({ ok: true });
+    const chargeId = (tokenRef.charge?.id as string | undefined) ?? null;
+    const { data: order } = await admin.from("orders").select("id, total").eq("id", tokenRef.orderId).maybeSingle();
     if (!order) return NextResponse.json({ ok: true });
 
     // Idempotency: each MP payment is recorded once (webhooks retry / duplicate).
@@ -46,7 +53,10 @@ export async function POST(req: NextRequest) {
 
     const amount = Number(pay.transaction_amount) || 0;
     if (amount <= 0) return NextResponse.json({ ok: true });
-    await admin.from("payments").insert({ business_id: biz, order_id: order.id, amount, method: "tarjeta", note: ref, created_by: null });
+    const payRow = { business_id: biz, order_id: order.id, amount, method: "tarjeta", note: ref, created_by: null };
+    let { error: payErr } = await admin.from("payments").insert({ ...payRow, charge_id: chargeId });
+    if (payErr) ({ error: payErr } = await admin.from("payments").insert(payRow)); // 0089 sin aplicar
+    if (payErr) return NextResponse.json({ ok: true });
 
     // Recompute pay_status from the sum of payments (mirrors orders/actions.ts).
     const { data: pays } = await admin.from("payments").select("amount").eq("order_id", order.id);
@@ -54,6 +64,7 @@ export async function POST(req: NextRequest) {
     const total = Number(order.total) || 0;
     const status = total > 0 && paid >= total ? "paid" : paid > 0 ? "partial" : "pending";
     await admin.from("orders").update({ pay_status: status }).eq("id", order.id);
+    if (chargeId) await recomputeChargeStatus(admin, chargeId);
 
     await admin.from("events").insert({
       business_id: biz, parent_type: "order", parent_id: order.id, actor_id: null,

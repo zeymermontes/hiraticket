@@ -12,6 +12,7 @@ import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue, paySta
 import { TagPicker } from "@/components/TagPicker";
 import { CatalogAutocomplete } from "@/components/CatalogAutocomplete";
 import type { OrderDetail } from "@/lib/orders";
+import { chargeTitle, chargeKindLabel, chargesGap, isLive, CHARGE_KINDS, suggestKind, type Charge } from "@/lib/charges";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import type { Product } from "@/lib/extras";
@@ -19,7 +20,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
@@ -72,6 +73,12 @@ export function OrderDrawer({
   const [newItem, setNewItem] = useState({ name: "", qty: "1", price: "" });
   const [payAmount, setPayAmount] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showCharge, setShowCharge] = useState(false);
+  const [copiedCharge, setCopiedCharge] = useState<string | null>(null);
+  const copyChargeLink = async (id: string) => {
+    const url = await getChargeLink(id); if (!url) return;
+    try { await navigator.clipboard.writeText(url); setCopiedCharge(id); setTimeout(() => setCopiedCharge(null), 1500); } catch {}
+  };
   const copyPayLink = async () => { const url = await getPayLink(detail.id); if (!url) return; try { await navigator.clipboard.writeText(url); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500); } catch {} };
   const [xfer, setXfer] = useState(false);
   const [advanceMenu, setAdvanceMenu] = useState(false);
@@ -388,6 +395,24 @@ export function OrderDrawer({
                 <div className="kv"><span className="k">{lang === "es" ? "Saldo" : "Balance"}</span><span className="v mono" style={{ fontWeight: 800, color: detail.total - detail.paid > 0 ? "var(--amber)" : "var(--text)" }}>${formatMoney(Math.max(0, detail.total - detail.paid))}</span></div>
               </div>
 
+              <ChargeList
+                detail={detail} lang={lang} pending={pending}
+                copied={copiedCharge} onCopy={copyChargeLink}
+                onSend={(id) => run(() => sendCharge(id).then(() => {}))}
+                onVoid={async (c) => {
+                  if (!(await ask({
+                    icon: "ban", danger: true,
+                    title: lang === "es" ? "Anular cobro" : "Void charge",
+                    message: lang === "es"
+                      ? `Se anula ${chargeTitle(c, "es")} por $${formatMoney(c.amount)}. Su link deja de cobrar, y si ya se lo mandaste al cliente le va a dejar de funcionar.`
+                      : `This voids ${chargeTitle(c, "en")} for $${formatMoney(c.amount)}. Its link stops charging — if the customer already has it, it will stop working.`,
+                    confirmLabel: lang === "es" ? "Anular" : "Void",
+                  }))) return;
+                  run(() => voidCharge(c.id).then(() => {}));
+                }}
+                onSettle={(c) => run(() => addPayment(detail.id, Math.max(0, c.amount - c.paid), "manual", chargeTitle(c, lang), c.id))}
+              />
+
               {detail.payments.length > 0 && (
                 <div className="col gap-1" style={{ paddingTop: 2 }}>
                   {detail.payments.map((p) => {
@@ -443,11 +468,35 @@ export function OrderDrawer({
                 </div>
               )}
 
+              {/* "Enviar link de pago" cobra el saldo ENTERO; "Crear cobro" fija el monto. Van juntos
+                  y en ese orden porque el primero sigue siendo lo normal en un pedido de un pago. */}
               <div className="row gap-2">
                 <button className="btn btn-sm btn-outline grow" disabled={pending || !detail.conversation_id} onClick={() => run(() => chargeOrder(detail.id))}><Icon name="send" size={14} />{lang === "es" ? "Enviar link de pago" : "Send pay link"}</button>
                 <button className="btn btn-sm btn-outline" onClick={copyPayLink} title={lang === "es" ? "Copiar link de pago" : "Copy pay link"}><Icon name={linkCopied ? "check" : "file"} size={14} />{linkCopied ? (lang === "es" ? "Copiado" : "Copied") : (lang === "es" ? "Copiar link" : "Copy link")}</button>
               </div>
-              {detail.pay_status !== "paid" && <button className="btn btn-sm btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={pending} onClick={() => run(() => markPaid(detail.id))}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>}
+              {detail.pay_status !== "paid" && (
+                <button className="btn btn-sm btn-outline" style={{ width: "100%", justifyContent: "center" }} disabled={pending} onClick={() => setShowCharge(true)}>
+                  <Icon name="plus" size={14} />{lang === "es" ? "Crear cobro (anticipo, parcialidad…)" : "Create charge (deposit, installment…)"}
+                </button>
+              )}
+              {detail.pay_status !== "paid" && (
+                <button className="btn btn-sm btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={pending}
+                  onClick={async () => {
+                    // Con cobros pendientes, "marcar pagado" los cierra TODOS de un golpe. Eso está
+                    // bien cuando es lo que quieres y es una sorpresa fea cuando no, así que aquí
+                    // —- y solo aquí —- se pregunta. Un pedido de un solo pago sigue siendo un clic.
+                    const open = detail.charges.filter((c) => isLive(c) && c.status !== "paid");
+                    if (open.length && !(await ask({
+                      icon: "check",
+                      title: lang === "es" ? "Marcar todo el pedido como pagado" : "Mark the whole order as paid",
+                      message: lang === "es"
+                        ? `Hay ${open.length} ${open.length === 1 ? "cobro pendiente" : "cobros pendientes"} por $${formatMoney(open.reduce((t, c) => t + (c.amount - c.paid), 0))}. Se registrará el saldo completo como pagado y esos cobros se darán por cerrados.`
+                        : `There ${open.length === 1 ? "is 1 pending charge" : `are ${open.length} pending charges`} for $${formatMoney(open.reduce((t, c) => t + (c.amount - c.paid), 0))}. The full balance will be recorded as paid and those charges will be closed.`,
+                      confirmLabel: lang === "es" ? "Marcar pagado" : "Mark paid",
+                    }))) return;
+                    run(() => markPaid(detail.id));
+                  }}><Icon name="check" size={14} />{lang === "es" ? "Marcar pagado" : "Mark paid"}</button>
+              )}
             </div>
           </div>
           )}
@@ -771,6 +820,12 @@ export function OrderDrawer({
           onRemove={detail.contact ? (t) => runOpt({ contact: { ...detail.contact!, tags: (detail.contact!.tags ?? []).filter((x) => x !== t) } }, () => removeContactTag(detail.contact!.id, t)) : undefined}
           onClose={() => setTagRect(null)} />
       )}
+      {showCharge && (
+        <ChargeModal
+          detail={detail} lang={lang}
+          onClose={() => setShowCharge(false)}
+          onDone={() => { setShowCharge(false); run(async () => {}); }} />
+      )}
       {showCancel && (
         <CancelOrderModal
           detail={detail} lang={lang} personal={personal}
@@ -778,6 +833,244 @@ export function OrderDrawer({
           onDone={() => { setShowCancel(false); router.refresh(); }} />
       )}
     </>
+  );
+}
+
+/**
+ * Las órdenes de cobro del pedido (0089).
+ *
+ * Va entre los totales y el historial de pagos a propósito: se lee de arriba abajo como la
+ * historia del dinero —- cuánto es, en qué pagos se partió, y qué ha entrado.
+ *
+ * Con un pedido normal (sin cobros) no se pinta nada. La función de siempre —- "Enviar link de
+ * pago" y "Registrar" un abono —- sigue exactamente igual para quien cobra de un solo tirón.
+ */
+function ChargeList({ detail, lang, pending, copied, onCopy, onSend, onVoid, onSettle }: {
+  detail: OrderDetail; lang: "es" | "en"; pending: boolean;
+  copied: string | null;
+  onCopy: (id: string) => void;
+  onSend: (id: string) => void;
+  onVoid: (c: Charge) => void;
+  onSettle: (c: Charge) => void;
+}) {
+  const es = lang === "es";
+  const live = detail.charges.filter(isLive);
+  if (!detail.charges.length) return null;
+  // Descuadre entre lo comprometido en cobros y el total del pedido. Se DERIVA al pintar: guardarlo
+  // se quedaría viejo en cuanto alguien edite el pedido por otro camino. Ver `chargesGap`.
+  const gap = chargesGap(detail.charges, detail.total);
+
+  return (
+    <div className="col gap-2" style={{ paddingTop: 6, borderTop: "1px solid var(--border)" }}>
+      <div className="t-xs muted" style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>
+        {es ? "Órdenes de cobro" : "Payment requests"}
+      </div>
+
+      {detail.charges.map((c) => {
+        const done = c.status === "paid";
+        const dead = c.status === "void";
+        const title = chargeTitle(c, lang);
+        return (
+          <div key={c.id} className="col gap-1" style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid var(--border)", background: done ? "var(--surface)" : "var(--surface-2)", opacity: dead ? 0.55 : 1 }}>
+            <div className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="t-xs muted mono" style={{ flex: "none" }}>{c.seq}</span>
+              <span className="grow truncate t-sm" style={{ fontWeight: 600, textDecoration: dead ? "line-through" : undefined }}>{title}</span>
+              <span className="mono t-sm" style={{ flex: "none", fontWeight: 700 }}>${formatMoney(c.amount)}</span>
+              <Pill color={done ? "green" : dead ? "slate" : c.status === "sent" ? "violet" : "amber"} dot>
+                {done ? (es ? "Pagado" : "Paid")
+                  : dead ? (es ? "Anulado" : "Void")
+                  : c.status === "sent" ? (es ? "Enviado" : "Sent") : (es ? "Sin enviar" : "Not sent")}
+              </Pill>
+            </div>
+
+            <div className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="t-xs muted grow truncate">
+                {c.paid > 0 && !done && <>{es ? "Abonado" : "Paid"} ${formatMoney(c.paid)} · </>}
+                {c.due_at
+                  ? <>{es ? "Vence" : "Due"} {new Date(c.due_at).toLocaleDateString(es ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</>
+                  : <>{new Date(c.created_at).toLocaleDateString(es ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</>}
+              </span>
+              {!done && !dead && (
+                <>
+                  <button className="iconbtn sm" disabled={pending} title={es ? "Copiar link" : "Copy link"} onClick={() => onCopy(c.id)}>
+                    <Icon name={copied === c.id ? "check" : "file"} size={13} />
+                  </button>
+                  <button className="iconbtn sm" disabled={pending || !detail.conversation_id} title={c.status === "sent" ? (es ? "Reenviar al cliente" : "Resend to customer") : (es ? "Enviar al cliente" : "Send to customer")} onClick={() => onSend(c.id)}>
+                    <Icon name="send" size={13} />
+                  </button>
+                  {/* "Ya me pagó esto en efectivo": registra el resto del cobro y lo cierra. Sin
+                      esto habría que teclear el monto a mano y acordarse de a cuál cobro iba. */}
+                  <button className="iconbtn sm" disabled={pending} title={es ? "Registrar como pagado" : "Record as paid"} onClick={() => onSettle(c)}>
+                    <Icon name="check" size={13} />
+                  </button>
+                  <button className="iconbtn sm" disabled={pending} title={es ? "Anular" : "Void"} onClick={() => onVoid(c)}>
+                    <Icon name="x" size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* El descuadre se enseña, no se corrige solo: cambiar en silencio un monto que el cliente ya
+          tiene en su WhatsApp es peor que el descuadre. Decide quien cobra. */}
+      {live.length > 0 && gap !== 0 && (
+        <div className="t-xs" style={{ padding: "7px 10px", borderRadius: 9, background: "var(--amber-bg)", border: "1px solid var(--amber-bd)" }}>
+          {gap > 0
+            ? (es ? `Los cobros suman $${formatMoney(detail.total - gap)} y el pedido son $${formatMoney(detail.total)}: faltan $${formatMoney(gap)} por cobrar.`
+                  : `Charges add up to $${formatMoney(detail.total - gap)} but the order is $${formatMoney(detail.total)}: $${formatMoney(gap)} left to charge.`)
+            : (es ? `Los cobros suman $${formatMoney(detail.total - gap)}, más que el total del pedido ($${formatMoney(detail.total)}). Revisa antes de enviarlos.`
+                  : `Charges add up to $${formatMoney(detail.total - gap)}, more than the order total ($${formatMoney(detail.total)}). Check before sending.`)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Crear una orden de cobro.
+ *
+ * Lo de "¿se lo mando al cliente?" es la ÚLTIMA LÍNEA de este modal y no un segundo diálogo
+ * después: son la misma decisión —- cobrar—, y partirla en dos ventanas seguidas es de las cosas
+ * que más cansan de usar un sistema. Apagado, el cobro queda creado y el link se copia.
+ *
+ * El concepto se autopropone (`suggestKind`) y se puede cambiar: sin cobros previos es un anticipo,
+ * si cubre todo lo que queda es el finiquito, y en medio una parcialidad.
+ */
+function ChargeModal({ detail, lang, onClose, onDone }: {
+  detail: OrderDetail; lang: "es" | "en"; onClose: () => void; onDone: () => void;
+}) {
+  const es = lang === "es";
+  const balance = Math.max(0, detail.total - detail.paid);
+  const existing = detail.charges.filter(isLive).length;
+  const [amount, setAmount] = useState("");
+  const [kind, setKind] = useState<string>("");
+  const [label, setLabel] = useState("");
+  const [dueAt, setDueAt] = useState("");
+  const [send, setSend] = useState(!!detail.conversation_id);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+
+  const n = Math.round((Number(amount.replace(/[^0-9.]/g, "")) || 0) * 100) / 100;
+  // El concepto sigue al monto mientras nadie lo toque a mano: así escribir "10000" ya lo llama
+  // "Anticipo" sin un clic más, pero elegirlo manda.
+  const effectiveKind = kind || suggestKind({ existing, amount: n, balance });
+  const pct = (p: number) => setAmount(String(Math.round(balance * p * 100) / 100));
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    const r = await createCharge(detail.id, { amount: n, kind: effectiveKind, label: label.trim() || null, dueAt: dueAt || null, send });
+    setBusy(false);
+    if (!r.ok) { setErr(es ? "No se pudo crear el cobro." : "Couldn't create the charge."); return; }
+    // Si no se envió (o no había chat), el link se queda a la vista para copiarlo: crear un cobro
+    // y que su link no aparezca por ningún lado sería dejar el trabajo a medias.
+    if (r.sent) { onDone(); return; }
+    setLink(r.link ?? null);
+  };
+
+  if (link) {
+    return (
+      <div className="modal-back" onClick={onDone}>
+        <div className="modal" role="dialog" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-head">
+            <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="check" /></span>
+            <div className="grow">
+              <h3 style={{ margin: 0 }}>{es ? "Cobro creado" : "Charge created"}</h3>
+              <p className="muted t-sm" style={{ margin: 0 }}>
+                {detail.conversation_id
+                  ? (es ? "No se envió. Copia el link y mándalo cuando quieras." : "Not sent. Copy the link and send it whenever you want.")
+                  : (es ? "Este pedido no tiene chat, así que hay que mandarlo a mano." : "This order has no chat, so you'll need to send it manually.")}
+              </p>
+            </div>
+          </div>
+          <div className="modal-body">
+            <div className="field field-sm field-filled"><input readOnly value={link} onFocus={(e) => e.currentTarget.select()} /></div>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={onDone}>{es ? "Listo" : "Done"}</button>
+            <button className="btn btn-primary" onClick={() => { navigator.clipboard?.writeText(link).catch(() => {}); onDone(); }}>
+              <Icon name="file" size={15} />{es ? "Copiar link" : "Copy link"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal" role="dialog" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="orders" /></span>
+          <div className="grow">
+            <h3 style={{ margin: 0 }}>{es ? "Crear cobro" : "Create charge"} · {detail.code}</h3>
+            <p className="muted t-sm" style={{ margin: 0 }}>
+              {es ? `Saldo del pedido: $${formatMoney(balance)} de $${formatMoney(detail.total)}`
+                  : `Order balance: $${formatMoney(balance)} of $${formatMoney(detail.total)}`}
+            </p>
+          </div>
+        </div>
+
+        <div className="modal-body">
+          <label className="lbl">{es ? "Monto" : "Amount"}</label>
+          <div className="row gap-2" style={{ alignItems: "center" }}>
+            <span className="mono">$</span>
+            <input className="inp-inline" style={{ width: 140 }} inputMode="decimal" autoFocus value={amount}
+              onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            {/* Atajos sobre el SALDO, no sobre el total: si ya hubo un anticipo, "50%" tiene que
+                significar la mitad de lo que falta, que es lo que la persona está pensando. */}
+            <button className="btn btn-sm btn-ghost" type="button" onClick={() => pct(0.5)}>50%</button>
+            <button className="btn btn-sm btn-ghost" type="button" onClick={() => pct(0.3)}>30%</button>
+            <button className="btn btn-sm btn-ghost" type="button" onClick={() => pct(1)}>{es ? "Saldo" : "Balance"}</button>
+          </div>
+          {n > balance + 0.01 && (
+            <p className="t-xs" style={{ color: "var(--amber)", marginTop: 6 }}>
+              {es ? `Es más que el saldo ($${formatMoney(balance)}).` : `That's more than the balance ($${formatMoney(balance)}).`}
+            </p>
+          )}
+
+          <label className="lbl" style={{ marginTop: 14 }}>{es ? "Concepto" : "Concept"}</label>
+          <div className="seg" style={{ width: "fit-content" }}>
+            {CHARGE_KINDS.map((k) => (
+              <button key={k} type="button" className={effectiveKind === k ? "on" : ""} onClick={() => setKind(k)}>
+                {chargeKindLabel(k, lang)}
+              </button>
+            ))}
+          </div>
+          <input className="inp-inline" style={{ width: "100%", marginTop: 8 }} value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={es ? `Otro nombre (opcional) — por defecto "${chargeKindLabel(effectiveKind, lang)}"` : `Custom name (optional) — defaults to "${chargeKindLabel(effectiveKind, lang)}"`} />
+
+          <label className="lbl" style={{ marginTop: 14 }}>{es ? "Fecha límite" : "Due date"} <span className="muted" style={{ fontWeight: 400 }}>({es ? "opcional" : "optional"})</span></label>
+          <input className="inp-inline" type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+
+          {/* LA pregunta, aquí y no en un segundo diálogo. */}
+          <label className="row gap-2" style={{ alignItems: "center", marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)", cursor: detail.conversation_id ? "pointer" : "default" }}>
+            <input type="checkbox" checked={send} disabled={!detail.conversation_id} onChange={(e) => setSend(e.target.checked)} />
+            <span className="grow t-sm">
+              {es ? "Enviar al cliente por WhatsApp" : "Send to the customer on WhatsApp"}
+              <span className="t-xs muted" style={{ display: "block" }}>
+                {detail.conversation_id
+                  ? (es ? "Le llega el concepto, el monto y su link de pago." : "They get the concept, the amount and their pay link.")
+                  : (es ? "Este pedido no tiene chat: solo se creará el link." : "This order has no chat: only the link will be created.")}
+              </span>
+            </span>
+          </label>
+
+          {err && <p className="t-sm" style={{ color: "var(--red)", marginTop: 10 }}>{err}</p>}
+        </div>
+
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>{es ? "Cancelar" : "Cancel"}</button>
+          <button className="btn btn-primary" disabled={busy || !(n > 0)} onClick={submit}>
+            <Icon name={send ? "send" : "plus"} size={15} />
+            {busy ? (es ? "Creando…" : "Creating…") : send ? (es ? "Crear y enviar" : "Create and send") : (es ? "Crear cobro" : "Create charge")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

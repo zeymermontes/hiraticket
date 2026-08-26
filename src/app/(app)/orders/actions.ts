@@ -7,7 +7,8 @@ import { getOrderDetail, type OrderDetail } from "@/lib/orders";
 import { getMyBusiness, getOrdersPage, getOrderIds, type OrderQuery, type OrdersPage } from "@/lib/queries";
 import { moveOrderStage, runStageAutomations } from "@/app/(app)/actions";
 import { encryptBody } from "@/lib/msgcrypto";
-import { markOrderPaid } from "@/lib/payments";
+import { markOrderPaid, recomputeChargeStatus } from "@/lib/payments";
+import { chargeTitle, suggestKind, CHARGE_KINDS } from "@/lib/charges";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 
@@ -74,6 +75,141 @@ export async function chargeOrder(orderId: string): Promise<void> {
   revalidatePath("/orders");
 }
 
+/**
+ * Órdenes de cobro (0089): anticipo, parcialidades y finiquito.
+ *
+ * La diferencia con "Enviar link de pago" de arriba es quién decide el monto. `chargeOrder` manda
+ * el link del PEDIDO, que siempre cobra lo que falte; un cobro lo fija el asesor —- "cóbrale
+ * $5,000 de anticipo" —- y viaja con su propio link por ese monto exacto.
+ */
+
+/** Token de cobro. Va con prefijo "c" para distinguirlo del de pedido ("p") al leer registros;
+ *  nada depende del prefijo (`resolvePayToken` busca en las dos tablas), es solo legibilidad. */
+function newChargeToken(): string {
+  return "c" + globalThis.crypto.randomUUID().replace(/-/g, "");
+}
+
+const money = (n: number) => "$" + Number(n).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Manda el cobro al chat del pedido y lo marca enviado. Devuelve false si no hay a dónde mandarlo
+ *  —- un pedido sin conversación —- para que quien llame lo diga en vez de fingir que salió. */
+async function deliverCharge(supabase: SB, chargeId: string, userId: string | null): Promise<boolean> {
+  const { data: c } = await supabase.from("charges")
+    .select("id, amount, kind, label, pay_token, order_id, business_id").eq("id", chargeId).maybeSingle();
+  if (!c) return false;
+  const { data: order } = await supabase.from("orders")
+    .select("code, total, contact_id, conversation_id").eq("id", c.order_id).maybeSingle();
+  if (!order?.conversation_id) return false;
+
+  const [{ data: contact }, { data: pays }] = await Promise.all([
+    supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle(),
+    supabase.from("payments").select("amount").eq("order_id", c.order_id),
+  ]);
+  const first = ((contact?.name as string) ?? "").split(" ")[0];
+  const paid = (pays ?? []).reduce((sum: number, p: { amount: number }) => sum + (Number(p.amount) || 0), 0);
+  // Lo que quedaría DESPUÉS de este cobro. Decirlo evita la pregunta que si no llega por WhatsApp
+  // dos minutos después: "¿y esto es todo o falta más?".
+  const rest = Math.max(0, Math.round(((Number(order.total) || 0) - paid - (Number(c.amount) || 0)) * 100) / 100);
+  const title = chargeTitle({ kind: c.kind as string, label: (c.label as string | null) ?? null });
+  const link = `${appBaseUrl()}/pay/${c.pay_token}`;
+  const body = `Hola ${first} 👋 aquí está tu ${title.toLowerCase()} del pedido ${order.code} por ${money(c.amount as number)} MXN: ${link} 💳`
+    + (rest > 0 ? `\n\nDespués de este pago quedarían ${money(rest)} MXN por cubrir.` : "");
+
+  await supabase.from("messages").insert({
+    business_id: c.business_id, conversation_id: order.conversation_id,
+    direction: "out", type: "text", body: encryptBody(c.business_id as string, body), author_id: userId, state: "queued",
+  });
+  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
+  await flushCloudOutbox(c.business_id as string);
+  await supabase.from("charges").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", chargeId).neq("status", "paid");
+  return true;
+}
+
+/**
+ * Crea una orden de cobro. `send` es el check "Enviar al cliente" del modal.
+ *
+ * `seq` sale del número de cobros que ya tiene el pedido, ANULADOS INCLUIDOS: renumerar al anular
+ * dejaría dos cobros distintos llamándose "Pago 2", y uno de ellos ya estaría en el WhatsApp del
+ * cliente con ese nombre.
+ */
+export async function createCharge(orderId: string, input: {
+  amount: number; kind?: string; label?: string | null; dueAt?: string | null; send?: boolean;
+}): Promise<{ ok: boolean; link?: string; sent?: boolean; error?: string }> {
+  const amount = Math.round((Number(input.amount) || 0) * 100) / 100;
+  if (!(amount > 0)) return { ok: false, error: "bad-amount" };
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
+  if (!order) return { ok: false, error: "not-found" };
+
+  const [{ data: existing }, { data: pays }] = await Promise.all([
+    supabase.from("charges").select("id").eq("order_id", orderId),
+    supabase.from("payments").select("amount").eq("order_id", orderId),
+  ]);
+  const paid = (pays ?? []).reduce((sum: number, p: { amount: number }) => sum + (Number(p.amount) || 0), 0);
+  const balance = Math.max(0, (Number(order.total) || 0) - paid);
+  const kind = CHARGE_KINDS.includes((input.kind ?? "") as never)
+    ? (input.kind as string)
+    : suggestKind({ existing: (existing ?? []).length, amount, balance });
+
+  const token = newChargeToken();
+  const { data: row, error } = await supabase.from("charges").insert({
+    business_id: order.business_id, order_id: orderId,
+    seq: (existing ?? []).length + 1,
+    kind, label: (input.label ?? "").trim() || null,
+    amount, due_at: input.dueAt || null,
+    status: "draft", pay_token: token, created_by: user?.id ?? null,
+  }).select("id").single();
+  // Sin 0089 aplicada esto falla, y hay que decirlo: un botón que no hace nada y no se queja es
+  // peor que uno que no está.
+  if (error || !row) return { ok: false, error: error?.message ?? "insert-failed" };
+
+  await supabase.from("events").insert({
+    business_id: order.business_id, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+    kind: "plus", text: `Cobro creado: ${chargeTitle({ kind, label: input.label ?? null })} por ${money(amount)}`,
+  });
+
+  let sent = false;
+  if (input.send) sent = await deliverCharge(supabase, row.id as string, user?.id ?? null);
+  revalidatePath("/orders"); revalidatePath("/chat");
+  return { ok: true, link: `${appBaseUrl()}/pay/${token}`, sent };
+}
+
+/** Reenviar un cobro por WhatsApp (o mandarlo por primera vez si se creó sin enviar). */
+export async function sendCharge(chargeId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const ok = await deliverCharge(supabase, chargeId, user?.id ?? null);
+  revalidatePath("/orders"); revalidatePath("/chat");
+  return ok ? { ok: true } : { ok: false, error: "no-chat" };
+}
+
+/** Anular un cobro: deja de contar y su link deja de pedir dinero. No se borra —- el cliente pudo
+ *  haberlo recibido, y el rastro de que existió es justo lo que explica la confusión después. */
+export async function voidCharge(chargeId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: c } = await supabase.from("charges").select("id, order_id, business_id, kind, label, amount, status").eq("id", chargeId).maybeSingle();
+  if (!c) return { ok: false, error: "not-found" };
+  // Un cobro ya pagado no se anula: el dinero entró y anularlo solo descuadraría lo comprometido.
+  if (c.status === "paid") return { ok: false, error: "already-paid" };
+  await supabase.from("charges").update({ status: "void" }).eq("id", chargeId);
+  await supabase.from("events").insert({
+    business_id: c.business_id, parent_type: "order", parent_id: c.order_id, actor_id: user?.id ?? null,
+    kind: "x", text: `Cobro anulado: ${chargeTitle({ kind: c.kind as string, label: (c.label as string | null) ?? null })} por ${money(c.amount as number)}`,
+  });
+  revalidatePath("/orders");
+  return { ok: true };
+}
+
+/** El link público de un cobro, para copiarlo al portapapeles. */
+export async function getChargeLink(chargeId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data } = await supabase.from("charges").select("pay_token").eq("id", chargeId).maybeSingle();
+  const token = (data?.pay_token as string | null) ?? null;
+  return token ? `${appBaseUrl()}/pay/${token}` : null;
+}
+
 type SB = Awaited<ReturnType<typeof createClient>>;
 
 /** order.pay_status from the sum of its payments vs total. */
@@ -84,27 +220,40 @@ async function recomputePayStatus(supabase: SB, orderId: string, total: number):
   await supabase.from("orders").update({ pay_status: status }).eq("id", orderId);
 }
 
-/** Record a (partial) payment against an order, then recompute its pay status. */
-export async function addPayment(orderId: string, amount: number, method?: string | null, note?: string | null): Promise<void> {
+/** Record a (partial) payment against an order, then recompute its pay status.
+ *  `chargeId` lo ata a una orden de cobro (0089) —- es lo que deja marcar "el anticipo ya lo pagó
+ *  en efectivo" sin que el cobro se quede pendiente para siempre. Sin él es un abono suelto. */
+export async function addPayment(orderId: string, amount: number, method?: string | null, note?: string | null, chargeId?: string | null): Promise<void> {
   if (!amount || amount <= 0) return;
   const supabase = await createClient();
   const user = await getSessionUser();
   const { data: order } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
   if (!order) return;
-  await supabase.from("payments").insert({ business_id: order.business_id, order_id: orderId, amount, method: method ?? null, note: note ?? null, created_by: user?.id ?? null });
+  const row = { business_id: order.business_id, order_id: orderId, amount, method: method ?? null, note: note ?? null, created_by: user?.id ?? null };
+  // Sin 0089 la columna no existe y el insert entero fallaría: mejor guardar el abono sin atarlo
+  // que perder el registro del dinero.
+  let { error } = await supabase.from("payments").insert({ ...row, charge_id: chargeId || null });
+  if (error) ({ error } = await supabase.from("payments").insert(row));
+  if (error) return;
   await recomputePayStatus(supabase, orderId, order.total as number);
+  if (chargeId) await recomputeChargeStatus(supabase, chargeId);
   revalidatePath("/orders");
 }
 
 /** Delete a payment and recompute the order's pay status. */
 export async function deletePayment(paymentId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: pay } = await supabase.from("payments").select("order_id").eq("id", paymentId).maybeSingle();
+  // El cobro al que pertenecía se lee ANTES de borrar: después ya no hay a quién preguntárselo, y
+  // sin recalcularlo se quedaría marcado como pagado por un abono que ya no existe.
+  let { data: pay } = await supabase.from("payments").select("order_id, charge_id").eq("id", paymentId).maybeSingle();
+  if (!pay) ({ data: pay } = await supabase.from("payments").select("order_id").eq("id", paymentId).maybeSingle()); // 0089 sin aplicar
   await supabase.from("payments").delete().eq("id", paymentId);
   if (pay?.order_id) {
     const { data: order } = await supabase.from("orders").select("total").eq("id", pay.order_id).maybeSingle();
     await recomputePayStatus(supabase, pay.order_id as string, (order?.total as number) ?? 0);
   }
+  const chargeId = (pay as { charge_id?: string | null } | null)?.charge_id;
+  if (chargeId) await recomputeChargeStatus(supabase, chargeId);
   revalidatePath("/orders");
 }
 
@@ -121,8 +270,10 @@ export async function markPaid(orderId: string): Promise<void> {
 export async function reviewPaymentProof(proofId: string, decision: "approved" | "rejected"): Promise<void> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const { data: proof } = await supabase.from("payment_proofs").select("business_id, order_id, amount, status").eq("id", proofId).maybeSingle();
+  let { data: proof } = await supabase.from("payment_proofs").select("business_id, order_id, amount, status, charge_id").eq("id", proofId).maybeSingle();
+  if (!proof) ({ data: proof } = await supabase.from("payment_proofs").select("business_id, order_id, amount, status").eq("id", proofId).maybeSingle()); // 0089 sin aplicar
   if (!proof || proof.status !== "pending") return;
+  const proofCharge = ((proof as { charge_id?: string | null }).charge_id) ?? null;
   const orderId = proof.order_id as string;
   const businessId = proof.business_id as string;
 
@@ -133,9 +284,15 @@ export async function reviewPaymentProof(proofId: string, decision: "approved" |
     const paid = (pays ?? []).reduce((s: number, p: { amount: number }) => s + (Number(p.amount) || 0), 0);
     const amount = Number(proof.amount) > 0 ? Number(proof.amount) : Math.max(0, total - paid);
     if (amount > 0) {
-      await supabase.from("payments").insert({ business_id: businessId, order_id: orderId, amount, method: "transfer", note: "Comprobante aprobado", created_by: user?.id ?? null });
+      // El monto NO se recorta al del cobro. Si el cliente transfirió de más, ese dinero entró de
+      // verdad: se acredita completo y el sobrante baja el saldo del pedido. Recortarlo sería
+      // inventar que llegó menos.
+      const row = { business_id: businessId, order_id: orderId, amount, method: "transfer", note: "Comprobante aprobado", created_by: user?.id ?? null };
+      let { error } = await supabase.from("payments").insert({ ...row, charge_id: proofCharge });
+      if (error) ({ error } = await supabase.from("payments").insert(row));
     }
     await recomputePayStatus(supabase, orderId, total);
+    if (proofCharge) await recomputeChargeStatus(supabase, proofCharge);
   }
 
   await supabase.from("payment_proofs").update({ status: decision, reviewed_by: user?.id ?? null, reviewed_at: new Date().toISOString() }).eq("id", proofId);
