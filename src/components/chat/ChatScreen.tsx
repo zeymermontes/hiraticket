@@ -2639,6 +2639,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
   const headerRefresh = useChatHeaderRefresh();
   const patch = useChatPatch();
   const flowToast = useFlowToast();
+  const { push: pushToast } = useToast();
   const ask = useConfirm();
   const [pending, start] = useTransition();
   const [openOrder, setOpenOrder] = useState<OrderDetail | null>(null);
@@ -2807,7 +2808,30 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               <button ref={actionsBtn} className={"iconbtn sm" + (actionsRect ? " active" : "")} title={lang === "es" ? "Acciones" : "Actions"} onClick={() => setActionsRect(actionsRect ? null : actionsBtn.current?.getBoundingClientRect() ?? null)}><Icon name="bolt" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Historial completo" : "Full history"} onClick={onOpen360}><Icon name="eye" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Renombrar" : "Rename"} onClick={() => setEditingName(true)}><Icon name="edit" size={15} /></button>
-              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending} onClick={() => start(async () => { await requestContactInfo(detail.contact!.id); refresh(); })}><Icon name="refresh" size={15} /></button>
+              {/* Si no hay quien lo atienda, se dice. Antes el clic encendía una bandera que en un
+                  número oficial nadie iba a mirar nunca: el botón parecía funcionar y no hacía nada. */}
+              <button className="iconbtn sm" title={lang === "es" ? "Buscar nombre" : "Fetch name"} disabled={pending}
+                onClick={() => start(async () => {
+                  const r = await requestContactInfo(detail.contact!.id);
+                  if (!r.ok) {
+                    pushToast({
+                      kind: "info",
+                      title: r.reason === "official"
+                        ? (lang === "es" ? "Aquí el nombre llega solo" : "The name arrives on its own here")
+                        : (lang === "es" ? "Sin conexión a WhatsApp" : "WhatsApp not connected"),
+                      message: r.reason === "official"
+                        ? (lang === "es"
+                            ? "Con un número oficial, WhatsApp manda el nombre del perfil con el mensaje: no hay nada que buscar a mano."
+                            : "On an official number, WhatsApp sends the profile name with the message — there's nothing to fetch by hand.")
+                        : (lang === "es"
+                            ? "Se buscará en cuanto el número vuelva a conectarse."
+                            : "It will be looked up as soon as the number reconnects."),
+                      key: "fetch-name",
+                    });
+                    return;
+                  }
+                  refresh();
+                })}><Icon name="refresh" size={15} /></button>
               <button className="iconbtn sm" title={lang === "es" ? "Eliminar chat" : "Delete chat"} onClick={removeChat}><Icon name="trash" size={15} /></button>
             </div>
           </div>

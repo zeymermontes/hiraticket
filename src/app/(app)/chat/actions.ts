@@ -549,10 +549,33 @@ export async function removeContactTag(contactId: string, tag: string): Promise<
   await supabase.from("contacts").update({ tags }).eq("id", contactId);
 }
 
-/** Ask the worker to (re)fetch the contact's WhatsApp name + profile photo. */
-export async function requestContactInfo(contactId: string): Promise<void> {
+/**
+ * Pide que se busque el nombre de WhatsApp de este contacto.
+ *
+ * Comprueba ANTES si hay quien pueda atenderlo, y por eso devuelve un motivo en vez de nada. Quien
+ * lo atiende es el worker de whatsmeow, y ese **excluye a propósito las sesiones oficiales** (Cloud
+ * API). Así que en un número oficial esto encendía una bandera que nadie iba a mirar jamás: el
+ * botón no hacía nada, no lo decía, y la bandera se quedaba puesta para siempre —- en producción
+ * había una del 25 de agosto esperando.
+ *
+ * Y esos negocios ni lo necesitan: la vía oficial ya adopta el nombre del perfil que viene en el
+ * webhook, sin pisar los nombres puestos a mano (ver `ensureConversation` en cloud-ingest.ts). El
+ * nombre les llega solo; lo que no tiene sentido es ofrecerles un botón imposible.
+ */
+export async function requestContactInfo(contactId: string): Promise<{ ok: boolean; reason?: "official" | "offline" }> {
   const { supabase } = await ctx();
+  const { data: c } = await supabase.from("contacts").select("business_id").eq("id", contactId).maybeSingle();
+  if (!c) return { ok: false };
+  const { data: sessions } = await supabase
+    .from("whatsapp_sessions").select("status, connect_method").eq("business_id", c.business_id);
+  // `connect_method` nulo = QR, que es como nacieron las sesiones antes de que existiera la columna.
+  const wa = (sessions ?? []).filter((s) => ((s.connect_method as string | null) ?? "qr") !== "official");
+  if (!wa.length) return { ok: false, reason: "official" };
+  // Con la sesión caída la bandera se queda esperando —- eso SÍ es correcto, el worker la atiende al
+  // reconectar—, pero conviene decirlo para que no parezca que el botón se tragó el clic.
+  if (!wa.some((s) => s.status === "connected")) return { ok: false, reason: "offline" };
   await supabase.from("contacts").update({ fetch_requested: new Date().toISOString() }).eq("id", contactId);
+  return { ok: true };
 }
 
 export async function setConvHidden(convId: string, hidden: boolean): Promise<void> {

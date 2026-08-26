@@ -941,10 +941,11 @@ func (m *Manager) wantContactInfo(ctx context.Context, id string) {
 	if id == "" {
 		return
 	}
-	// Freno de una hora por contacto, y hace falta: `fetchContactInfo` limpia la bandera aunque no
-	// encuentre nada, así que un desconocido que no está en la agenda del teléfono seguiría sin
-	// nombre —- y sin este freno le pediríamos la FOTO a WhatsApp por red en CADA mensaje suyo. Un
-	// cliente hablador se convertiría solo en una tormenta de peticiones.
+	// Freno de una hora por contacto. Ya no evita tráfico de red —- desde que no se pide la foto,
+	// buscar el nombre es una lectura del directorio local—, pero sigue valiendo: `fetchContactInfo`
+	// limpia la bandera aunque no encuentre nada, así que un desconocido que no está en la agenda
+	// del teléfono nunca tendrá nombre, y sin freno cada mensaje suyo volvería a encolarlo. Un
+	// cliente hablador se comería él solo el lote de 20 del bucle, dejando sin turno a los demás.
 	//
 	// En memoria y no en la base a propósito: no vale una migración, y perderlo al reiniciar solo
 	// significa un intento de más. El botón de "Buscar nombre" del chat no pasa por aquí —- escribe
@@ -985,10 +986,19 @@ func (m *Manager) fetchContactInfo(ctx context.Context, id, biz, phone string) {
 			m.exec(ctx, `UPDATE contacts SET name=$1 WHERE id=$2 AND name=$3`, name, id, phone)
 		}
 	}
-	if pic, err := client.GetProfilePictureInfo(ctx, jid, nil); err == nil && pic != nil && pic.URL != "" {
-		m.exec(ctx, `UPDATE contacts SET avatar_url=$1 WHERE id=$2`, pic.URL, id)
-	}
-	m.log.Infof("fetched contact info %s", phone)
+	// La FOTO ya no se pide, y es una supresión a conciencia, no un olvido.
+	//
+	// `GetProfilePictureInfo` era la única llamada de red de toda esta función, y lo que devuelve es
+	// una URL FIRMADA del CDN de WhatsApp que CADUCA: las 17 guardadas en producción contestan 403.
+	// Encima, la app nunca las pintó —- los cuatro <Avatar> del contacto van con iniciales y color,
+	// sin `src` —- así que llevábamos meses pagando red por escribir un dato muerto en una columna
+	// que nadie lee. Ahora esta función es una lectura del directorio local y un UPDATE: gratis.
+	//
+	// Si algún día se quieren enseñar de verdad, no basta con guardar la URL: hay que BAJAR los
+	// bytes y subirlos a nuestro bucket, como ya se hace con los adjuntos de los mensajes.
+	// `contacts.avatar_url` se queda en su sitio (con sus 17 URLs muertas) para no tirar una columna
+	// por una limpieza, pero ya no se escribe.
+	m.log.Infof("fetched contact name %s", phone)
 }
 
 // ---------- session lifecycle ----------
