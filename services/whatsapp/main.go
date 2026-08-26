@@ -1526,9 +1526,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				return
 			}
 			if ierr := m.db.QueryRowContext(ctx,
-				`INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject)
-				 VALUES ($1,$2,'open',0,true,$3,$4) RETURNING id`,
-				s.BusinessID, contactID, groupJID, subject).Scan(&convID); ierr != nil {
+				`INSERT INTO conversations (business_id, contact_id, status, unread, is_group, group_jid, group_subject, number_phone)
+				 VALUES ($1,$2,'open',0,true,$3,$4,NULLIF($5,'')) RETURNING id`,
+				s.BusinessID, contactID, groupJID, subject, bizPhone(client)).Scan(&convID); ierr != nil {
 				m.log.Errorf("group conv insert: %v", ierr)
 				return
 			}
@@ -1573,8 +1573,8 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			  ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID).Scan(&convID, &unread, &muted, &priorStatus)
 		if err == sql.ErrNoRows {
 			if err = m.db.QueryRowContext(ctx,
-				`INSERT INTO conversations (business_id, contact_id, status, unread)
-				 VALUES ($1,$2,'open',0) RETURNING id`, s.BusinessID, contactID).Scan(&convID); err != nil {
+				`INSERT INTO conversations (business_id, contact_id, status, unread, number_phone)
+				 VALUES ($1,$2,'open',0,NULLIF($3,'')) RETURNING id`, s.BusinessID, contactID, bizPhone(client)).Scan(&convID); err != nil {
 				m.log.Errorf("conv insert: %v", err)
 				return
 			}
@@ -1583,6 +1583,23 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			return
 		}
 	}
+
+	// El hilo tiene que quedar SELLADO con el número que lo atendió (number_phone, 0078), y este es
+	// el único camino que no lo hacía: las llamadas y los mensajes indescifrables sí lo sellaban,
+	// pero el mensaje entrante normal —- el que crea el 99% de los chats —- lo dejaba en NULL.
+	//
+	// Un NULL ahí no es un hueco cosmético: la lista de chats filtra por `number_phone = <número
+	// conectado>`, y NULL nunca es igual a nada, así que el chat EXISTE, recibe mensajes, suma sin
+	// leer y hasta manda notificación —- pero no se ve en ninguna parte. Solo se puede llegar a él
+	// tocando la notificación.
+	//
+	// Llevaba así desde 0078 y no se notó porque el manejador de `Connected` reclama los NULL en
+	// cada reconexión: mientras hubiera despliegues seguidos, el agujero se tapaba solo en minutos.
+	// En cuanto el worker aguantó un día entero sin reiniciarse, los NULL se quedaron.
+	//
+	// Sellar aquí también (y no solo al insertar) reclama los hilos que ya quedaron en NULL: en
+	// cuanto llega su siguiente mensaje vuelven a la lista, sin esperar a la próxima reconexión.
+	m.exec(ctx, `UPDATE conversations SET number_phone=NULLIF($1,'') WHERE id=$2 AND number_phone IS NULL`, bizPhone(client), convID)
 
 	// "Stop listening": the conversation is muted → drop this message (don't store it).
 	if muted {
