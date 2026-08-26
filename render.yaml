@@ -5,6 +5,14 @@
 # Deploy: push to GitHub → Render → New → Blueprint → pick this repo.
 # Then fill in every env var marked sync:false from the dashboard.
 #
+# ⚠️  OJO: los servicios que declara este archivo (`hiraticket`, `hiraticket-whatsapp`) están
+# SUSPENDIDOS. Producción la sirven dos servicios creados a mano y con otro nombre:
+#     hiraticket-1            srv-d9l5k3vqj5pc73ajfmh0   web    · plan standard
+#     hiraticket-whatsapp-1   srv-d9l6m80ae00c738harlg   worker · plan starter
+# Este archivo sigue siendo la referencia de CÓMO debe verse el despliegue, pero leerlo para saber
+# el plan o las variables de producción MIENTE: eso vive solo en el panel. Cualquier cambio de aquí
+# hay que replicarlo a mano en los `-1` (o por la API) hasta que se unifiquen.
+#
 # REGION: must stay `virginia`. Supabase lives in us-east-1, and running the app in Oregon
 # put the whole continent between every query — ~68ms per round trip instead of ~2-5ms, on
 # ~35 trips per navigation. Render cannot change a service's region after creation, so a
@@ -20,6 +28,12 @@ services:
     startCommand: npm run start
     healthCheckPath: /login
     autoDeploy: true
+    # Sin esto, un cambio SOLO del worker reconstruye también la web —- y al revés. Peor que el
+    # minuto de build: cada despliegue del worker tira el socket de WhatsApp de todos los negocios,
+    # así que tocar un botón de la interfaz desconectaba a todo el mundo unos segundos.
+    buildFilter:
+      ignoredPaths:
+        - services/whatsapp/**
     envVars:
       - key: NODE_VERSION
         value: 22.11.0
@@ -91,6 +105,12 @@ services:
     region: virginia
     branch: main
     autoDeploy: true
+    # El contexto de build es ./services/whatsapp y nada de fuera entra en la imagen, así que
+    # cualquier otro cambio del repo no puede alterar este binario: reconstruirlo sería tirar la
+    # sesión de WhatsApp de todos los negocios a cambio de nada.
+    buildFilter:
+      paths:
+        - services/whatsapp/**
     envVars:
       # IMPORTANT: use the Supabase **Session pooler** (IPv4, port 5432). The direct
       # db.<ref>.supabase.co host is IPv6-only and Render can't reach it. Do NOT use the

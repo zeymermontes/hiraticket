@@ -373,9 +373,25 @@ end $$;`); err != nil {
 
 // ---------- polling loops ----------
 
+// pollSessions: cada cuánto se mira si hay sesiones que levantar.
+//
+// El ritmo es adaptativo porque los dos casos no se parecen en nada. En reposo —- todas conectadas,
+// que es el 99.9% del tiempo —- nadie espera nada y sondear seguido solo quema base. Pero mientras
+// una sesión está a medio conectar hay una PERSONA mirando un cuadro vacío a que salga el QR, y
+// esta espera es la primera mitad de ese tiempo: el worker ni se ha enterado de que existe la fila.
+//
+// Antes eran 4 s fijos, así que solo notar la sesión nueva costaba hasta 4 s de los ~7 que tardaba
+// el QR en aparecer. La consulta es de ocho filas sobre un índice; correrla cada 2 s en vez de cada
+// 4 no se nota en ninguna métrica, y baja el peor caso a la mitad.
+const (
+	pollIdle = 2 * time.Second // todo conectado: no hay nadie esperando
+	pollBusy = 1 * time.Second // alguien está conectando y mirando la pantalla
+)
+
 func (m *Manager) pollSessions(ctx context.Context) {
 	for {
 		alive := map[string]bool{}
+		waiting := false
 		// connect_method='official' rows are Cloud API sessions (webhook + web app dispatch) —
 		// never bring up a whatsmeow client for them, it would overwrite their status with a QR.
 		qctx, cancel := withDBTimeout(ctx)
@@ -393,6 +409,9 @@ func (m *Manager) pollSessions(ctx context.Context) {
 				var s session
 				if rows.Scan(&s.ID, &s.BusinessID, &s.Status, &s.Method, &s.Phone, &s.DeviceJID) == nil {
 					alive[s.ID] = true
+					if s.Status != "connected" {
+						waiting = true
+					}
 					m.mu.Lock()
 					_, running := m.clients[s.ID]
 					cooldown := time.Now().Before(m.replaced[s.ID])
@@ -406,7 +425,11 @@ func (m *Manager) pollSessions(ctx context.Context) {
 			cancel()
 			m.reap(ctx, alive)
 		}
-		time.Sleep(4 * time.Second)
+		if waiting {
+			time.Sleep(pollBusy)
+		} else {
+			time.Sleep(pollIdle)
+		}
 	}
 }
 

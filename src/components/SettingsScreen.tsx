@@ -6,6 +6,7 @@ import { clearCache } from "@/lib/localCache";
 import { clearMediaCache } from "@/lib/mediaCache";
 import { PALETTE_GROUPS } from "@/lib/palette";
 import { Icon } from "@/components/Icon";
+import { QrCode } from "@/components/QrCode";
 import { notifyPermission, requestNotifyPermission, desktopEnabled, setDesktopEnabled,
   browserSupportsPush, pushKeyPresent, subscribeToPush, unsubscribeFromPush, currentPushEndpoint } from "@/lib/notify";
 import { isStandalone } from "@/lib/useIsMobile";
@@ -95,11 +96,7 @@ function SessionCard({ session, primary }: { session: WaSession; primary?: boole
 
         {session.status === "qr" && !session.pairing_code && session.qr && (
           <div style={{ marginTop: 10 }}>
-            <img
-              width={200} height={200} alt="WhatsApp QR"
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(session.qr)}`}
-              style={{ borderRadius: 10, border: "1px solid var(--border)", background: "#fff", padding: 6 }}
-            />
+            <QrCode value={session.qr} title={lang === "es" ? "Código QR de WhatsApp" : "WhatsApp QR code"} />
             <div className="t-xs muted" style={{ maxWidth: 220, marginTop: 6 }}>
               {lang === "es" ? "WhatsApp → Dispositivos vinculados → Vincular un dispositivo." : "WhatsApp → Linked devices → Link a device."}
             </div>
