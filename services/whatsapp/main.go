@@ -69,6 +69,7 @@ type Manager struct {
 	sessBiz   map[string]string            // sessionID -> businessID
 	evtDone   map[string]chan struct{}     // sessionID -> cerrado al soltar la sesión (para la cola de eventos)
 	replaced  map[string]time.Time         // sessionID -> don't reconnect until (after StreamReplaced)
+	infoTried map[string]time.Time         // contactID -> último intento de buscarle nombre (ver wantContactInfo)
 	mediaSem  chan struct{}                // tope global de adjuntos en vuelo (ver mediaConcurrency)
 	supaURL   string                       // Supabase URL (for media storage REST)
 	supaKey   string                       // service-role key
@@ -326,16 +327,17 @@ end $$;`); err != nil {
 
 	m := &Manager{
 		db: db, container: container, log: logger,
-		clients:  map[string]*whatsmeow.Client{},
-		byBiz:    map[string]*whatsmeow.Client{},
-		sessBiz:  map[string]string{},
-		evtDone:  map[string]chan struct{}{},
-		replaced: map[string]time.Time{},
-		mediaSem: make(chan struct{}, mediaConcurrency),
-		supaURL:  strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
-		supaKey:  os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
-		appURL:   strings.TrimRight(os.Getenv("APP_URL"), "/"),
-		pushKey:  os.Getenv("PUSH_HOOK_SECRET"),
+		clients:   map[string]*whatsmeow.Client{},
+		byBiz:     map[string]*whatsmeow.Client{},
+		sessBiz:   map[string]string{},
+		evtDone:   map[string]chan struct{}{},
+		replaced:  map[string]time.Time{},
+		infoTried: map[string]time.Time{},
+		mediaSem:  make(chan struct{}, mediaConcurrency),
+		supaURL:   strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
+		supaKey:   os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
+		appURL:    strings.TrimRight(os.Getenv("APP_URL"), "/"),
+		pushKey:   os.Getenv("PUSH_HOOK_SECRET"),
 	}
 	if m.supaURL == "" || m.supaKey == "" {
 		logger.Warnf("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — media will be skipped")
@@ -876,6 +878,53 @@ func (m *Manager) pollContacts(ctx context.Context) {
 	}
 }
 
+/**
+ * Pide el nombre y la foto de un contacto que todavía se llama como su número.
+ *
+ * Antes esto SOLO lo disparaba un botón ("Buscar nombre") en el chat. O sea: llegaba un cliente
+ * nuevo, veías un +52…, y para saber quién era tenías que acordarte de pedirlo a mano, en cada
+ * contacto y cada vez. La maquinaria completa ya existía —- la bandera, el bucle, la búsqueda—;
+ * lo único que faltaba era que algo la encendiera solo.
+ *
+ * Se llama en cada mensaje entrante y no solo al crear el contacto, y ahí está la gracia: los
+ * contactos que ya se quedaron con el número por nombre se arreglan en cuanto vuelvan a escribir,
+ * sin migración y sin una avalancha de peticiones al conectar.
+ *
+ * Las tres condiciones van dentro del UPDATE a propósito, no en un SELECT previo: así es una sola
+ * consulta y no hay carrera entre leer y escribir.
+ *   · name = phone      → solo cuando el nombre sigue siendo el número. Un nombre puesto a mano
+ *                         NUNCA se pisa (fetchContactInfo también lo respeta al escribir).
+ *   · fetch_requested IS NULL → no repetir lo que ya está en cola.
+ * Buscar el NOMBRE no cuesta red: sale del directorio que whatsmeow ya tiene sincronizado en local.
+ * Lo que sí sale a la red es la foto, y por eso esto no se dispara para cualquier contacto sino
+ * solo para los que no tienen nombre.
+ */
+func (m *Manager) wantContactInfo(ctx context.Context, id string) {
+	if id == "" {
+		return
+	}
+	// Freno de una hora por contacto, y hace falta: `fetchContactInfo` limpia la bandera aunque no
+	// encuentre nada, así que un desconocido que no está en la agenda del teléfono seguiría sin
+	// nombre —- y sin este freno le pediríamos la FOTO a WhatsApp por red en CADA mensaje suyo. Un
+	// cliente hablador se convertiría solo en una tormenta de peticiones.
+	//
+	// En memoria y no en la base a propósito: no vale una migración, y perderlo al reiniciar solo
+	// significa un intento de más. El botón de "Buscar nombre" del chat no pasa por aquí —- escribe
+	// la bandera directo—, así que pedirlo a mano sigue funcionando al instante.
+	m.mu.Lock()
+	last, seen := m.infoTried[id]
+	fresh := seen && time.Since(last) < time.Hour
+	if !fresh {
+		m.infoTried[id] = time.Now()
+	}
+	m.mu.Unlock()
+	if fresh {
+		return
+	}
+	m.exec(ctx, `UPDATE contacts SET fetch_requested=now()
+	              WHERE id=$1 AND fetch_requested IS NULL AND name = phone`, id)
+}
+
 func (m *Manager) fetchContactInfo(ctx context.Context, id, biz, phone string) {
 	m.mu.Lock()
 	client := m.byBiz[biz]
@@ -1282,6 +1331,7 @@ func (m *Manager) handleUnavailable(ctx context.Context, s session, client *what
 		} else if err != nil {
 			return
 		}
+		m.wantContactInfo(ctx, contactID)
 		err = m.db.QueryRowContext(ctx, `SELECT id, unread, muted FROM conversations WHERE business_id=$1 AND contact_id=$2 AND status<>'resolved' AND (number_phone IS NULL OR number_phone=$3) ORDER BY last_message_at DESC LIMIT 1`, s.BusinessID, contactID, bizPhone(client)).Scan(&convID, &unread, &muted)
 		if err == sql.ErrNoRows {
 			if e := m.db.QueryRowContext(ctx, `INSERT INTO conversations (business_id, contact_id, status, unread, number_phone) VALUES ($1,$2,'open',0,NULLIF($3,'')) RETURNING id`, s.BusinessID, contactID, bizPhone(client)).Scan(&convID); e != nil {
@@ -1587,6 +1637,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		} else if err != nil {
 			return
 		}
+		m.wantContactInfo(ctx, contactID)
 		// Reuse the contact's most recent conversation — including a resolved one — so the full history
 		// stays in a single thread. A customer who comes back a week after being resolved lands in the
 		// same chat (it gets reopened below), instead of a fresh conversation with no past context.
