@@ -41,7 +41,7 @@ import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail,
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
-import { useComposerFocus } from "@/lib/composerFocus";
+import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
 import { keepSubscribed } from "@/lib/realtime";
 import { isBuildStale } from "@/lib/buildSkew";
 import { clearNotificationsFor } from "@/lib/notify";
@@ -2068,8 +2068,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     return out;
   }, [messages]);
 
-  function startEdit(mm: ChatMessage) { setEditing(mm); setReplyTo(null); setText(mm.body ?? ""); }
-  function startReply(mm: ChatMessage) { setReplyTo(mm); setEditing(null); }
+  // El focus va aquí y no en un efecto: tiene que ocurrir dentro del gesto del click para que el
+  // teclado del teléfono se abra. Igual en el chat de equipo.
+  function startEdit(mm: ChatMessage) { setEditing(mm); setReplyTo(null); setText(mm.body ?? ""); focusComposer(taRef); }
+  function startReply(mm: ChatMessage) { setReplyTo(mm); setEditing(null); focusComposer(taRef); }
 
   // Ventana de 24 h de la API oficial: solo se puede escribir libre si el cliente escribió en las
   // últimas 24 h; cerrada → únicamente plantillas aprobadas. whatsmeow y grupos no tienen ventana.
@@ -2315,7 +2317,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applySlash(slashMatches[slashSel]); return; }
                   if (e.key === "Escape") { setSlash(null); return; }
                 }
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
+                if (e.key === "Enter" && !e.shiftKey && enterSends()) { e.preventDefault(); doSend(); }
               }} />
           </div>
           {slash && slashMatches.length > 0 && slashRect && (

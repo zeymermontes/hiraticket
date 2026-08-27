@@ -27,7 +27,7 @@ import { useCachedMedia } from "@/lib/mediaCache";
 import { makeImageThumb } from "@/lib/imageThumb";
 import { CachedImg } from "@/components/chat/CachedImg";
 import type { StickerItem } from "@/lib/chat";
-import { useComposerFocus } from "@/lib/composerFocus";
+import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
 
 /** Merge message lists by id (incoming wins, so edits/reactions/deletes apply), sorted by time. */
 function mergeInternal(a: InternalMsg[], b: InternalMsg[]): InternalMsg[] {
@@ -328,7 +328,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
       refreshMsgs(ch); refreshThreads();
     } finally { setSending(false); }
   }
-  const startEdit = (m: InternalMsg) => { setEditing(m); setReply(null); setText(m.body); taRef.current?.focus(); };
+  const startEdit = (m: InternalMsg) => { setEditing(m); setReply(null); setText(m.body); focusComposer(taRef); };
   const del = async (m: InternalMsg) => { if (!(await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar mensaje" : "Delete message", message: lang === "es" ? "Se elimina para todo el equipo." : "It is deleted for the whole team.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" }))) return; start(async () => { await deleteInternalMessage(m.id); refreshMsgs(selRef.current); }); };
   const react = (id: string, emoji: string) => { setReactTarget(null); start(async () => { await reactInternalMessage(id, emoji); refreshMsgs(selRef.current); }); };
   const doForward = (toChannel: string) => { const id = fwdTarget?.id; setFwdTarget(null); if (id) start(async () => { await forwardInternalMessage(id, toChannel); refreshThreads(); }); };
@@ -400,7 +400,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
             <InternalMsgMenu out={mine} canEdit={mine && m.type === "text"} canDelete={mine} lang={lang}
               media={m.media_url && !m.deleted ? { url: m.media_url, mime: m.media_mime, name: m.media_name } : null}
               onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
-              onReply={() => { setReply(m); setEditing(null); taRef.current?.focus(); }}
+              onReply={() => { setReply(m); setEditing(null); focusComposer(taRef); }}
               onForward={(rect) => setFwdTarget({ id: m.id, rect })}
               onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })} />
           )}
@@ -508,7 +508,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
                     if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(mentionMatches[mentionSel]); return; }
                     if (e.key === "Escape") { setMention(null); return; }
                   }
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+                  if (e.key === "Enter" && !e.shiftKey && enterSends()) { e.preventDefault(); submit(); }
                 }} />
               {mention && mentionMatches.length > 0 && (
                 <div className="menu scroll" style={menuStyle(mention.rect, { width: 240, height: 240, align: "left" })}>
