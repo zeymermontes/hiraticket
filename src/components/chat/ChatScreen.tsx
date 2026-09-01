@@ -1787,7 +1787,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const cancelStaged = () => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); carried.current = null; };
 
   // Cambiar de conversación no debe arrastrar un envío a medias de la anterior.
-  useEffect(() => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); }, [detail.id]);
+  useEffect(() => { setStaged([]); setCaption(""); setSending(false); setSendErr(null); setPendingTpl(null); }, [detail.id]);
 
   // Upload staged files, then send (caption goes on the first item, like WhatsApp).
   async function sendStaged() {
@@ -1834,6 +1834,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // El archivo de una plantilla elegida, esperando a que se pulse enviar. Ver `pickCanned`.
+  const [pendingTpl, setPendingTpl] = useState<CannedItem | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [cannedOpen, setCannedOpen] = useState(false);
@@ -1905,38 +1907,24 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     if (m) { setSlash({ q: m[1], at: caret - m[1].length - 1 }); setSlashSel(0); if (taRef.current) setSlashRect(taRef.current.getBoundingClientRect()); } else setSlash(null);
   }
   /**
-   * Mandar una plantilla que lleva archivo.
+   * Elegir una plantilla PREPARA el mensaje; no lo manda.
    *
-   * No se vuelve a subir nada: se reutiliza la ruta que guardó la plantilla, igual que un sticker
-   * favorito. Y el texto de la plantilla viaja como PIE del archivo —- lo mismo que hace el modal
-   * de "Enviar archivos" —- en vez de salir como un segundo mensaje suelto detrás.
+   * Mandar en el clic es justo donde se cuela el error: un dedo que resbala en la lista y el
+   * cliente recibe la plantilla de otro. Así que pasa lo mismo que al adjuntar un archivo a mano —-
+   * el texto queda en el campo y el archivo se ve encima del compositor —- y no sale nada hasta
+   * que se pulsa enviar. Hasta entonces se puede corregir, cambiar de plantilla o quitar el
+   * archivo.
+   *
+   * El archivo no se re-sube: `pendingTpl` solo guarda la ruta que ya tenía la plantilla.
    */
-  function sendCannedFile(c: CannedItem) {
-    if (!c.media_url) return;
-    const mime = c.media_mime || "application/octet-stream";
-    const caption = fillVars(c.body).trim();
-    start(async () => {
-      await sendMediaMessage(detail.id, {
-        type: mediaTypeOf(mime), mediaUrl: c.media_url!, mime,
-        name: c.media_name ?? undefined, caption: caption || undefined,
-        thumb: c.media_thumb ?? undefined, size: c.media_size ?? undefined,
-      });
-      refresh();
-    });
+  function attachCanned(c: CannedItem) {
+    if (c.media_url) setPendingTpl(c);
   }
 
   function applySlash(c: CannedItem) {
     const el = taRef.current; if (!el || !slash) return;
     const caret = el.selectionStart;
-    // Una plantilla con archivo no se "inserta" en el campo: se manda. Lo único que se toca del
-    // texto es borrar el /atajo a medio escribir.
-    if (c.media_url) {
-      setText(text.slice(0, slash.at) + text.slice(caret));
-      setSlash(null);
-      sendCannedFile(c);
-      requestAnimationFrame(() => el.focus());
-      return;
-    }
+    attachCanned(c);
     const filled = fillVars(c.body);
     const next = text.slice(0, slash.at) + filled + text.slice(caret);
     setText(next); setSlash(null);
@@ -2124,7 +2112,22 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   function doSend() {
     const body = text.trim();
     if (waBlocked) { setTplOpen(true); return; }
-    if (!body) return;
+    // Con un archivo preparado el texto es opcional: es el pie, no el mensaje.
+    if (!body && !pendingTpl) return;
+    if (pendingTpl?.media_url) {
+      const c = pendingTpl;
+      const mime = c.media_mime || "application/octet-stream";
+      setPendingTpl(null); setText("");
+      start(async () => {
+        await sendMediaMessage(detail.id, {
+          type: mediaTypeOf(mime), mediaUrl: c.media_url!, mime,
+          name: c.media_name ?? undefined, caption: body || undefined,
+          thumb: c.media_thumb ?? undefined, size: c.media_size ?? undefined,
+        });
+        refresh();
+      });
+      return;
+    }
     if (editing) {
       // Realtime echo (liveMessages) reflects the edit — no full refresh needed.
       const id = editing.id; setEditing(null); setText("");
@@ -2339,6 +2342,20 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <button className="iconbtn sm" onClick={() => { setEditing(null); setReplyTo(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
           </div>
         )}
+        {/* El archivo de la plantilla elegida, a la vista y todavía sin mandar. La X lo quita y
+            deja el texto: cambiar de idea no debe costar volver a escribirlo. */}
+        {pendingTpl && (
+          <div className="row gap-2" style={{ padding: "6px 8px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6, alignItems: "center" }}>
+            {pendingTpl.media_thumb
+              ? <img src={pendingTpl.media_thumb} alt="" style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flex: "none" }} />
+              : <span style={{ width: 34, height: 34, borderRadius: 6, background: "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={16} /></span>}
+            <span className="grow" style={{ minWidth: 0 }}>
+              <span className="truncate" style={{ display: "block", fontSize: 12.5, fontWeight: 600 }}>{pendingTpl.media_name || (lang === "es" ? "Archivo" : "File")}</span>
+              <span className="t-xs muted">{lang === "es" ? "se envía al pulsar Enviar" : "sends when you press Send"}</span>
+            </span>
+            <button className="iconbtn sm" onClick={() => setPendingTpl(null)}><Icon name="x" size={14} /></button>
+          </div>
+        )}
         {!waBlocked && (
         <div className="composer-box">
           <div className="composer-input">
@@ -2417,7 +2434,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div> :
                       canned.map((c) => (
                         <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }}
-                          onClick={() => { setCannedOpen(false); if (c.media_url) sendCannedFile(c); else setText((v) => (v ? v + " " : "") + fillVars(c.body)); }}>
+                          onClick={() => { setCannedOpen(false); attachCanned(c); setText((v) => (v ? v + " " : "") + fillVars(c.body)); taRef.current?.focus(); }}>
                           <div className="row gap-1" style={{ fontWeight: 600, fontSize: 12.5 }}>{c.media_url && <Icon name="paperclip" size={12} />}{c.title}</div>
                           <div className="muted t-xs truncate">{c.body || c.media_name || ""}</div>
                         </button>
@@ -2477,7 +2494,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               )}
             </span>
             <span className="grow" />
-            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={!text.trim() || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
+            <button className="btn btn-primary btn-sm" onClick={doSend} disabled={(!text.trim() && !pendingTpl) || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
         </div>
         )}
