@@ -22,6 +22,7 @@ import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
 import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
@@ -119,6 +120,38 @@ export function OrderDrawer({
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const [chatW, setChatW] = useState(380);
+  /**
+   * En el teléfono la conversación se abre como hoja, no como panel lateral.
+   *
+   * El panel se coloca a la izquierda del cajón del pedido (`right: DRAWER_W`) y se limita a
+   * `calc(100vw - 600px)`. En una pantalla de 400 px eso es un ancho NEGATIVO: el botón "Abrir
+   * conversación" se encendía y no aparecía nada. Un `style` inline le gana a cualquier media
+   * query, así que esto tiene que saberse en JavaScript (ver `useIsMobile`).
+   *
+   * `sheetY` es lo que se ha arrastrado hacia abajo; al soltar, más de un tercio de la altura la
+   * cierra y menos la devuelve a su sitio.
+   */
+  const isMobile = useIsMobile();
+  const [sheetY, setSheetY] = useState(0);
+  const sheetFrom = useRef<number | null>(null);
+  const sheetDrag = {
+    onPointerDown: (e: React.PointerEvent) => {
+      sheetFrom.current = e.clientY;
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (sheetFrom.current === null) return;
+      setSheetY(Math.max(0, e.clientY - sheetFrom.current)); // solo hacia abajo
+    },
+    onPointerUp: () => {
+      if (sheetFrom.current === null) return;
+      sheetFrom.current = null;
+      const alto = typeof window !== "undefined" ? window.innerHeight : 800;
+      if (sheetY > alto / 3) setChatOpen(false);
+      setSheetY(0);
+    },
+  };
+  useEffect(() => { if (!chatOpen) setSheetY(0); }, [chatOpen]);
   const [shipOpen, setShipOpen] = useState(false);
   const [trackSent, setTrackSent] = useState<string | null>(null); // shipment id whose tracking was just WhatsApped
   const [invOpen, setInvOpen] = useState(false);
@@ -809,9 +842,17 @@ export function OrderDrawer({
           </div>
         </div>
       )}
+      {chatOpen && isMobile && <div style={{ position: "fixed", inset: 0, zIndex: 91, background: "rgba(0,0,0,.4)" }} onClick={() => setChatOpen(false)} />}
       {chatOpen && (
-        <div style={{ position: "fixed", top: 0, bottom: 0, right: DRAWER_W, width: chatW, maxWidth: `calc(100vw - ${DRAWER_W + 40}px)`, zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
-          <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />
+        <div className={isMobile ? "order-chat-sheet" : undefined}
+          style={isMobile
+            ? { position: "fixed", left: 0, right: 0, bottom: 0, height: "98%", zIndex: 92, display: "flex", flexDirection: "column", background: "var(--surface)", transform: sheetY ? `translateY(${sheetY}px)` : undefined, transition: sheetFrom.current === null ? "transform .18s var(--ease-out)" : undefined }
+            : { position: "fixed", top: 0, bottom: 0, right: DRAWER_W, width: chatW, maxWidth: `calc(100vw - ${DRAWER_W + 40}px)`, zIndex: 92, boxShadow: "var(--sh-lg)", display: "flex", background: "var(--surface)" }}>
+          {isMobile
+            // El tirador es lo ÚNICO que arrastra: el hilo de mensajes tiene que poder desplazarse
+            // sin que cada dedo hacia abajo cierre la conversación.
+            ? <div className="order-chat-grab" {...sheetDrag}><span /></div>
+            : <div className="order-chat-resizer" onPointerDown={startResize} title={lang === "es" ? "Arrastra para redimensionar" : "Drag to resize"} />}
           {conv ? (
             <Thread detail={conv} agents={agents} areas={areas} connected={connected} businessId={businessId} floating />
           ) : (

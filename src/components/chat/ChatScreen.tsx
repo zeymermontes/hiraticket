@@ -32,7 +32,7 @@ import {
   sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
   requestMediaFetch, deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
 } from "@/app/(app)/chat/actions";
-import { menuStyle } from "@/lib/popover";
+import { menuStyle, menuStyleAbove } from "@/lib/popover";
 import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
@@ -2376,7 +2376,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           {slash && slashMatches.length > 0 && slashRect && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setSlash(null)} />
-              <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - slashRect.top + 6, left: slashRect.left, width: Math.min(360, Math.max(260, slashRect.width)), maxHeight: 280, zIndex: 201 }}>
+              <div className="menu scroll" style={menuStyleAbove(slashRect, { width: Math.max(260, Math.min(360, slashRect.width)), height: 280 })}>
                 <div className="menu-label">{lang === "es" ? "Plantillas (/)" : "Templates (/)"}</div>
                 {slashMatches.map((c, i) => (
                   <button key={c.id} type="button" className={"menu-item" + (i === slashSel ? " on" : "")} style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px", ...(i === slashSel ? { background: "var(--surface-2)" } : {}) }}
@@ -2398,7 +2398,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 {mentionOpen && mentionRect && (
                   <>
                     <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setMentionOpen(false)} />
-                    <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - mentionRect.top + 6, left: mentionRect.left, width: 220, maxHeight: 280, zIndex: 201 }}>
+                    <div className="menu scroll" style={menuStyleAbove(mentionRect, { width: 220, height: 280 })}>
                       <div className="menu-label">{lang === "es" ? "Mencionar a" : "Mention"}</div>
                       {participants.map((p) => (
                         <button key={p.jid} className="menu-item" style={{ textAlign: "left" }} onClick={() => {
@@ -2430,7 +2430,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               {cannedOpen && cannedRect && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setCannedOpen(false)} />
-                  <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - cannedRect.top + 6, left: cannedRect.left, width: 300, maxHeight: 320, zIndex: 201 }}>
+                  <div className="menu scroll" style={menuStyleAbove(cannedRect, { width: 300, height: 320 })}>
                     {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div> :
                       canned.map((c) => (
                         <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }}
@@ -2448,7 +2448,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               {stickerOpen && stickerRect && (
                 <>
                   <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => { setStickerOpen(false); setSavingSticker(null); setConfirmSticker(null); }} />
-                  <div className="menu" style={{ position: "fixed", bottom: window.innerHeight - stickerRect.top + 6, left: Math.max(8, stickerRect.left - 150), width: 300, height: 360, maxHeight: "70vh", zIndex: 201, padding: 8, display: "flex", flexDirection: "column" }}>
+                  <div className="menu" style={{ ...menuStyleAbove(stickerRect, { width: 300, height: 360, align: "right" }), overflowY: "hidden", padding: 8, display: "flex", flexDirection: "column" }}>
                     {savingSticker ? (
                       <SaveFavoriteForm s={savingSticker} lang={lang} onCancel={() => setSavingSticker(null)} onSave={(name, tags) => commitFavorite(savingSticker, name, tags)} onRemove={savingSticker.fav ? () => { removeFavorite(savingSticker); setSavingSticker(null); } : undefined} />
                     ) : confirmSticker ? (
