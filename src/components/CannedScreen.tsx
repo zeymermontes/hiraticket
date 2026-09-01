@@ -7,9 +7,7 @@ import { useApp } from "@/components/AppContext";
 import type { Lang } from "@/lib/i18n";
 import type { CannedMessage } from "@/lib/canned";
 import { createCanned, updateCanned, deleteCanned } from "@/app/(app)/canned/actions";
-import { createClient } from "@/lib/supabase/client";
-import { uploadPath } from "@/lib/mediaUpload";
-import { makeImageThumb } from "@/lib/imageThumb";
+import { uploadMedia } from "@/lib/uploadMedia";
 
 const VARIABLES: { key: string; es: string; en: string }[] = [
   { key: "name", es: "Nombre del cliente", en: "Customer name" },
@@ -145,20 +143,16 @@ const NO_MEDIA = { media_url: null, media_mime: null, media_name: null, media_si
  * Sube el archivo de una plantilla y devuelve las columnas que lo describen.
  *
  * Va al mismo bucket que los adjuntos del chat pero a su propia carpeta, y se sube UNA vez: cada
- * envío reutiliza esta ruta en vez de volver a subir el archivo (ver 0090). La miniatura se calcula
- * aquí por lo mismo que en el chat —- es el único momento en que el archivo está en memoria.
+ * envío reutiliza esta ruta en vez de volver a subir el archivo (ver 0090).
  */
 async function uploadTemplateFile(businessId: string, file: File) {
-  const supabase = createClient();
-  const path = uploadPath(businessId, "templates", file);
-  const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-  if (error) throw new Error(error.message);
+  const up = await uploadMedia(businessId, "templates", file);
   return {
-    media_url: path,
-    media_mime: file.type || "application/octet-stream",
-    media_name: file.name,
-    media_size: file.size,
-    media_thumb: (await makeImageThumb(file)) ?? null,
+    media_url: up.path,
+    media_mime: up.mime,
+    media_name: up.name,
+    media_size: up.size,
+    media_thumb: up.thumb ?? null,
   };
 }
 

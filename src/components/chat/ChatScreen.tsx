@@ -47,8 +47,8 @@ import { isBuildStale } from "@/lib/buildSkew";
 import { clearNotificationsFor } from "@/lib/notify";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
-import { makeImageThumb } from "@/lib/imageThumb";
-import { uploadPath, mediaTypeOf } from "@/lib/mediaUpload";
+import { mediaTypeOf } from "@/lib/mediaUpload";
+import { uploadMedia } from "@/lib/uploadMedia";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -1794,7 +1794,6 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     if (!staged.length || sending) return;
     setSending(true);
     setSendErr(null);
-    const supabase = createClient();
     const failed: File[] = [];
     // El motivo del primer fallo. "No se pudo enviar 1 de 1" a secas no dice si el archivo pesa
     // demasiado, si se cayó la red o si Storage rechazó la ruta —- y sin eso no hay nada que hacer
@@ -1804,15 +1803,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       for (let i = 0; i < staged.length; i++) {
         const file = staged[i];
         try {
-          const path = uploadPath(businessId, "out", file);
-          const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-          if (error) throw new Error(error.message);
-          // Store the storage PATH; the private bucket is served via signed URLs on read.
-          const mtype = mediaTypeOf(file.type);
-          // La miniatura se calcula aquí porque es el único momento en que el archivo está a mano
-          // sin volver a bajarlo. Sin ella la burbuja no tiene nada que pintar (ver THUMBS_SINCE).
-          const thumb = await makeImageThumb(file);
-          await sendMediaMessage(detail.id, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb, size: file.size });
+          const up = await uploadMedia(businessId, "out", file);
+          // Se guarda la RUTA de storage; el bucket privado se sirve con URLs firmadas al leer.
+          await sendMediaMessage(detail.id, { type: mediaTypeOf(up.mime), mediaUrl: up.path, mime: up.mime, name: up.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb: up.thumb, size: up.size });
         } catch (e) {
           // Un archivo que falla no debe tumbar a los demás ni perderse: se queda en la bandeja
           // para reintentarlo, en vez de desaparecer en silencio como antes.

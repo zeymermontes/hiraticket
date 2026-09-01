@@ -24,8 +24,8 @@ import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import { saveStickerFavorite, removeStickerFavorite } from "@/app/(app)/chat/actions";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia } from "@/lib/mediaCache";
-import { makeImageThumb } from "@/lib/imageThumb";
-import { uploadPath, mediaTypeOf } from "@/lib/mediaUpload";
+import { mediaTypeOf } from "@/lib/mediaUpload";
+import { uploadMedia } from "@/lib/uploadMedia";
 import { CachedImg } from "@/components/chat/CachedImg";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
@@ -295,7 +295,6 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   async function sendStaged() {
     if (!staged.length || sending) return;
     const ch = sel; setSending(true); setSendErr(null);
-    const supabase = createClient();
     const failed: File[] = [];
     // Igual que en el chat de clientes: el motivo real del fallo, no solo la cuenta.
     let why = "";
@@ -303,14 +302,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
       for (let i = 0; i < staged.length; i++) {
         const file = staged[i];
         try {
-          const path = uploadPath(businessId, "internal", file);
-          const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
-          if (error) throw new Error(error.message);
-          const mtype = mediaTypeOf(file.type);
-          // Igual que en el chat de clientes: la miniatura se calcula al subir, que es cuando el
-          // archivo está a mano. Ver `@/lib/imageThumb`.
-          const thumb = await makeImageThumb(file);
-          await sendInternalMedia(ch, { type: mtype, mediaUrl: path, mime: file.type || "application/octet-stream", name: file.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb, size: file.size });
+          const up = await uploadMedia(businessId, "internal", file);
+          await sendInternalMedia(ch, { type: mediaTypeOf(up.mime), mediaUrl: up.path, mime: up.mime, name: up.name, caption: i === 0 ? caption.trim() || undefined : undefined, thumb: up.thumb, size: up.size });
         } catch (e) {
           // El que falla se queda en la bandeja para reintentar, en vez de desaparecer.
           console.error(e);
