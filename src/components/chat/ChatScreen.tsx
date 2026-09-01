@@ -48,6 +48,7 @@ import { clearNotificationsFor } from "@/lib/notify";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
 import { makeImageThumb } from "@/lib/imageThumb";
+import { uploadPath } from "@/lib/mediaUpload";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -1788,12 +1789,15 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     setSendErr(null);
     const supabase = createClient();
     const failed: File[] = [];
+    // El motivo del primer fallo. "No se pudo enviar 1 de 1" a secas no dice si el archivo pesa
+    // demasiado, si se cayó la red o si Storage rechazó la ruta —- y sin eso no hay nada que hacer
+    // más que reintentar a ciegas. Se guarda el primero: si fallan varios suele ser el mismo.
+    let why = "";
     try {
       for (let i = 0; i < staged.length; i++) {
         const file = staged[i];
         try {
-          const ext = (file.name.split(".").pop() || "bin").toLowerCase();
-          const path = `${businessId}/out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const path = uploadPath(businessId, "out", file);
           const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
           if (error) throw new Error(error.message);
           // Store the storage PATH; the private bucket is served via signed URLs on read.
@@ -1806,14 +1810,16 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           // Un archivo que falla no debe tumbar a los demás ni perderse: se queda en la bandeja
           // para reintentarlo, en vez de desaparecer en silencio como antes.
           console.error(e);
+          if (!why) why = e instanceof Error ? e.message : String(e);
           failed.push(file);
         }
       }
       if (failed.length) {
         setStaged(failed);
+        const reason = why ? ` ${why}.` : "";
         setSendErr(lang === "es"
-          ? `No se pudo enviar ${failed.length} de ${staged.length}. Puedes reintentar o cancelar.`
-          : `Couldn't send ${failed.length} of ${staged.length}. Retry or cancel.`);
+          ? `No se pudo enviar ${failed.length} de ${staged.length}.${reason} Puedes reintentar o cancelar.`
+          : `Couldn't send ${failed.length} of ${staged.length}.${reason} Retry or cancel.`);
       } else {
         setStaged([]); setCaption("");
         // El texto se fue con el archivo: dejarlo también en el campo del chat invita a mandarlo
@@ -2471,8 +2477,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 <button className="iconbtn" style={{ width: 86, height: 86, border: "1px dashed var(--border-strong)", borderRadius: 10 }} onClick={() => fileRef.current?.click()}><Icon name="plus" /></button>
               </div>
             </div>
-            <div className="modal-foot">
-              <div className="col gap-2 grow" style={{ minWidth: 0 }}>
+            <div className="modal-foot stack">
+              <div className="col gap-2 grow" style={{ minWidth: 0, width: "100%" }}>
                 {sendErr && <div className="t-xs" style={{ color: "var(--red)" }}>{sendErr}</div>}
                 <div className="field field-filled"><Icon name="edit" size={15} /><input placeholder={lang === "es" ? "Agrega un comentario…" : "Add a caption…"} value={caption} onChange={(e) => setCaption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendStaged(); }} autoFocus /></div>
               </div>

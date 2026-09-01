@@ -752,6 +752,11 @@ body.dragging-card .kcard { cursor: grabbing; }
   /* Los botones de un pie de hoja se reparten el ancho: apuntar a uno chiquito con el pulgar en
      el borde inferior es justo donde más se falla. */
   .modal-foot .btn { flex: 1; }
+  /* …salvo cuando el pie lleva un campo de texto al lado (el comentario de un adjunto): repartir
+     el ancho dejaba el comentario en una rendija de dos palabras en un teléfono. Se apila, el
+     campo ocupa la fila entera y el botón queda debajo, ancho completo. */
+  .modal-foot.stack { flex-direction: column; align-items: stretch; }
+  .modal-foot.stack .btn { flex: none; width: 100%; }
 
   /* El drawer de 560px se lleva la pantalla entera —- en un teléfono no hay "al lado". */
   .drawer {
