@@ -11,6 +11,7 @@ import { flushCloudOutbox, sendCloudReactionFor } from "@/lib/cloud-outbox";
 import { officialSessionOf } from "@/lib/cloud-session";
 import { listTemplates } from "@/lib/whatsapp-cloud";
 import { VAR_RE } from "@/lib/template-rules";
+import { CANNED_COLS, cannedMediaFields, type CannedMessage } from "@/lib/canned";
 import { pushTransfer } from "@/lib/push";
 
 /** Load a single conversation's full detail (for the order drawer's embedded chat). */
@@ -362,11 +363,17 @@ async function runConvStatusAutomations(convId: string, businessId: string, stat
 
     if (a.action_type === "send_template" && payload.template) {
       const { data: conv } = await supabase.from("conversations").select("contact:contacts(name)").eq("id", convId).maybeSingle();
-      const { data: tpl } = await supabase.from("canned_messages").select("body").eq("business_id", businessId).eq("title", payload.template).maybeSingle();
+      const { data: tpl } = await supabase.from("canned_messages").select(CANNED_COLS).eq("business_id", businessId).eq("title", payload.template).maybeSingle();
       if (tpl) {
         const first = (((conv?.contact as { name?: string } | null)?.name) ?? "").split(" ")[0];
         const body = String(tpl.body).replace(/\{\{name\}\}/g, first).replace(/\{\{order_number\}\}/g, "").replace(/\{\{total\}\}/g, "");
-        await supabase.from("messages").insert({ business_id: businessId, conversation_id: convId, direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued" });
+        // Si la plantilla lleva archivo, el flujo manda el archivo con el texto de pie —- lo mismo
+        // que sale al elegirla a mano en el chat. Antes solo salía el texto.
+        await supabase.from("messages").insert({
+          business_id: businessId, conversation_id: convId, direction: "out",
+          ...cannedMediaFields(tpl as unknown as CannedMessage),
+          body: body ? encryptBody(businessId, body) : null, author_id: userId, state: "queued",
+        });
         await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
         await flushCloudOutbox(businessId);
       }

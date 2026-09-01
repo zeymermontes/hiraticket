@@ -48,7 +48,7 @@ import { clearNotificationsFor } from "@/lib/notify";
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia, fetchWithProgress } from "@/lib/mediaCache";
 import { makeImageThumb } from "@/lib/imageThumb";
-import { uploadPath } from "@/lib/mediaUpload";
+import { uploadPath, mediaTypeOf } from "@/lib/mediaUpload";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import type { StickerItem } from "@/lib/chat";
@@ -510,6 +510,13 @@ function SaveFavoriteForm({ s, lang, onSave, onRemove, onCancel }: { s: StickerI
     </div>
   );
 }
+
+/** Una plantilla del negocio. Puede llevar archivo: `media_url` es la ruta en Storage (ver 0090). */
+type CannedItem = {
+  id: string; title: string; body: string; shortcut: string | null;
+  media_url: string | null; media_mime: string | null; media_name: string | null;
+  media_size: number | null; media_thumb: string | null;
+};
 
 export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: string) => void }) {
   // Llamada: no hay archivo, es un aviso. Amarillo mientras suena, rojo si quedó perdida.
@@ -1801,7 +1808,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
           if (error) throw new Error(error.message);
           // Store the storage PATH; the private bucket is served via signed URLs on read.
-          const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
+          const mtype = mediaTypeOf(file.type);
           // La miniatura se calcula aquí porque es el único momento en que el archivo está a mano
           // sin volver a bajarlo. Sin ella la burbuja no tiene nada que pintar (ver THUMBS_SINCE).
           const thumb = await makeImageThumb(file);
@@ -1837,7 +1844,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [cannedOpen, setCannedOpen] = useState(false);
-  const [canned, setCanned] = useState<{ id: string; title: string; body: string; shortcut: string | null }[]>([]);
+  const [canned, setCanned] = useState<CannedItem[]>([]);
   const emojiBtn = useRef<HTMLButtonElement>(null);
   const cannedBtn = useRef<HTMLButtonElement>(null);
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
@@ -1890,8 +1897,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   async function loadCanned() {
     if (canned.length) return;
     const supabase = createClient();
-    const { data } = await supabase.from("canned_messages").select("id, title, body, shortcut").eq("business_id", businessId).order("title");
-    setCanned((data ?? []) as { id: string; title: string; body: string; shortcut: string | null }[]);
+    const { data } = await supabase.from("canned_messages").select("id, title, body, shortcut, media_url, media_mime, media_name, media_size, media_thumb").eq("business_id", businessId).order("title");
+    setCanned((data ?? []) as CannedItem[]);
   }
   // Load templates once so the "/" shortcut works without opening the picker.
   useEffect(() => { loadCanned(); /* eslint-disable-next-line */ }, []);
@@ -1904,9 +1911,39 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     const m = before.match(/(?:^|\s)\/(\w*)$/);
     if (m) { setSlash({ q: m[1], at: caret - m[1].length - 1 }); setSlashSel(0); if (taRef.current) setSlashRect(taRef.current.getBoundingClientRect()); } else setSlash(null);
   }
-  function applySlash(c: { body: string }) {
+  /**
+   * Mandar una plantilla que lleva archivo.
+   *
+   * No se vuelve a subir nada: se reutiliza la ruta que guardó la plantilla, igual que un sticker
+   * favorito. Y el texto de la plantilla viaja como PIE del archivo —- lo mismo que hace el modal
+   * de "Enviar archivos" —- en vez de salir como un segundo mensaje suelto detrás.
+   */
+  function sendCannedFile(c: CannedItem) {
+    if (!c.media_url) return;
+    const mime = c.media_mime || "application/octet-stream";
+    const caption = fillVars(c.body).trim();
+    start(async () => {
+      await sendMediaMessage(detail.id, {
+        type: mediaTypeOf(mime), mediaUrl: c.media_url!, mime,
+        name: c.media_name ?? undefined, caption: caption || undefined,
+        thumb: c.media_thumb ?? undefined, size: c.media_size ?? undefined,
+      });
+      refresh();
+    });
+  }
+
+  function applySlash(c: CannedItem) {
     const el = taRef.current; if (!el || !slash) return;
     const caret = el.selectionStart;
+    // Una plantilla con archivo no se "inserta" en el campo: se manda. Lo único que se toca del
+    // texto es borrar el /atajo a medio escribir.
+    if (c.media_url) {
+      setText(text.slice(0, slash.at) + text.slice(caret));
+      setSlash(null);
+      sendCannedFile(c);
+      requestAnimationFrame(() => el.focus());
+      return;
+    }
     const filled = fillVars(c.body);
     const next = text.slice(0, slash.at) + filled + text.slice(caret);
     setText(next); setSlash(null);
@@ -2334,8 +2371,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 {slashMatches.map((c, i) => (
                   <button key={c.id} type="button" className={"menu-item" + (i === slashSel ? " on" : "")} style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px", ...(i === slashSel ? { background: "var(--surface-2)" } : {}) }}
                     onMouseEnter={() => setSlashSel(i)} onMouseDown={(e) => { e.preventDefault(); applySlash(c); }}>
-                    <div className="row gap-2"><span style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</span>{c.shortcut && <span className="mono t-xs muted">{c.shortcut}</span>}</div>
-                    <div className="muted t-xs truncate">{c.body}</div>
+                    <div className="row gap-2">{c.media_url && <Icon name="paperclip" size={12} />}<span style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</span>{c.shortcut && <span className="mono t-xs muted">{c.shortcut}</span>}</div>
+                    <div className="muted t-xs truncate">{c.body || c.media_name || ""}</div>
                   </button>
                 ))}
               </div>
@@ -2386,9 +2423,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   <div className="menu scroll" style={{ position: "fixed", bottom: window.innerHeight - cannedRect.top + 6, left: cannedRect.left, width: 300, maxHeight: 320, zIndex: 201 }}>
                     {canned.length === 0 ? <div className="muted t-sm" style={{ padding: 10 }}>{lang === "es" ? "Sin plantillas." : "No templates."}</div> :
                       canned.map((c) => (
-                        <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }} onClick={() => { setText((v) => (v ? v + " " : "") + fillVars(c.body)); setCannedOpen(false); }}>
-                          <div style={{ fontWeight: 600, fontSize: 12.5 }}>{c.title}</div>
-                          <div className="muted t-xs truncate">{c.body}</div>
+                        <button key={c.id} className="menu-item" style={{ display: "block", textAlign: "left", height: "auto", padding: "8px 12px" }}
+                          onClick={() => { setCannedOpen(false); if (c.media_url) sendCannedFile(c); else setText((v) => (v ? v + " " : "") + fillVars(c.body)); }}>
+                          <div className="row gap-1" style={{ fontWeight: 600, fontSize: 12.5 }}>{c.media_url && <Icon name="paperclip" size={12} />}{c.title}</div>
+                          <div className="muted t-xs truncate">{c.body || c.media_name || ""}</div>
                         </button>
                       ))}
                   </div>

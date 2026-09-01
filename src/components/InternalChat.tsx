@@ -25,7 +25,7 @@ import { saveStickerFavorite, removeStickerFavorite } from "@/app/(app)/chat/act
 import { StickerCell } from "@/components/chat/StickerCell";
 import { useCachedMedia } from "@/lib/mediaCache";
 import { makeImageThumb } from "@/lib/imageThumb";
-import { uploadPath } from "@/lib/mediaUpload";
+import { uploadPath, mediaTypeOf } from "@/lib/mediaUpload";
 import { CachedImg } from "@/components/chat/CachedImg";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
@@ -306,7 +306,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           const path = uploadPath(businessId, "internal", file);
           const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
           if (error) throw new Error(error.message);
-          const mtype = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "document";
+          const mtype = mediaTypeOf(file.type);
           // Igual que en el chat de clientes: la miniatura se calcula al subir, que es cuando el
           // archivo está a mano. Ver `@/lib/imageThumb`.
           const thumb = await makeImageThumb(file);

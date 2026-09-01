@@ -16,6 +16,7 @@
 type AnySupabase = any;
 
 import { encryptBody } from "@/lib/msgcrypto";
+import { CANNED_COLS, cannedMediaFields, type CannedMessage } from "@/lib/canned";
 import { ensureTag } from "@/lib/tags";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 
@@ -50,16 +51,18 @@ export async function runOrderFlowAction(supabase: AnySupabase, opts: {
       .from("orders").select("code,total,contact_id,conversation_id").eq("id", orderId).maybeSingle();
     if (!order?.conversation_id) return;
     const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
-    const { data: tpl } = await supabase.from("canned_messages").select("body").eq("business_id", businessId).eq("title", payload.template).maybeSingle();
+    const { data: tpl } = await supabase.from("canned_messages").select(CANNED_COLS).eq("business_id", businessId).eq("title", payload.template).maybeSingle();
     if (!tpl) return;
     const first = (contact?.name ?? "").split(" ")[0];
     const body = String(tpl.body)
       .replace(/\{\{name\}\}/g, first)
       .replace(/\{\{order_number\}\}/g, order.code as string)
       .replace(/\{\{total\}\}/g, String(order.total));
+    // Con archivo, el flujo manda el adjunto y el texto va de pie. Ver `cannedMediaFields`.
     await supabase.from("messages").insert({
       business_id: businessId, conversation_id: order.conversation_id,
-      direction: "out", type: "text", body: encryptBody(businessId, body), author_id: userId, state: "queued",
+      direction: "out", ...cannedMediaFields(tpl as unknown as CannedMessage),
+      body: body ? encryptBody(businessId, body) : null, author_id: userId, state: "queued",
       next_retry_at: sendAfter,
     });
     await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);

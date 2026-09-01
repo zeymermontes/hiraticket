@@ -27,7 +27,21 @@ export function uploadExt(file: File): string {
   return (fromMime || "bin").toLowerCase();
 }
 
-/** Ruta única dentro del bucket `media`. `folder` separa lo del chat de clientes de lo del equipo. */
-export function uploadPath(businessId: string, folder: "out" | "internal", file: File): string {
+/** Ruta única dentro del bucket `media`. `folder` separa clientes, equipo y plantillas. */
+export function uploadPath(businessId: string, folder: "out" | "internal" | "templates", file: File): string {
   return `${businessId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${uploadExt(file)}`;
+}
+
+/**
+ * El `type` de un mensaje a partir del MIME.
+ *
+ * Vive aquí porque lo necesitan los dos chats al subir Y el servidor al mandar una plantilla con
+ * archivo: tres copias de la misma cadena de ternarios es exactamente como se desincronizan.
+ * Todo lo que no es foto, video o audio —- un PDF incluido —- es "document".
+ */
+export function mediaTypeOf(mime: string): "image" | "video" | "audio" | "document" {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  return "document";
 }

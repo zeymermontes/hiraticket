@@ -7,6 +7,9 @@ import { useApp } from "@/components/AppContext";
 import type { Lang } from "@/lib/i18n";
 import type { CannedMessage } from "@/lib/canned";
 import { createCanned, updateCanned, deleteCanned } from "@/app/(app)/canned/actions";
+import { createClient } from "@/lib/supabase/client";
+import { uploadPath } from "@/lib/mediaUpload";
+import { makeImageThumb } from "@/lib/imageThumb";
 
 const VARIABLES: { key: string; es: string; en: string }[] = [
   { key: "name", es: "Nombre del cliente", en: "Customer name" },
@@ -135,14 +138,65 @@ function VariableTextarea({
   );
 }
 
-function CannedRow({ item }: { item: CannedMessage }) {
+/** Las columnas del adjunto de una plantilla. Vacías = plantilla de solo texto. */
+const NO_MEDIA = { media_url: null, media_mime: null, media_name: null, media_size: null, media_thumb: null };
+
+/**
+ * Sube el archivo de una plantilla y devuelve las columnas que lo describen.
+ *
+ * Va al mismo bucket que los adjuntos del chat pero a su propia carpeta, y se sube UNA vez: cada
+ * envío reutiliza esta ruta en vez de volver a subir el archivo (ver 0090). La miniatura se calcula
+ * aquí por lo mismo que en el chat —- es el único momento en que el archivo está en memoria.
+ */
+async function uploadTemplateFile(businessId: string, file: File) {
+  const supabase = createClient();
+  const path = uploadPath(businessId, "templates", file);
+  const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
+  if (error) throw new Error(error.message);
+  return {
+    media_url: path,
+    media_mime: file.type || "application/octet-stream",
+    media_name: file.name,
+    media_size: file.size,
+    media_thumb: (await makeImageThumb(file)) ?? null,
+  };
+}
+
+/** El archivo de una plantilla: nombre, tipo y, si se puede quitar, la X. */
+function FileChip({ name, mime, onRemove }: { name: string; mime?: string | null; onRemove?: () => void }) {
+  return (
+    <div className="row gap-2" style={{ alignItems: "center", padding: "6px 8px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)", minWidth: 0 }}>
+      <Icon name="file" size={15} />
+      <span className="truncate grow" style={{ fontSize: 12.5, fontWeight: 600, minWidth: 0 }}>{name}</span>
+      {mime && <span className="t-xs muted" style={{ flex: "none" }}>{mime.split("/").pop()}</span>}
+      {onRemove && <button className="iconbtn sm" onClick={onRemove}><Icon name="x" size={13} /></button>}
+    </div>
+  );
+}
+
+function CannedRow({ item, businessId }: { item: CannedMessage; businessId: string }) {
+  const { lang } = useApp();
   const router = useRouter();
   const [, start] = useTransition();
   const [body, setBody] = useState(item.body);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   function commit() {
     if (body !== item.body) start(async () => { await updateCanned(item.id, { body }); router.refresh(); });
   }
+  function attach(file: File) {
+    setErr(null);
+    start(async () => {
+      try {
+        await updateCanned(item.id, await uploadTemplateFile(businessId, file));
+        router.refresh();
+      } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    });
+  }
+  // Quitar el archivo de la plantilla NO lo borra de Storage: los mensajes que ya salieron apuntan
+  // a esa misma ruta y se quedarían en blanco.
+  function detach() { start(async () => { await updateCanned(item.id, NO_MEDIA); router.refresh(); }); }
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 12 }}>
       <div className="row gap-2">
@@ -153,6 +207,14 @@ function CannedRow({ item }: { item: CannedMessage }) {
       </div>
       <div style={{ marginTop: 8 }}>
         <VariableTextarea value={body} onChange={setBody} onCommit={commit} rows={2} />
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <input ref={fileRef} type="file" style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) attach(f); e.target.value = ""; }} />
+        {item.media_url
+          ? <FileChip name={item.media_name || "Archivo"} mime={item.media_mime} onRemove={detach} />
+          : <button className="btn btn-sm btn-outline" onClick={() => fileRef.current?.click()}><Icon name="paperclip" size={14} />{lang === "es" ? "Adjuntar archivo" : "Attach file"}</button>}
+        {err && <div className="t-xs" style={{ color: "var(--red)", marginTop: 4 }}>{err}</div>}
       </div>
     </div>
   );
@@ -166,13 +228,24 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
   const [body, setBody] = useState("");
   const [category, setCategory] = useState("General");
   const [shortcut, setShortcut] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Con archivo, el texto es opcional: una plantilla puede ser SOLO el archivo (la lista de precios,
+  // el formulario) y entonces sale como adjunto sin pie.
+  const canCreate = !!title.trim() && (!!body.trim() || !!file);
 
   function add() {
-    if (!title.trim() || !body.trim()) return;
+    if (!canCreate) return;
+    setErr(null);
     start(async () => {
-      await createCanned(businessId, { title, body, category, shortcut });
-      setTitle(""); setBody(""); setShortcut("");
-      router.refresh();
+      try {
+        const media = file ? await uploadTemplateFile(businessId, file) : {};
+        await createCanned(businessId, { title, body, category, shortcut, ...media });
+        setTitle(""); setBody(""); setShortcut(""); setFile(null);
+        router.refresh();
+      } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     });
   }
 
@@ -200,7 +273,7 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
             <section className="ws-block" key={cat}>
               <div className="ws-block-head"><Icon name="canned" size={16} /><h4 className="grow">{catLabel(cat, lang)}</h4><span className="badge badge-soft">{items.filter((i) => (i.category || "General") === cat).length}</span></div>
               <div className="ws-block-body col gap-2">
-                {items.filter((i) => (i.category || "General") === cat).map((c) => <CannedRow key={c.id} item={c} />)}
+                {items.filter((i) => (i.category || "General") === cat).map((c) => <CannedRow key={c.id} item={c} businessId={businessId} />)}
               </div>
             </section>
           ))}
@@ -218,13 +291,19 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
             </select>
             <VariableTextarea value={body} onChange={setBody} rows={4}
               placeholder={lang === "es" ? "Cuerpo… escribe @ para insertar variables" : "Body… type @ to insert variables"} />
+            <input ref={fileRef} type="file" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = ""; }} />
+            {file
+              ? <FileChip name={file.name} mime={file.type} onRemove={() => setFile(null)} />
+              : <button className="btn btn-sm btn-outline btn-block" onClick={() => fileRef.current?.click()}><Icon name="paperclip" size={14} />{lang === "es" ? "Adjuntar archivo (opcional)" : "Attach a file (optional)"}</button>}
             {body.trim() && (
               <div>
                 <label className="lbl">{lang === "es" ? "Vista previa" : "Preview"}</label>
                 <div style={{ padding: 10, borderRadius: 10, background: "var(--surface-2)", fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}><TemplatePreview body={body} /></div>
               </div>
             )}
-            <button className="btn btn-primary btn-block" disabled={pending || !title.trim() || !body.trim()} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"}</button>
+            {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
+            <button className="btn btn-primary btn-block" disabled={pending || !canCreate} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"}</button>
           </div>
         </section>
        </div>
