@@ -20,7 +20,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste, previewOrderInvoice, setOrderInvoice } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
@@ -180,6 +180,34 @@ export function OrderDrawer({
     run(fn);
   };
 
+  /**
+   * "Requiere factura" después de creado. Si hay cobros abiertos, sus montos van a cambiar y el
+   * cliente puede tenerlos ya en su WhatsApp: se enseña el antes/después y se pregunta. Sin cobros
+   * abiertos no hay nada que consultar —- el link del pedido cobra lo que falte y se corrige solo.
+   */
+  const toggleInvoice = async (next: boolean) => {
+    const open = detail.charges.filter((c) => isLive(c) && c.status !== "paid");
+    if (open.length) {
+      const plan = await previewOrderInvoice(detail.id, next);
+      if (!plan) return;
+      const es = lang === "es";
+      const lines = plan.charges.map((c) => `· ${c.title}: $${formatMoney(c.from)} → $${formatMoney(c.to)}${c.status === "sent" ? (es ? " (ya enviado)" : " (already sent)") : ""}`);
+      const ok = await ask({
+        icon: "file",
+        title: next ? (es ? "Agregar factura al pedido" : "Add invoice to the order") : (es ? "Quitar la factura del pedido" : "Remove invoice from the order"),
+        message: (es
+          ? `El total pasa de $${formatMoney(plan.from)} a $${formatMoney(plan.to)}.`
+          : `The total goes from $${formatMoney(plan.from)} to $${formatMoney(plan.to)}.`)
+          + (lines.length
+            ? `\n\n${es ? "Cobros pendientes que cambian:" : "Pending charges that change:"}\n${lines.join("\n")}\n\n${es ? "Los links siguen siendo los mismos y ya cobran el monto nuevo; si ya se los mandaste, reenvíalos para que el cliente vea la cifra correcta." : "The links stay the same and already charge the new amount; if you already sent them, resend so the customer sees the right figure."}`
+            : `\n\n${es ? "Los cobros pendientes no cambian." : "Pending charges don't change."}`),
+        confirmLabel: next ? (es ? "Agregar factura" : "Add invoice") : (es ? "Quitar factura" : "Remove invoice"),
+      });
+      if (!ok) return;
+    }
+    runOpt({ requires_invoice: next }, () => setOrderInvoice(detail.id, next));
+  };
+
   const DRAWER_W = 560; // width of the order drawer this panel docks against
   useEffect(() => {
     const saved = Number(localStorage.getItem("hira.orderChatW"));
@@ -337,6 +365,19 @@ export function OrderDrawer({
               <input type="datetime-local" className="inp-inline" style={{ colorScheme: "light" }} value={toLocalInput(detail.due_at)}
                 onChange={(e) => { const v = e.target.value ? new Date(e.target.value).toISOString() : null; runOpt({ due_at: v }, () => setOrderDue(detail.id, v)); }} />
             </div>
+            {/* "Requiere factura" se puede cambiar después de creado: el cliente lo pide cuando ya
+                tiene el link, o se arrepiente cuando ya se la cobraron. Solo en negocio: en
+                personal no hay dinero ni facturas. */}
+            {!personal && (
+              <div className="col gap-1">
+                <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Factura" : "Invoice"}</label>
+                <label className="row gap-2" style={{ alignItems: "center", cursor: pending ? "default" : "pointer", minHeight: 30 }}>
+                  <input type="checkbox" checked={detail.requires_invoice} disabled={pending} onChange={(e) => toggleInvoice(e.target.checked)} />
+                  <span className="t-sm" style={{ fontWeight: 600 }}>{lang === "es" ? "Requiere factura" : "Needs invoice"}</span>
+                  {detail.requires_invoice && Number(detail.tax_rate) > 0 && <Pill color="violet">+{Number(detail.tax_rate)}% IVA</Pill>}
+                </label>
+              </div>
+            )}
             {/* Solo con fecha límite: sin ella, el pedido no vive en la agenda y el umbral no
                 decide nada. "Por defecto" = el del negocio (Ajustes); elegir una etapa aquí
                 sobreescribe SOLO este pedido. */}

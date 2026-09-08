@@ -449,15 +449,145 @@ export async function bulkMoveOrderStage(orderIds: string[], stageId: string): P
   return { flows: [...fired], confirmPaymentOrderIds };
 }
 
-/** order.total := sum of its line-item subtotals (+ the order's IVA when it requires an invoice,
- *  using the rate frozen on the order at creation — editing items must not drop the tax). */
-async function recomputeOrderTotal(supabase: SB, orderId: string): Promise<void> {
+/** Total de un pedido a partir de sus piezas: suma de renglones, menos el descuento en $, más el IVA
+ *  sobre lo que queda. Es LA fórmula —- la misma de `createOrder`—, para que editar artículos o
+ *  cambiar la factura después nunca dé un número distinto al de la creación. */
+function computeOrderTotal(base: number, discount: number, taxRate: number): number {
+  const taxed = base - Math.min(base, Math.max(0, discount));
+  return taxRate > 0 ? Math.round(taxed * (1 + taxRate / 100) * 100) / 100 : Math.round(taxed * 100) / 100;
+}
+
+/** order.total := sum of its line-item subtotals − discount (+ the order's IVA when it requires an
+ *  invoice, using the rate frozen on the order — editing items must not drop the tax nor the
+ *  discount). Devuelve el total nuevo. */
+async function recomputeOrderTotal(supabase: SB, orderId: string): Promise<number> {
   const { data: items } = await supabase.from("order_items").select("subtotal").eq("order_id", orderId);
   const base = (items ?? []).reduce((s: number, i: { subtotal: number }) => s + (Number(i.subtotal) || 0), 0);
-  let total = base;
-  const { data: o } = await supabase.from("orders").select("requires_invoice, tax_rate").eq("id", orderId).maybeSingle();
-  if (o?.requires_invoice && Number(o.tax_rate) > 0) total = Math.round(base * (1 + Number(o.tax_rate) / 100) * 100) / 100; // 0050 not applied → o is null-ish, plain sum
+  // 0050/0058 sin aplicar → la consulta falla y `o` es null: suma plana, como antes.
+  const { data: o } = await supabase.from("orders").select("requires_invoice, tax_rate, discount").eq("id", orderId).maybeSingle();
+  const rate = o?.requires_invoice ? Number(o.tax_rate) || 0 : 0;
+  const total = computeOrderTotal(base, Number(o?.discount) || 0, rate);
   await supabase.from("orders").update({ total }).eq("id", orderId);
+  return total;
+}
+
+/**
+ * "Requiere factura" DESPUÉS de creado el pedido.
+ *
+ * Al crear, la casilla decide si el total lleva IVA. Pero el cliente avisa que sí quiere factura
+ * cuando ya tiene el link de pago en el WhatsApp, o dice que mejor no cuando ya se la cobraron.
+ * Prenderla o apagarla aquí congela (o suelta) la tasa del negocio en el pedido y recalcula el
+ * total con la misma fórmula de siempre.
+ *
+ * Los links de pago: el del PEDIDO cobra "lo que falte" y lee el total al abrirse, así que se
+ * corrige solo. Los COBROS (0089) tienen monto fijo, y un finiquito de $5,000 en un pedido que
+ * ahora vale $11,600 es un link que miente. Por eso la diferencia se reparte entre los cobros
+ * abiertos (ni pagados ni anulados), proporcional a su monto; lo ya pagado no se toca porque ese
+ * dinero ya entró. Un cobro nunca baja de lo que ya le abonaron.
+ *
+ * Se hace en dos tiempos —- `previewOrderInvoice` calcula, `setOrderInvoice` escribe—, para que el
+ * cajón pueda enseñar "el finiquito pasa de $5,000 a $6,600" ANTES de tocar un monto que el
+ * cliente ya tiene en su teléfono.
+ */
+export interface InvoiceChangePlan {
+  requires: boolean;
+  taxRate: number;          // tasa que quedará en el pedido (0 = sin IVA)
+  from: number;             // total actual
+  to: number;               // total nuevo
+  charges: { id: string; title: string; status: string; from: number; to: number }[]; // solo los que cambian
+}
+
+async function planInvoiceChange(supabase: SB, orderId: string, requires: boolean): Promise<(InvoiceChangePlan & { businessId: string }) | null> {
+  const { data: o } = await supabase.from("orders").select("business_id, total, requires_invoice, tax_rate, discount").eq("id", orderId).maybeSingle();
+  if (!o) return null;
+  let taxRate = 0;
+  if (requires) {
+    const { data: biz } = await supabase.from("businesses").select("invoice_add_tax, invoice_tax_rate").eq("id", o.business_id).maybeSingle();
+    if ((biz as { invoice_add_tax?: boolean } | null)?.invoice_add_tax ?? false) taxRate = Number((biz as { invoice_tax_rate?: number } | null)?.invoice_tax_rate ?? 16);
+  }
+  const [{ data: items }, { data: charges }, { data: pays }] = await Promise.all([
+    supabase.from("order_items").select("subtotal").eq("order_id", orderId),
+    supabase.from("charges").select("id, kind, label, amount, status").eq("order_id", orderId).order("seq", { ascending: true }),
+    supabase.from("payments").select("amount, charge_id").eq("order_id", orderId),
+  ]);
+  const base = (items ?? []).reduce((s: number, i: { subtotal: number }) => s + (Number(i.subtotal) || 0), 0);
+  const from = Math.round((Number(o.total) || 0) * 100) / 100;
+  const to = computeOrderTotal(base, Number(o.discount) || 0, taxRate);
+  const delta = Math.round((to - from) * 100) / 100;
+
+  const paidBy = new Map<string, number>();
+  for (const p of pays ?? []) if (p.charge_id) paidBy.set(p.charge_id as string, (paidBy.get(p.charge_id as string) ?? 0) + (Number(p.amount) || 0));
+  const open = (charges ?? []).filter((c) => c.status !== "void" && c.status !== "paid")
+    .map((c) => ({ id: c.id as string, title: chargeTitle({ kind: c.kind as string, label: (c.label as string | null) ?? null }), status: c.status as string, amount: Number(c.amount) || 0, floor: paidBy.get(c.id as string) ?? 0 }));
+
+  // Reparto proporcional con piso en lo ya abonado. Si un cobro se topa con su piso, lo que no
+  // absorbió se vuelve a repartir entre los demás; si nadie puede, queda un desfase y el cajón lo
+  // avisa como siempre (`chargesGap`) —- mejor un aviso que un cobro en cero.
+  const next = new Map(open.map((c) => [c.id, c.amount]));
+  let left = delta;
+  let pool = open.map((c) => c.id);
+  for (let pass = 0; pass < 4 && Math.abs(left) >= 0.01 && pool.length; pass++) {
+    const weight = pool.reduce((s, id) => s + (next.get(id) ?? 0), 0);
+    let given = 0;
+    const clamped: string[] = [];
+    pool.forEach((id, i) => {
+      const cur = next.get(id) ?? 0;
+      const share = i === pool.length - 1 ? Math.round((left - given) * 100) / 100 : Math.round(left * (weight > 0 ? cur / weight : 1 / pool.length) * 100) / 100;
+      const floor = open.find((c) => c.id === id)!.floor;
+      const want = Math.round((cur + share) * 100) / 100;
+      const got = Math.max(floor, want);
+      if (got !== want) clamped.push(id);
+      given += Math.round((got - cur) * 100) / 100;
+      next.set(id, got);
+    });
+    left = Math.round((left - given) * 100) / 100;
+    pool = pool.filter((id) => !clamped.includes(id));
+  }
+  const adj = open.filter((c) => Math.abs((next.get(c.id) ?? c.amount) - c.amount) >= 0.01)
+    .map((c) => ({ id: c.id, title: c.title, status: c.status, from: c.amount, to: next.get(c.id) ?? c.amount }));
+  return { requires, taxRate, from, to, charges: adj, businessId: o.business_id as string };
+}
+
+/** Qué pasaría al prender/apagar la factura, sin tocar nada. */
+export async function previewOrderInvoice(orderId: string, requires: boolean): Promise<InvoiceChangePlan | null> {
+  const supabase = await createClient();
+  const plan = await planInvoiceChange(supabase, orderId, requires);
+  if (!plan) return null;
+  const { businessId: _b, ...rest } = plan; void _b;
+  return rest;
+}
+
+/** Prende o apaga "Requiere factura" en un pedido ya creado: congela la tasa, recalcula el total,
+ *  ajusta los cobros abiertos y deja rastro en la actividad. */
+export async function setOrderInvoice(orderId: string, requires: boolean): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const plan = await planInvoiceChange(supabase, orderId, requires);
+  if (!plan) return { ok: false, error: "not-found" };
+
+  const { error } = await supabase.from("orders")
+    .update({ requires_invoice: requires, tax_rate: plan.taxRate > 0 ? plan.taxRate : null, total: plan.to })
+    .eq("id", orderId);
+  if (error) return { ok: false, error: error.message };
+
+  for (const c of plan.charges) await supabase.from("charges").update({ amount: c.to }).eq("id", c.id);
+  // Un cobro que bajó hasta lo ya abonado queda cubierto; uno que subió puede dejar de estarlo.
+  for (const c of plan.charges) await recomputeChargeStatus(supabase, c.id);
+  // Con el total nuevo, lo pagado puede cubrirlo (o dejar de hacerlo).
+  await recomputePayStatus(supabase, orderId, plan.to);
+
+  const rateTxt = plan.taxRate > 0 ? ` (IVA ${plan.taxRate}%)` : "";
+  const totalTxt = plan.to !== plan.from ? ` · Total ${money(plan.from)} → ${money(plan.to)}` : "";
+  const chargesTxt = plan.charges.length
+    ? ` · Cobros ajustados: ${plan.charges.map((c) => `${c.title} ${money(c.from)} → ${money(c.to)}`).join(", ")}`
+    : "";
+  await supabase.from("events").insert({
+    business_id: plan.businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+    kind: "amount",
+    text: (requires ? `Requiere factura${rateTxt}` : "Ya no requiere factura") + totalTxt + chargesTxt,
+  });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
+  return { ok: true };
 }
 
 /** Edit a line item (name / qty / unit price); recomputes its subtotal + the order total. */
@@ -708,8 +838,7 @@ export async function createOrder(businessId: string, input: NewOrder): Promise<
   const discount = dIn
     ? Math.min(base, Math.round((discountPct != null ? base * (discountPct / 100) : dIn.value) * 100) / 100)
     : 0;
-  const taxedBase = base - discount;
-  const total = taxRate > 0 ? Math.round(taxedBase * (1 + taxRate / 100) * 100) / 100 : taxedBase;
+  const total = computeOrderTotal(base, discount, taxRate);
 
   const orderRow = {
     business_id: businessId,
