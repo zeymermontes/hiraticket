@@ -1802,6 +1802,22 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 		}
 	}
 
+	// Respuesta a un mensaje que NO tenemos: se mandó antes de conectar el número, o se ingirió con
+	// otro wa_id. Sin fila a la cual apuntar, la respuesta salía suelta —- "¿este sigue vigente?" sin
+	// el PDF al lado. WhatsApp manda la cita completa dentro del ContextInfo (texto, nombre del
+	// archivo, miniatura), así que se guarda una copia en meta y el chat la pinta desde ahí. No se
+	// baja el archivo: la miniatura embebida basta para reconocerlo y no hay a dónde saltar.
+	if replyTo == nil && ci != nil && ci.GetQuotedMessage() != nil && !strings.HasPrefix(ci.GetRemoteJID(), "status@broadcast") {
+		if quote := quoteOf(ci.GetQuotedMessage()); quote != nil {
+			if p := ci.GetParticipant(); p != "" && client != nil && client.Store.ID != nil {
+				if pj, err := types.ParseJID(p); err == nil && pj.User == client.Store.ID.User {
+					quote["mine"] = true
+				}
+			}
+			meta = withMetaKeyJSON(meta, "quote", quote)
+		}
+	}
+
 	// Respuesta a una HISTORIA (status). Llega como un mensaje normal dentro del chat del contacto,
 	// pero su ContextInfo apunta a status@broadcast y trae la historia citada adentro. Sin esto el
 	// agente veía un "me encanta 😍" suelto, sin manera de saber a qué le estaban contestando.
@@ -1851,7 +1867,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				})
 			}
 		}
-		meta = withStoryJSON(meta, story)
+		meta = withMetaKeyJSON(meta, "story", story)
 		m.log.Infof("respuesta a historia %s (tipo %v)", waID, story["type"])
 	}
 
@@ -2254,15 +2270,51 @@ func nullIf(s string) interface{} {
 	return s
 }
 
-// withStoryJSON mete la historia citada en un `meta` ya serializado, sin pisar lo que traía
-// (una respuesta a historia puede ser a su vez una foto, con su propio w/h y miniatura).
-func withStoryJSON(metaJSON string, story map[string]interface{}) string {
+// withMetaKeyJSON mete una llave (la historia citada, la copia de una cita) en un `meta` ya
+// serializado, sin pisar lo que traía (medidas, miniatura, menciones).
+func withMetaKeyJSON(metaJSON string, key string, val map[string]interface{}) string {
 	m := map[string]interface{}{}
 	if metaJSON != "" {
 		_ = json.Unmarshal([]byte(metaJSON), &m)
 	}
-	m["story"] = story
+	m[key] = val
 	return jsonStr(m)
+}
+
+// quoteOf resume un mensaje citado a lo que hace falta para pintar la cita: tipo, texto o pie,
+// nombre de archivo, mime y la miniatura embebida (sin bajar nada). nil si no es un tipo conocido.
+func quoteOf(q *waE2E.Message) map[string]interface{} {
+	out := map[string]interface{}{}
+	switch {
+	case q.GetImageMessage() != nil:
+		im := q.GetImageMessage()
+		out["type"], out["text"], out["mime"] = "image", im.GetCaption(), im.GetMimetype()
+		withThumb(out, im.GetJPEGThumbnail())
+	case q.GetVideoMessage() != nil:
+		vm := q.GetVideoMessage()
+		out["type"], out["text"], out["mime"] = "video", vm.GetCaption(), vm.GetMimetype()
+		withThumb(out, vm.GetJPEGThumbnail())
+	case q.GetStickerMessage() != nil:
+		out["type"], out["mime"] = "sticker", q.GetStickerMessage().GetMimetype()
+	case q.GetAudioMessage() != nil:
+		out["type"], out["mime"] = "audio", q.GetAudioMessage().GetMimetype()
+	case q.GetDocumentMessage() != nil:
+		dm := q.GetDocumentMessage()
+		out["type"], out["text"], out["name"], out["mime"] = "document", dm.GetCaption(), dm.GetFileName(), dm.GetMimetype()
+		withThumb(out, dm.GetJPEGThumbnail())
+	case q.GetLocationMessage() != nil:
+		loc := q.GetLocationMessage()
+		out["type"], out["text"] = "location", firstNonEmpty(loc.GetName(), loc.GetAddress())
+	case q.GetContactMessage() != nil:
+		out["type"], out["text"] = "contact", q.GetContactMessage().GetDisplayName()
+	default:
+		txt := firstNonEmpty(q.GetConversation(), q.GetExtendedTextMessage().GetText())
+		if txt == "" {
+			return nil
+		}
+		out["type"], out["text"] = "text", txt
+	}
+	return out
 }
 
 func jsonStr(v interface{}) string {

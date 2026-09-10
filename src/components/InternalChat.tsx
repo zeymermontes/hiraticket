@@ -8,6 +8,7 @@ import { useApp } from "@/components/AppContext";
 import { useToast } from "@/components/Toast";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
+import { QuoteCard, quoteText } from "@/components/chat/QuoteCard";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
 import { keepSubscribed } from "@/lib/realtime";
@@ -39,13 +40,15 @@ function mergeInternal(a: InternalMsg[], b: InternalMsg[]): InternalMsg[] {
 }
 
 /** Scroll the original message into view and flash it (parity with the clients chat). */
-function jumpInternal(id: string) {
-  if (typeof document === "undefined") return;
+/** Resalta el mensaje si está en el DOM. false = fuera de la página cargada (ver `jumpTo`). */
+function flashInternal(id: string): boolean {
+  if (typeof document === "undefined") return false;
   const el = document.getElementById("im-" + id);
-  if (!el) return;
+  if (!el) return false;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   el.classList.add("msg-flash");
   window.setTimeout(() => el.classList.remove("msg-flash"), 1500);
+  return true;
 }
 
 function clock(iso: string, lang: "es" | "en") {
@@ -163,6 +166,29 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     const el = endRef.current; if (!el) return;
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     if (el.scrollTop < 80) loadOlder();
+  }
+  // Ir al mensaje citado, cargando historial hacia atrás si hace falta. Mismo comportamiento que
+  // el hilo de clientes (`jumpTo` en ChatScreen).
+  const jumpingRef = useRef(false);
+  async function jumpTo(id: string) {
+    if (flashInternal(id)) return;
+    if (jumpingRef.current) return;
+    jumpingRef.current = true;
+    try {
+      let cursor = msgs[0]?.created_at;
+      for (let i = 0; cursor && i < 40; i++) {
+        const older = await loadInternalMessages(selRef.current, cursor);
+        if (!older.length) { setHasMore(false); break; }
+        if (older.length < MSG_PAGE) setHasMore(false);
+        older.forEach((m) => seen.current.add(m.id));
+        prevHeight.current = endRef.current?.scrollHeight ?? 0;
+        scrollAction.current = "preserve";
+        setMsgs((prev) => mergeInternal(older, prev));
+        if (older.some((m) => m.id === id)) break;
+        cursor = older[0].created_at;
+      }
+      for (let i = 0; i < 10 && !flashInternal(id); i++) await new Promise((r) => setTimeout(r, 60));
+    } finally { jumpingRef.current = false; }
   }
 
   useEffect(() => {
@@ -365,7 +391,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   function renderBubble(m: InternalMsg, fresh = false) {
     const mine = m.author_id === meId;
     const au = m.author_id ? agentMap.get(m.author_id) : null;
-    const quoted = m.reply_to ? msgMap.get(m.reply_to) : null;
+    const quoted = m.reply_to ? (msgMap.get(m.reply_to) ?? m.quoted ?? null) : null;
     const url = m.body ? firstUrl(m.body) : null;
     return (
       <div className={"msg " + (mine ? "out" : "in") + (fresh ? " fresh" : "")}>
@@ -373,10 +399,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
           {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
           {quoted && !m.deleted && (
-            <div onClick={(e) => { e.stopPropagation(); jumpInternal(quoted.id); }} title={lang === "es" ? "Ir al mensaje" : "Go to message"} style={{ borderLeft: "3px solid var(--brand)", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>
-              <div style={{ fontWeight: 700, color: "var(--brand-700)" }}>{quoted.author_id === meId ? (lang === "es" ? "Tú" : "You") : (agentMap.get(quoted.author_id ?? "")?.name ?? "Agente")}</div>
-              <div className="truncate" style={{ opacity: 0.8 }}>{quoted.deleted ? "—" : (quoted.body || (lang === "es" ? "Adjunto" : "Attachment"))}</div>
-            </div>
+            <QuoteCard lang={lang} source={quoted} onClick={() => jumpTo(quoted.id)}
+              who={quoted.author_id === meId ? (lang === "es" ? "Tú" : "You") : (agentMap.get(quoted.author_id ?? "")?.name ?? (lang === "es" ? "Agente" : "Agent"))} />
           )}
           {m.deleted ? (
             <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
@@ -488,7 +512,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           {(reply || editing) && (
             <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6 }}>
               <Icon name={editing ? "edit" : "swap"} size={14} />
-              <span className="t-xs muted grow truncate">{(editing ? (lang === "es" ? "Editando: " : "Editing: ") : (lang === "es" ? "Respondiendo: " : "Replying: ")) + ((editing || reply)?.body ?? (lang === "es" ? "Adjunto" : "Attachment"))}</span>
+              <span className="t-xs muted grow truncate">{(editing ? (lang === "es" ? "Editando: " : "Editing: ") : (lang === "es" ? "Respondiendo: " : "Replying: ")) + quoteText((editing || reply)!, lang)}</span>
               <button className="iconbtn sm" onClick={() => { setEditing(null); setReply(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
             </div>
           )}

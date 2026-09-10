@@ -6,7 +6,7 @@ import { decryptBody } from "@/lib/msgcrypto";
 
 /** Replace stored media paths with short-lived signed URLs (private 'media' bucket). */
 async function signInternalMedia(msgs: InternalMsg[]): Promise<InternalMsg[]> {
-  const paths = [...new Set(msgs.map((m) => m.media_url).filter((p): p is string => !!p && !p.startsWith("http")))];
+  const paths = [...new Set(msgs.flatMap((m) => [m.media_url, m.quoted?.media_url ?? null]).filter((p): p is string => !!p && !p.startsWith("http")))];
   if (!paths.length) return msgs;
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   try {
@@ -16,7 +16,8 @@ async function signInternalMedia(msgs: InternalMsg[]): Promise<InternalMsg[]> {
     (data ?? []).forEach((s) => { if (s.signedUrl && s.path) signed.set(s.path, s.signedUrl.startsWith("http") ? s.signedUrl : base + s.signedUrl); });
     // media_path conserva la ruta: la URL firmada cambia de token en cada llamada, así que no sirve
     // como llave de caché en el navegador (ver `useCachedMedia`).
-    return msgs.map((m) => (m.media_url && signed.has(m.media_url) ? { ...m, media_url: signed.get(m.media_url)!, media_path: m.media_url } : m));
+    const sign = (m: InternalMsg): InternalMsg => (m.media_url && signed.has(m.media_url) ? { ...m, media_url: signed.get(m.media_url)!, media_path: m.media_url } : m);
+    return msgs.map((m) => { const s = sign(m); return s.quoted ? { ...s, quoted: sign(s.quoted) } : s; });
   } catch { return msgs; }
 }
 
@@ -34,6 +35,8 @@ export interface InternalMsg {
   mentions: string[];
   created_at: string;
   reply_to: string | null;
+  /** El mensaje citado cuando quedó fuera de la página cargada. Igual que en el chat de clientes. */
+  quoted?: InternalMsg | null;
   edited: boolean;
   deleted: boolean;
   reactions: { emoji: string; by: string }[];
@@ -129,7 +132,20 @@ export async function getInternalMessages(businessId: string, channel: string, o
   };
   let { data, error } = await page("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded, meta, media_size");
   if (error) ({ data } = await page("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded"));
-  const msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, body: m.body ? decryptBody(businessId, m.body) : m.body, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
+  let msgs = ((data ?? []) as unknown as InternalMsg[]).map((m) => ({ ...m, body: m.body ? decryptBody(businessId, m.body) : m.body, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" }));
   msgs.reverse();
+  // Citas a mensajes de fuera de la página: se traen aparte para que la respuesta no salga suelta
+  // (mismo criterio que `attachQuoted` en el chat de clientes).
+  const have = new Set(msgs.map((m) => m.id));
+  const missing = [...new Set(msgs.map((m) => m.reply_to).filter((id): id is string => !!id && !have.has(id)))];
+  if (missing.length) {
+    const byIds = (cols: string) => supabase.from("internal_messages").select(cols).in("id", missing);
+    let q = await byIds("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded, meta, media_size");
+    if (q.error) q = await byIds("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded");
+    if (!q.error) {
+      const byId = new Map(((q.data ?? []) as unknown as InternalMsg[]).map((m) => [m.id, { ...m, body: m.body ? decryptBody(businessId, m.body) : m.body, mentions: Array.isArray(m.mentions) ? m.mentions : [], reactions: Array.isArray(m.reactions) ? m.reactions : [], type: m.type ?? "text" } as InternalMsg]));
+      msgs = msgs.map((m) => (m.reply_to && byId.has(m.reply_to) ? { ...m, quoted: byId.get(m.reply_to)! } : m));
+    }
+  }
   return signInternalMedia(msgs);
 }

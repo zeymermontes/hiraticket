@@ -28,7 +28,7 @@ function mediaPath(u: string | null): string | null {
  * originales, así que el cambio sale ganando de sobra.
  */
 /** La historia citada de una respuesta a status: se guarda en meta, no en media_url, así que se
- *  firma aparte (ver `withStoryJSON` en el worker). */
+ *  firma aparte (ver `withMetaKeyJSON` en el worker). */
 function storyOf(m: ChatMessage): (StoryQuote & { path?: string }) | null {
   const st = (m.meta as { story?: StoryQuote & { path?: string } } | null)?.story;
   return st && typeof st === "object" ? st : null;
@@ -36,7 +36,7 @@ function storyOf(m: ChatMessage): (StoryQuote & { path?: string }) | null {
 
 /** Replace media_url paths with short-lived signed URLs (private 'media' bucket). */
 async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
-  const paths = [...new Set(messages.flatMap((m) => [mediaPath(m.media_url), mediaPath(storyOf(m)?.path ?? null)]).filter((p): p is string => !!p))];
+  const paths = [...new Set(messages.flatMap((m) => [mediaPath(m.media_url), mediaPath(storyOf(m)?.path ?? null), mediaPath(m.quoted?.media_url ?? null)]).filter((p): p is string => !!p))];
   if (paths.length === 0) return messages;
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   try {
@@ -51,6 +51,9 @@ async function signMedia(messages: ChatMessage[]): Promise<ChatMessage[]> {
       const st = storyOf(m);
       const sp = mediaPath(st?.path ?? null);
       if (st && sp && signed.has(sp)) m = { ...m, meta: { ...(m.meta ?? {}), story: { ...st, url: signed.get(sp)! } } };
+      // La cita de fuera de página también trae archivo; se firma igual que el del mensaje.
+      const qp = mediaPath(m.quoted?.media_url ?? null);
+      if (m.quoted && qp && signed.has(qp)) m = { ...m, quoted: { ...m.quoted, media_url: signed.get(qp)!, media_path: qp } };
       const p = mediaPath(m.media_url);
       // media_path viaja junto con la URL firmada: es la identidad estable del archivo y es lo que
       // el navegador usa como llave de caché, porque el token de la firma cambia en cada llamada.
@@ -121,6 +124,10 @@ export interface ChatMessage {
   media_pending?: boolean;           // 0067 — pesado: hay puntero pero aún no se baja
   media_fetch_error?: string | null; // 0067 — "expired" si WhatsApp ya lo purgó, "too-big" si no cabe
   reply_to: string | null;
+  /** El mensaje citado cuando NO cae en la página cargada del hilo (una respuesta a la foto de
+   *  hace tres semanas). Sin esto la cita no se pintaba y la respuesta parecía un mensaje suelto.
+   *  Si el citado sí está en la página, va undefined y el hilo lo toma de su propio mapa. */
+  quoted?: ChatMessage | null;
   deleted: boolean;
   forwarded: boolean;
   edited: boolean;
@@ -129,6 +136,7 @@ export interface ChatMessage {
   sender_name: string | null; // group only: who sent it (shown color-coded above the bubble)
   sender_jid: string | null;  // group only: stable key the UI hashes for the sender's color
 }
+
 
 export interface ConvNote {
   id: string;
@@ -513,7 +521,34 @@ export async function getConversationMessages(
   // Decrypt at-rest bodies (legacy plaintext passes through untouched).
   messages = messages.map((m) => ({ ...m, body: m.body ? decryptBody((m as unknown as { business_id?: string }).business_id ?? "", m.body) : m.body }));
   messages.reverse(); // chronological (oldest first)
+  messages = await attachQuoted(supabase, messages);
   return signMedia(messages);
+}
+
+/**
+ * Los mensajes citados que quedaron FUERA de la página.
+ *
+ * El hilo carga por páginas desde el final, y una respuesta suele ser a algo reciente —- pero no
+ * siempre: "¿este PDF sigue vigente?" apunta al archivo de hace un mes. Sin traerlo, la cita no se
+ * pintaba y el agente veía la pregunta sin el archivo. Es una sola consulta extra con los ids que
+ * faltan (casi siempre ninguno) y se cuelga de cada mensaje como `quoted`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function attachQuoted(supabase: any, messages: ChatMessage[]): Promise<ChatMessage[]> {
+  const have = new Set(messages.map((m) => m.id));
+  const missing = [...new Set(messages.map((m) => m.reply_to).filter((id): id is string => !!id && !have.has(id)))];
+  if (!missing.length) return messages;
+  // Mismo par de niveles que la página: la cita no vale una caída del hilo entero.
+  let res = await supabase.from("messages").select(MSG_FULL + ", sender_name, sender_jid").in("id", missing);
+  if (res.error) res = await supabase.from("messages").select(MSG_BASE).in("id", missing);
+  if (res.error) return messages;
+  const rows = ((res.data ?? []) as unknown as (ChatMessage & { business_id?: string })[]).map((m) => ({
+    ...m, forwarded: !!m.forwarded, edited: !!m.edited, meta: m.meta ?? null,
+    reactions: Array.isArray(m.reactions) ? m.reactions : [], sender_name: m.sender_name ?? null, sender_jid: m.sender_jid ?? null,
+    body: m.body ? decryptBody(m.business_id ?? "", m.body) : m.body,
+  }));
+  const byId = new Map(rows.map((m) => [m.id, m as ChatMessage]));
+  return messages.map((m) => (m.reply_to && byId.has(m.reply_to) ? { ...m, quoted: byId.get(m.reply_to)! } : m));
 }
 
 /** Pedidos del cliente para el panel de la conversación. La papelera queda fuera: un pedido

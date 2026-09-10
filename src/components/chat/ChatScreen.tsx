@@ -11,6 +11,7 @@ import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
 import type { Agent, ConvListItem, ConvDetail, ChatMessage, ConvQuery, ChatListCounts, StoryQuote } from "@/lib/chat";
+import { QuoteCard, quoteText, metaQuoteOf } from "@/components/chat/QuoteCard";
 // Desde @/lib/mediaLimits y NO desde @/lib/chat: chat.ts arrastra server-only/next/headers, y un
 // import de VALOR desde este componente de cliente los metería en el bundle del navegador. El
 // `import type` de arriba no lo hace porque se borra al compilar.
@@ -591,23 +592,19 @@ function Tick({ state }: { state: string | null }) {
   return <span style={{ display: "inline-flex", opacity: 0.5 }}><Icon name="clock" size={11} /></span>;
 }
 
-/** Scroll the original message into view and flash it (if it's loaded in the thread). */
-function jumpToMessage(id: string) {
-  if (typeof document === "undefined") return;
+/** Scroll the original message into view and flash it. Devuelve false si no está en el DOM
+ *  (fuera de la página cargada): el hilo entonces carga historial y vuelve a intentar. */
+function flashMessage(id: string): boolean {
+  if (typeof document === "undefined") return false;
   const el = document.getElementById("m-" + id);
-  if (!el) return;
+  if (!el) return false;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   el.classList.add("msg-flash");
   window.setTimeout(() => el.classList.remove("msg-flash"), 1500);
+  return true;
 }
 
-function QuotedBlock({ m }: { m: ChatMessage }) {
-  const { lang } = useApp();
-  const label = m.deleted ? "…" : (m.body || (m.type !== "text" ? "📎 " + m.type : ""));
-  return <div className="truncate" title={lang === "es" ? "Ir al mensaje" : "Go to message"} onClick={(e) => { e.stopPropagation(); jumpToMessage(m.id); }} style={{ borderLeft: "3px solid var(--brand)", padding: "3px 8px", marginBottom: 4, background: "rgba(0,0,0,.05)", borderRadius: 6, fontSize: 12, maxWidth: 240, cursor: "pointer" }}>{label}</div>;
-}
-
-/** La historia (status) a la que contesta el mensaje, si el worker la guardó (ver `withStoryJSON`). */
+/** La historia (status) a la que contesta el mensaje, si el worker la guardó (ver `withMetaKeyJSON`). */
 function storyOf(m: ChatMessage): StoryQuote | null {
   const st = (m.meta as { story?: StoryQuote } | null)?.story;
   return st && typeof st === "object" && typeof st.type === "string" ? st : null;
@@ -1996,6 +1993,36 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     if (el.scrollTop < 80) loadOlder();
   }
+  /**
+   * Ir al mensaje citado. Si está en pantalla, se resalta y ya. Si no —- la respuesta es a la foto
+   * de hace un mes y el hilo solo tiene cargada la cola—, se van trayendo páginas hacia atrás hasta
+   * que aparezca, y entonces se resalta. Antes el clic no hacía nada y parecía roto.
+   */
+  const jumpingRef = useRef(false);
+  async function jumpTo(id: string) {
+    if (flashMessage(id)) return;
+    if (jumpingRef.current) return;
+    jumpingRef.current = true;
+    try {
+      let cursor = msgs[0]?.created_at;
+      // Tope de páginas: un chat de años no se carga entero por un clic. Si no aparece, se deja.
+      for (let i = 0; cursor && i < 40; i++) {
+        const older = await loadOlderMessages(detail.id, cursor);
+        if (!older.length) { setHasMore(false); break; }
+        if (older.length < MSG_PAGE) setHasMore(false);
+        older.forEach((m) => seenIds.current.add(m.id));
+        prevHeight.current = endRef.current?.scrollHeight ?? 0;
+        scrollAction.current = "preserve";
+        setMsgs((prev) => mergeMsgs(older, prev));
+        if (older.some((m) => m.id === id)) break;
+        cursor = older[0].created_at;
+      }
+      // Deja que React pinte las páginas nuevas antes de buscar el elemento.
+      for (let i = 0; i < 10 && !flashMessage(id); i++) await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      jumpingRef.current = false;
+    }
+  }
   // Re-pin to the bottom when something async grows the thread (e.g. a link preview card loads).
   const pinBottom = useCallback(() => { const el = endRef.current; if (el && atBottomRef.current) el.scrollTop = el.scrollHeight; }, []);
 
@@ -2277,7 +2304,21 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
-                {m.reply_to && msgMap.get(m.reply_to) && <QuotedBlock m={msgMap.get(m.reply_to)!} />}
+                {(() => {
+                  // Quién mandó lo citado: "Tú"/el agente si salió de aquí; en grupo el remitente;
+                  // en 1:1 el cliente. Igual que WhatsApp, para que la cita se lea sola.
+                  const q = m.reply_to ? (msgMap.get(m.reply_to) ?? m.quoted ?? null) : null;
+                  if (q) {
+                    const qa = q.direction === "out" && q.author_id ? agentMap.get(q.author_id) : null;
+                    const who = q.direction === "out" ? (qa?.name ?? (lang === "es" ? "Tú" : "You")) : (detail.is_group ? (q.sender_name ?? null) : (detail.contact?.name ?? null));
+                    return <QuoteCard who={who} source={q} lang={lang} onClick={() => jumpTo(q.id)} />;
+                  }
+                  // El original no existe en la base (se mandó antes de conectar el número): el
+                  // worker dejó una copia en meta. Se pinta, pero no hay a dónde saltar.
+                  const mq = metaQuoteOf(m);
+                  if (mq) return <QuoteCard who={mq.mine ? (lang === "es" ? "Tú" : "You") : (detail.is_group ? null : (detail.contact?.name ?? null))} source={{ type: mq.type, body: mq.text ?? null, media_name: mq.name ?? null, media_mime: mq.mime ?? null, meta: mq.thumb ? { thumb: mq.thumb } : null }} lang={lang} />;
+                  return null;
+                })()}
                 {storyOf(m) && <StoryQuoteBlock s={storyOf(m)!} out={out} />}
                 {m.deleted ? (
                   <div className="row gap-1" style={{ fontStyle: "italic", opacity: 0.6 }}><Icon name="x" size={12} />{lang === "es" ? "Mensaje eliminado" : "Message deleted"}</div>
@@ -2338,7 +2379,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         {(replyTo || editing) && (
           <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6 }}>
             <Icon name={editing ? "edit" : "swap"} size={14} />
-            <span className="t-xs muted grow truncate">{(editing ? (lang === "es" ? "Editando: " : "Editing: ") : (lang === "es" ? "Respondiendo: " : "Replying: "))}{(editing || replyTo)?.body || (editing || replyTo)?.type}</span>
+            <span className="t-xs muted grow truncate">{(editing ? (lang === "es" ? "Editando: " : "Editing: ") : (lang === "es" ? "Respondiendo: " : "Replying: "))}{quoteText((editing || replyTo)!, lang)}</span>
             <button className="iconbtn sm" onClick={() => { setEditing(null); setReplyTo(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
           </div>
         )}
