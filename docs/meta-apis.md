@@ -69,7 +69,12 @@ El resto del documento asume la Ruta B.
 Para operar cuentas de clientes necesitas **Advanced Access** en:
 - `whatsapp_business_management` (administrar WABAs, plantillas, números)
 - `whatsapp_business_messaging` (enviar/recibir mensajes)
-- `business_management`
+
+`business_management` **no hace falta**: solo sirve para leer el portafolio del cliente
+(`/{business-id}/owned_whatsapp_business_accounts` y similares) y Hiraticket no lo hace — los
+IDs de la WABA y del número llegan por el `postMessage` del Embedded Signup. La configuración
+del signup pide únicamente los dos permisos de WhatsApp; agregarlo sin Advanced Access haría
+que solo lo concedan las cuentas con rol en la app.
 
 Meta pide **videos** demostrando: un mensaje creado en Hiraticket y recibido en un
 teléfono real, y la creación de una plantilla desde tu UI. Grábalos con la WABA de
