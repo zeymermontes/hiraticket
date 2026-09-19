@@ -226,6 +226,10 @@ export function CannedScreen({ businessId, items, waTemplates = false }: { busin
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Las propias (texto y archivo) y las de Meta son dos listas que no se mezclan: una pestaña cada
+  // una. Sin API oficial no hay pestañas —- solo existe la primera.
+  const [tab, setTab] = useState<"own" | "meta">("own");
+  const showMeta = waTemplates && tab === "meta";
 
   // Con archivo, el texto es opcional: una plantilla puede ser SOLO el archivo (la lista de precios,
   // el formulario) y entonces sale como adjunto sin pie.
@@ -248,11 +252,22 @@ export function CannedScreen({ businessId, items, waTemplates = false }: { busin
     <div className="page">
       <div className="phead">
         <h1>{lang === "es" ? "Plantillas" : "Templates"}</h1>
-        <Pill color="slate" large>{items.length}</Pill>
+        {!showMeta && <Pill color="slate" large>{items.length}</Pill>}
+        {waTemplates && (
+          <div className="seg" style={{ marginLeft: "auto" }}>
+            <button className={tab === "own" ? "on" : ""} onClick={() => setTab("own")}>
+              <Icon name="canned" size={14} />{lang === "es" ? "Mis plantillas" : "My templates"}
+            </button>
+            <button className={tab === "meta" ? "on" : ""} onClick={() => setTab("meta")}>
+              <Icon name="whatsapp" size={14} />{lang === "es" ? "Oficiales de Meta" : "Official (Meta)"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
        <div className="page-grid" style={{ padding: "0 24px 24px", display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20, alignItems: "start" }}>
+        {!showMeta && <>
         <div className="col gap-3">
           {/* variables reference */}
           <section className="ws-block">
@@ -302,10 +317,12 @@ export function CannedScreen({ businessId, items, waTemplates = false }: { busin
           </div>
         </section>
 
+        </>}
+
         {/* Las de Meta viven junto a las propias porque para quien escribe son lo mismo —- "un
             mensaje ya armado" —-, pero no se mezclan: estas pasan por la aprobación de Meta y son lo
             único que se puede mandar con la ventana de 24 h cerrada. */}
-        {waTemplates && (
+        {showMeta && (
           <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
             <div className="ws-block-head">
               <Icon name="whatsapp" size={16} />
@@ -314,8 +331,8 @@ export function CannedScreen({ businessId, items, waTemplates = false }: { busin
             <div className="ws-block-body col gap-3">
               <div className="t-sm muted">
                 {lang === "es"
-                  ? "Las aprueba Meta y son lo único que puedes mandar cuando pasaron más de 24 h desde el último mensaje del cliente. Las de arriba son tuyas: se usan al instante, mientras el chat esté abierto."
-                  : "Meta approves these, and they're the only thing you can send once 24h have passed since the customer's last message. The ones above are yours: use them instantly while the chat is open."}
+                  ? "Las aprueba Meta y son lo único que puedes mandar cuando pasaron más de 24 h desde el último mensaje del cliente. Las de “Mis plantillas” son tuyas: se usan al instante, mientras el chat esté abierto."
+                  : "Meta approves these, and they're the only thing you can send once 24h have passed since the customer's last message. The ones in “My templates” are yours: use them instantly while the chat is open."}
               </div>
               <TemplateManager />
             </div>
