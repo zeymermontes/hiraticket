@@ -77,6 +77,10 @@ export const ICONS: Record<string, IconFn> = {
   download: () => <>{P("M12 4v10m0 0 3.5-3.5M12 14l-3.5-3.5M5 19h14")}</>,
   sparkles: () => <>{P("M12 4l1.4 3.6L17 9l-3.6 1.4L12 14l-1.4-3.6L7 9l3.6-1.4Z")}</>,
   tag: () => <>{P("M20.6 13.4 13 21l-9-9V4h8l8.6 8.6a1.4 1.4 0 0 1 0 2.8Z")}<circle cx="8.5" cy="8.5" r="1.4" fill="currentColor" /></>,
+  // Botones de plantilla de WhatsApp: llamada, enlace externo y respuesta rápida.
+  phone: () => <>{P("M6 3h3l2 5-2.5 1.5a11 11 0 0 0 6 6L16 13l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2Z")}</>,
+  external: () => <>{P("M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4")}</>,
+  reply: () => <>{P("M10 8V5l-6 5 6 5v-3c5 0 8 2 9 5 0-5-3-10-9-12Z")}</>,
 };
 
 export function Icon({ name, size }: { name: string; size?: number }) {

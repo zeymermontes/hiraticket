@@ -10,7 +10,7 @@ import { ensureTag } from "@/lib/tags";
 import { flushCloudOutbox, sendCloudReactionFor } from "@/lib/cloud-outbox";
 import { officialSessionOf } from "@/lib/cloud-session";
 import { listTemplates } from "@/lib/whatsapp-cloud";
-import { VAR_RE } from "@/lib/template-rules";
+import { VAR_RE, templateParts, type TemplateButton } from "@/lib/template-rules";
 import { CANNED_COLS, cannedMediaFields, type CannedMessage } from "@/lib/canned";
 import { pushTransfer } from "@/lib/push";
 
@@ -144,6 +144,13 @@ export interface WaTemplateOption {
   header: string | null;
   footer: string | null;
   varCount: number;
+  /** El encabezado lleva {{1}}: se pide aparte, Meta lo recibe como parámetro del header. */
+  headerVar: boolean;
+  /** Encabezado de imagen/video/documento, solo para anunciarlo en la vista previa. */
+  mediaHeader: string | null;
+  buttons: TemplateButton[];
+  /** Por qué no se puede mandar desde aquí (null = sí se puede). */
+  blocked: "media-header" | "buttons" | null;
 }
 
 /** Approved Meta templates of this business's official WABA — for the closed-24h-window composer.
@@ -158,11 +165,23 @@ export async function getWaTemplates(): Promise<WaTemplateOption[]> {
   return res.data.data
     .filter((t) => t.status === "APPROVED")
     .map((t) => {
-      const body = t.components?.find((c) => c.type === "BODY")?.text ?? "";
-      const header = t.components?.find((c) => c.type === "HEADER" && (c.format ?? "TEXT") === "TEXT")?.text ?? null;
-      const footer = t.components?.find((c) => c.type === "FOOTER")?.text ?? null;
-      const vars = new Set(Array.from(body.matchAll(VAR_RE)).map((m) => Number(m[1])));
-      return { name: t.name, language: t.language, body, header, footer, varCount: vars.size };
+      const parts = templateParts(t.components);
+      const vars = new Set(Array.from(parts.body.matchAll(VAR_RE)).map((m) => Number(m[1])));
+      // Un encabezado con archivo o un botón con variable exigen un parámetro en CADA envío que el
+      // compositor no sabe pedir: Meta rechazaría el mensaje. Se listan, pero sin dejar mandarlas.
+      const blocked: WaTemplateOption["blocked"] = parts.mediaHeader ? "media-header" : parts.unsupportedButtons ? "buttons" : null;
+      return {
+        name: t.name,
+        language: t.language,
+        body: parts.body,
+        header: parts.header || null,
+        footer: parts.footer || null,
+        varCount: vars.size,
+        headerVar: Array.from(parts.header.matchAll(VAR_RE)).length > 0,
+        mediaHeader: parts.mediaHeader,
+        buttons: parts.buttons,
+        blocked,
+      };
     })
     .filter((t) => t.body);
 }
@@ -173,6 +192,7 @@ export async function sendWaTemplate(
   convId: string,
   tpl: { name: string; language: string; body: string },
   params: string[],
+  headerParam = "",
 ): Promise<{ ok: boolean; error?: string }> {
   const { supabase, userId } = await ctx();
   const businessId = await businessOf(convId);
@@ -189,7 +209,7 @@ export async function sendWaTemplate(
     body: encryptBody(businessId, rendered),
     author_id: userId,
     state: "queued",
-    meta: { template: { name: tpl.name, lang: tpl.language, params } },
+    meta: { template: { name: tpl.name, lang: tpl.language, params, ...(headerParam ? { headerParam } : {}) } },
   });
   if (error) return { ok: false, error: error.message };
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);

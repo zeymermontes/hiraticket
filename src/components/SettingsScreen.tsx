@@ -268,7 +268,8 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
           </div>
         </section>
 
-        {showOfficial && (
+        {/* También con el número oficial ya conectado: quien lo tiene necesita plantillas aunque no esté en la lista de pruebas. */}
+        {(showOfficial || officialSessions.some((x) => x.status === "connected")) && (
           <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
             <div className="ws-block-head">
               <Icon name="whatsapp" size={16} />

@@ -70,7 +70,12 @@ export interface TemplateRow {
   status: string;
   category: string;
   language: string;
-  components?: { type: string; format?: string; text?: string }[];
+  components?: {
+    type: string;
+    format?: string;
+    text?: string;
+    buttons?: { type: string; text?: string; url?: string; phone_number?: string }[];
+  }[];
   rejected_reason?: string;
 }
 

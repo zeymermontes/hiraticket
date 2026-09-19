@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useApp } from "@/components/AppContext";
 import { getWaTemplates, sendWaTemplate, type WaTemplateOption } from "@/app/(app)/chat/actions";
+import { WaTemplatePreview } from "@/components/WaTemplatePreview";
 
 // Picker de plantillas aprobadas de Meta para cuando la ventana de 24 h está cerrada (API oficial).
 // Elegir → rellenar variables ({{1}}…{{n}}) con vista previa → enviar. El envío real lo hace
@@ -23,6 +24,7 @@ export function WaTemplateModal({
   const [templates, setTemplates] = useState<WaTemplateOption[] | null>(null);
   const [picked, setPicked] = useState<WaTemplateOption | null>(null);
   const [params, setParams] = useState<string[]>([]);
+  const [headerParam, setHeaderParam] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -35,7 +37,13 @@ export function WaTemplateModal({
     return picked.body.replace(VAR_RE, (_, n) => params[Number(n) - 1] || `{{${n}}}`);
   }, [picked, params]);
 
-  const ready = picked && (picked.varCount === 0 || params.slice(0, picked.varCount).every((p) => p?.trim()));
+  const previewHeader = picked?.header ? picked.header.replace(VAR_RE, (_, n) => headerParam || `{{${n}}}`) : null;
+
+  const ready =
+    picked &&
+    !picked.blocked &&
+    (!picked.headerVar || headerParam.trim()) &&
+    (picked.varCount === 0 || params.slice(0, picked.varCount).every((p) => p?.trim()));
 
   async function send() {
     if (!picked || sending) return;
@@ -45,6 +53,7 @@ export function WaTemplateModal({
       convId,
       { name: picked.name, language: picked.language, body: picked.body },
       params.slice(0, picked.varCount).map((p) => p.trim()),
+      picked.headerVar ? headerParam.trim() : "",
     );
     setSending(false);
     if (res.ok) {
@@ -76,9 +85,9 @@ export function WaTemplateModal({
               )}
               {(templates ?? []).map((t) => (
                 <button key={t.name + t.language} className="col gap-1" style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 10, background: "var(--surface)", cursor: "pointer" }}
-                  onClick={() => { setPicked(t); setParams(Array(t.varCount).fill("")); }}>
+                  onClick={() => { setPicked(t); setParams(Array(t.varCount).fill("")); setHeaderParam(""); setErr(null); }}>
                   <div className="row gap-2"><strong className="mono t-sm">{t.name}</strong><span className="muted t-xs">{t.language}</span></div>
-                  <div className="muted t-xs" style={{ whiteSpace: "pre-wrap" }}>{t.body.slice(0, 140)}</div>
+                  <WaTemplatePreview header={t.header} mediaHeader={t.mediaHeader} body={t.body} footer={t.footer} buttons={t.buttons} />
                 </button>
               ))}
             </>
@@ -88,19 +97,34 @@ export function WaTemplateModal({
               <button className="btn btn-sm btn-outline" style={{ width: "fit-content" }} onClick={() => setPicked(null)}>
                 <Icon name="swap" size={14} />{lang === "es" ? "Otra plantilla" : "Another template"}
               </button>
+              {picked.blocked && (
+                <div className="t-xs" style={{ color: "var(--amber, #d97706)" }}>
+                  {picked.blocked === "media-header"
+                    ? (lang === "es"
+                      ? "Esta plantilla lleva una imagen, video o documento en el encabezado, y todavía no se puede mandar desde Hiraticket."
+                      : "This template has an image, video or document header, which can't be sent from Hiraticket yet.")
+                    : (lang === "es"
+                      ? "Esta plantilla tiene un botón que pide un dato en cada envío (enlace con variable, código o flujo), y todavía no se puede mandar desde Hiraticket."
+                      : "This template has a button that needs a value on every send (link with a variable, code or flow), which can't be sent from Hiraticket yet.")}
+                </div>
+              )}
+              {picked.headerVar && (
+                <div className="field field-filled">
+                  <span className="t-xs muted">{lang === "es" ? "Encabezado" : "Header"}</span>
+                  <input value={headerParam} autoFocus
+                    placeholder={lang === "es" ? "Valor de la variable del encabezado" : "Value for the header variable"}
+                    onChange={(e) => setHeaderParam(e.target.value)} />
+                </div>
+              )}
               {Array.from({ length: picked.varCount }, (_, i) => (
                 <div key={i} className="field field-filled">
                   <span className="mono t-xs muted">{`{{${i + 1}}}`}</span>
-                  <input value={params[i] ?? ""} autoFocus={i === 0}
+                  <input value={params[i] ?? ""} autoFocus={i === 0 && !picked.headerVar}
                     placeholder={lang === "es" ? `Valor de la variable ${i + 1}` : `Value for variable ${i + 1}`}
                     onChange={(e) => setParams((p) => { const n = [...p]; n[i] = e.target.value; return n; })} />
                 </div>
               ))}
-              <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 10, background: "var(--surface-2)", whiteSpace: "pre-wrap", fontSize: 13 }}>
-                {picked.header && <div style={{ fontWeight: 700, marginBottom: 4 }}>{picked.header}</div>}
-                {preview}
-                {picked.footer && <div className="muted t-xs" style={{ marginTop: 4 }}>{picked.footer}</div>}
-              </div>
+              <WaTemplatePreview header={previewHeader} mediaHeader={picked.mediaHeader} body={preview} footer={picked.footer} buttons={picked.buttons} />
             </>
           )}
           {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}

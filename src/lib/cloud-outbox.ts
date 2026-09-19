@@ -22,7 +22,7 @@ type QueuedRow = {
   media_mime: string | null;
   media_name: string | null;
   reply_to: string | null;
-  meta: { template?: { name: string; lang: string; params?: string[] } } | null;
+  meta: { template?: { name: string; lang: string; params?: string[]; headerParam?: string } } | null;
   conversation: {
     is_group: boolean | null;
     contact: { phone: string | null } | null;
@@ -88,16 +88,21 @@ async function sendOne(supabase: Admin, session: CloudSession, businessId: strin
 
   // Template sends (24h window closed) carry their spec in meta.template; the stored body is the
   // rendered text for display only — Meta receives the template name + parameters.
+  // Static buttons (quick reply, fixed link, call) need no component here: Meta adds them itself.
   const tpl = m.meta?.template;
+  const tplComponents = tpl
+    ? [
+        ...(tpl.headerParam ? [{ type: "header", parameters: [{ type: "text", text: tpl.headerParam }] }] : []),
+        ...(tpl.params?.length ? [{ type: "body", parameters: tpl.params.map((t) => ({ type: "text", text: t })) }] : []),
+      ]
+    : [];
   const payload = tpl
     ? {
         type: "template",
         template: {
           name: tpl.name,
           language: { code: tpl.lang },
-          ...(tpl.params?.length
-            ? { components: [{ type: "body", parameters: tpl.params.map((t) => ({ type: "text", text: t })) }] }
-            : {}),
+          ...(tplComponents.length ? { components: tplComponents } : {}),
         },
       }
     : await buildPayload(supabase, m, body);

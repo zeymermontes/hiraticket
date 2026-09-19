@@ -13,6 +13,8 @@ import {
   type TemplateRow,
 } from "@/lib/whatsapp-cloud";
 import { validateTemplate, buildComponents, isEditableInApp, type TemplateDraft } from "@/lib/template-rules";
+import { getMyBusiness } from "@/lib/queries";
+import { officialSessionOf } from "@/lib/cloud-session";
 
 // Server actions behind the App Review test panel. Gated to allowlisted users (showOfficialWhatsApp)
 // and driven by the shared WHATSAPP_CLOUD_* test credentials. These exercise the two permissions
@@ -52,23 +54,37 @@ export async function testCreateTemplate(name: string, category: string, body: s
 
 // ---- Full template manager (list / create / edit / delete) --------------------------------------
 
-export async function listTemplatesAction(): Promise<CloudResult<TemplateRow[]>> {
-  const denied = await guard();
-  if (denied) return denied;
+/**
+ * A qué cuenta de WhatsApp le habla el gestor de plantillas.
+ *
+ * El chat lee las plantillas de la cuenta del PROPIO negocio (getWaTemplates), así que el gestor
+ * tiene que escribir en esa misma: si creara en otra, la plantilla saldría aprobada en Ajustes y
+ * jamás aparecería al ir a mandarla. La cuenta de prueba queda solo como respaldo para quien está
+ * en la lista de pruebas y todavía no conectó un número (el revisor de Meta, por ejemplo).
+ */
+async function templateCreds(): Promise<{ token: string; wabaId: string } | { error: string }> {
+  const biz = await getMyBusiness();
+  const session = biz ? await officialSessionOf(biz.id) : null;
+  if (session) return { token: session.token, wabaId: session.wabaId };
+  if (!(await showOfficialWhatsApp())) return { error: "Conecta tu número por la API oficial para usar plantillas." };
   const { token, wabaId } = cloudTestCreds();
-  if (!token || !wabaId) return { ok: false, error: "Faltan credenciales (WHATSAPP_CLOUD_TOKEN / WHATSAPP_TEST_WABA_ID)." };
-  const r = await listTemplates(wabaId, token);
+  if (!token || !wabaId) return { error: "Faltan credenciales (WHATSAPP_CLOUD_TOKEN / WHATSAPP_TEST_WABA_ID)." };
+  return { token, wabaId };
+}
+
+export async function listTemplatesAction(): Promise<CloudResult<TemplateRow[]>> {
+  const c = await templateCreds();
+  if ("error" in c) return { ok: false, error: c.error };
+  const r = await listTemplates(c.wabaId, c.token);
   return r.ok ? { ok: true, data: r.data.data } : r;
 }
 
 export async function createTemplateAction(draft: TemplateDraft): Promise<CloudResult> {
-  const denied = await guard();
-  if (denied) return denied;
-  const { token, wabaId } = cloudTestCreds();
-  if (!token || !wabaId) return { ok: false, error: "Faltan credenciales (WHATSAPP_CLOUD_TOKEN / WHATSAPP_TEST_WABA_ID)." };
+  const c = await templateCreds();
+  if ("error" in c) return { ok: false, error: c.error };
   const errs = validateTemplate(draft).filter((i) => i.level === "error");
   if (errs.length) return { ok: false, error: errs.map((e) => e.msg).join(" ") };
-  return createTemplateFull(wabaId, token, {
+  return createTemplateFull(c.wabaId, c.token, {
     name: draft.name.trim(),
     category: draft.category,
     language: draft.language,
@@ -77,22 +93,18 @@ export async function createTemplateAction(draft: TemplateDraft): Promise<CloudR
 }
 
 export async function editTemplateAction(templateId: string, status: string, draft: TemplateDraft): Promise<CloudResult> {
-  const denied = await guard();
-  if (denied) return denied;
-  const { token } = cloudTestCreds();
-  if (!token) return { ok: false, error: "Faltan credenciales (WHATSAPP_CLOUD_TOKEN)." };
+  const c = await templateCreds();
+  if ("error" in c) return { ok: false, error: c.error };
   // Approved templates must be edited on Meta's Business Manager, not here.
   if (!isEditableInApp(status)) return { ok: false, error: "Solo se editan plantillas rechazadas o pausadas. Las aprobadas se editan en Meta Business Manager." };
   const errs = validateTemplate(draft).filter((i) => i.level === "error");
   if (errs.length) return { ok: false, error: errs.map((e) => e.msg).join(" ") };
-  return editTemplate(templateId, token, { category: draft.category, components: buildComponents(draft) });
+  return editTemplate(templateId, c.token, { category: draft.category, components: buildComponents(draft) });
 }
 
 export async function deleteTemplateAction(name: string): Promise<CloudResult> {
-  const denied = await guard();
-  if (denied) return denied;
-  const { token, wabaId } = cloudTestCreds();
-  if (!token || !wabaId) return { ok: false, error: "Faltan credenciales (WHATSAPP_CLOUD_TOKEN / WHATSAPP_TEST_WABA_ID)." };
+  const c = await templateCreds();
+  if ("error" in c) return { ok: false, error: c.error };
   if (!name.trim()) return { ok: false, error: "Nombre inválido." };
-  return deleteTemplate(wabaId, token, name.trim());
+  return deleteTemplate(c.wabaId, c.token, name.trim());
 }
