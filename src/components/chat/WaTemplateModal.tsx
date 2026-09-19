@@ -79,8 +79,8 @@ export function WaTemplateModal({
               {templates !== null && templates.length === 0 && (
                 <div className="muted t-sm">
                   {lang === "es"
-                    ? "No hay plantillas aprobadas todavía. Créalas en Ajustes → Plantillas de WhatsApp (Meta tarda en aprobarlas)."
-                    : "No approved templates yet. Create them in Settings → WhatsApp templates (Meta takes a while to approve)."}
+                    ? "No hay plantillas aprobadas todavía. Créalas en Plantillas → Plantillas oficiales de WhatsApp (Meta tarda en aprobarlas)."
+                    : "No approved templates yet. Create them in Templates → Official WhatsApp templates (Meta takes a while to approve)."}
                 </div>
               )}
               {(templates ?? []).map((t) => (

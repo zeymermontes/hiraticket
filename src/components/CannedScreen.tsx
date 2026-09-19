@@ -1,6 +1,7 @@
 "use client";
 import React, { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { TemplateManager } from "@/components/TemplateManager";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
@@ -214,7 +215,7 @@ function CannedRow({ item, businessId }: { item: CannedMessage; businessId: stri
   );
 }
 
-export function CannedScreen({ businessId, items }: { businessId: string; items: CannedMessage[] }) {
+export function CannedScreen({ businessId, items, waTemplates = false }: { businessId: string; items: CannedMessage[]; /** El negocio usa la API oficial de WhatsApp → también administra aquí las plantillas de Meta. */ waTemplates?: boolean }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -300,6 +301,26 @@ export function CannedScreen({ businessId, items }: { businessId: string; items:
             <button className="btn btn-primary btn-block" disabled={pending || !canCreate} onClick={add}><Icon name="plus" size={15} />{lang === "es" ? "Crear" : "Create"}</button>
           </div>
         </section>
+
+        {/* Las de Meta viven junto a las propias porque para quien escribe son lo mismo —- "un
+            mensaje ya armado" —-, pero no se mezclan: estas pasan por la aprobación de Meta y son lo
+            único que se puede mandar con la ventana de 24 h cerrada. */}
+        {waTemplates && (
+          <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
+            <div className="ws-block-head">
+              <Icon name="whatsapp" size={16} />
+              <h4 className="grow">{lang === "es" ? "Plantillas oficiales de WhatsApp" : "Official WhatsApp templates"}</h4>
+            </div>
+            <div className="ws-block-body col gap-3">
+              <div className="t-sm muted">
+                {lang === "es"
+                  ? "Las aprueba Meta y son lo único que puedes mandar cuando pasaron más de 24 h desde el último mensaje del cliente. Las de arriba son tuyas: se usan al instante, mientras el chat esté abierto."
+                  : "Meta approves these, and they're the only thing you can send once 24h have passed since the customer's last message. The ones above are yours: use them instantly while the chat is open."}
+              </div>
+              <TemplateManager />
+            </div>
+          </section>
+        )}
        </div>
       </div>
     </div>

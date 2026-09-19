@@ -22,7 +22,6 @@ import type { PillColor } from "@/lib/types";
 import type { WaSession } from "@/lib/whatsapp";
 import { EmbeddedSignup } from "@/components/EmbeddedSignup";
 import { WaCloudTester } from "@/components/WaCloudTester";
-import { TemplateManager } from "@/components/TemplateManager";
 import { connectSession, disconnectSession, addSession, setConnectMethod, deleteSession } from "@/app/(app)/settings/actions";
 import { updateBusinessProfile } from "@/app/(app)/business/actions";
 
@@ -267,19 +266,6 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
             )}
           </div>
         </section>
-
-        {/* También con el número oficial ya conectado: quien lo tiene necesita plantillas aunque no esté en la lista de pruebas. */}
-        {(showOfficial || officialSessions.some((x) => x.status === "connected")) && (
-          <section className="ws-block" style={{ gridColumn: "1 / -1" }}>
-            <div className="ws-block-head">
-              <Icon name="whatsapp" size={16} />
-              <h4 className="grow">{lang === "es" ? "Plantillas de WhatsApp" : "WhatsApp templates"}</h4>
-            </div>
-            <div className="ws-block-body">
-              <TemplateManager />
-            </div>
-          </section>
-        )}
 
         <section className="ws-block">
           <div className="ws-block-head"><Icon name="sliders" size={16} /><h4>{lang === "es" ? "Apariencia" : "Appearance"}</h4></div>
