@@ -1,4 +1,5 @@
 "use client";
+import type React from "react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/Icon";
@@ -18,7 +19,7 @@ import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
 import type { InternalThread, InternalMsg } from "@/lib/internal";
 import {
-  loadInternalThreads, loadInternalMessages, sendInternalMessage, sendInternalMedia, forwardInternalMessage, sendInternalSticker,
+  loadInternalThreads, loadInternalMessages, loadInternalMessageRange, sendInternalMessage, sendInternalMedia, forwardInternalMessage, sendInternalSticker,
   markInternalRead, editInternalMessage, deleteInternalMessage, reactInternalMessage,
 } from "@/app/(app)/internal/actions";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
@@ -28,6 +29,8 @@ import { useCachedMedia } from "@/lib/mediaCache";
 import { mediaTypeOf } from "@/lib/mediaUpload";
 import { uploadMedia } from "@/lib/uploadMedia";
 import { CachedImg } from "@/components/chat/CachedImg";
+import { ExportChatModal } from "@/components/chat/ExportChatModal";
+import { exportFileBase, type ExportMsg } from "@/lib/chatExport";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
 
@@ -86,6 +89,22 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   const [text, setText] = useState("");
   const [reply, setReply] = useState<InternalMsg | null>(null);
   const [editing, setEditing] = useState<InternalMsg | null>(null);
+  // Exportar un tramo (espejo del chat de clientes): `from: null` = esperando el primer mensaje;
+  // con `from` = esperando el último. Con los dos se abre el modal con el rango ordenado.
+  const [exportSel, setExportSel] = useState<{ from: InternalMsg | null } | null>(null);
+  const [exportRange, setExportRange] = useState<{ from: InternalMsg; to: InternalMsg } | null>(null);
+  const pickExport = useCallback((m: InternalMsg) => {
+    setExportSel((cur) => {
+      if (!cur || !cur.from) return { from: m };
+      const [a, b] = new Date(cur.from.created_at) <= new Date(m.created_at) ? [cur.from, m] : [m, cur.from];
+      setExportRange({ from: a, to: b });
+      return null;
+    });
+  }, []);
+  const exportPickProps = (m: InternalMsg) => (exportSel ? {
+    onClickCapture: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); pickExport(m); },
+    style: { cursor: "pointer" as const },
+  } : {});
   const [emojiRect, setEmojiRect] = useState<DOMRect | null>(null);
   const [reactTarget, setReactTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [fwdTarget, setFwdTarget] = useState<{ id: string; rect: DOMRect } | null>(null);
@@ -143,7 +162,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     loadInternalMessages(ch).then((fresh) => { scrollAction.current = "follow"; setMsgs((prev) => mergeInternal(prev, fresh)); setHasMore((h) => h || fresh.length >= MSG_PAGE); }).catch(() => {});
   }, []);
   const openChannel = useCallback((ch: string) => {
-    setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null);
+    setSel(ch); setReply(null); setEditing(null); setText(""); setTypingName(null); setExportSel(null); setExportRange(null);
     setMobileView("thread"); // en móvil solo cabe una columna; ver `isMobile` abajo
     try { localStorage.setItem("ht.internalCh." + businessId, ch); } catch {} // remember across tab changes
     scrollAction.current = "bottom";
@@ -374,6 +393,26 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
   };
 
   const selThread = threads.find((t) => t.key === sel);
+  const exportTitle = selThread ? (selThread.kind === "team" ? (lang === "es" ? "Chat del equipo" : "Team chat") : `${lang === "es" ? "Chat con" : "Chat with"} ${selThread.title}`) : "";
+  const exportHeader = [
+    { label: lang === "es" ? "Canal" : "Channel", value: selThread?.kind === "team" ? (lang === "es" ? "Equipo (interno)" : "Team (internal)") : (lang === "es" ? "Mensaje directo (interno)" : "Direct message (internal)") },
+    ...(selThread?.kind === "dm" ? [{ label: lang === "es" ? "Con" : "With", value: selThread.title }] : []),
+  ];
+  // Traduce el tramo a la forma neutra de la transcripción. Quién habla: el nombre del agente
+  // (o "Agente" si ya no está en el equipo). Misma regla que las burbujas y las citas.
+  const toExportMsgs = (list: InternalMsg[]): ExportMsg[] => {
+    const byId = new Map(list.map((m) => [m.id, m]));
+    const whoOf = (m: InternalMsg) => (m.author_id ? agentMap.get(m.author_id)?.name : null) ?? (lang === "es" ? "Agente" : "Agent");
+    return list.map((m) => {
+      const q = m.reply_to ? (byId.get(m.reply_to) ?? m.quoted ?? null) : null;
+      return {
+        id: m.id, ts: m.created_at, who: whoOf(m), mine: m.author_id === meId, type: m.type, body: m.body || null,
+        media: m.media_url && !m.deleted ? { url: m.media_url, mime: m.media_mime, name: m.media_name, size: m.media_size ?? null } : null,
+        mediaNote: null, quoted: q ? { who: whoOf(q), text: quoteText(q, lang) } : null,
+        deleted: m.deleted, edited: !!m.edited, forwarded: !!m.forwarded, reactions: (m.reactions ?? []).map((r) => r.emoji), extra: null,
+      };
+    });
+  };
 
   // Group consecutive plain images (same author) into a 2×2 album, like the clients chat.
   type Row = { kind: "album"; items: InternalMsg[] } | { kind: "msg"; m: InternalMsg };
@@ -394,8 +433,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     const quoted = m.reply_to ? (msgMap.get(m.reply_to) ?? m.quoted ?? null) : null;
     const url = m.body ? firstUrl(m.body) : null;
     return (
-      <div className={"msg " + (mine ? "out" : "in") + (fresh ? " fresh" : "")}>
-        <div className="bubble" id={`im-${m.id}`}>
+      <div className={"msg " + (mine ? "out" : "in") + (fresh ? " fresh" : "")} {...exportPickProps(m)}>
+        <div className="bubble" id={`im-${m.id}`} style={exportSel?.from?.id === m.id ? { outline: "2px solid var(--brand)", outlineOffset: 2 } : undefined}>
           {!mine && selThread?.kind === "team" && !m.deleted && <div style={{ fontSize: 11.5, fontWeight: 700, color: au?.color ?? "var(--brand-700)", marginBottom: 2 }}>{au?.name ?? "Agente"}</div>}
           {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
           {quoted && !m.deleted && (
@@ -423,7 +462,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
               onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
               onReply={() => { setReply(m); setEditing(null); focusComposer(taRef); }}
               onForward={(rect) => setFwdTarget({ id: m.id, rect })}
-              onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })} />
+              onEdit={() => startEdit(m)} onDelete={() => del(m)} onReact={(rect) => setReactTarget({ id: m.id, rect })}
+              onExport={() => pickExport(m)} exportArmed={!!exportSel?.from} />
           )}
         </div>
       </div>
@@ -486,8 +526,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
               return (
                 <Fragment key={"al" + row.items[0].id}>
                   {daySep}
-                  <div className={"msg " + (mine ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")}>
-                    <div className="bubble" style={{ padding: 3 }}>
+                  <div className={"msg " + (mine ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")} {...exportPickProps(exportSel?.from ? row.items[row.items.length - 1] : row.items[0])}>
+                    <div className="bubble" style={{ padding: 3, ...(exportSel?.from && row.items.some((it) => it.id === exportSel.from!.id) ? { outline: "2px solid var(--brand)", outlineOffset: 2 } : {}) }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
                         {row.items.slice(0, 4).map((m, idx) => (
                           <a key={m.id} id={`im-${m.id}`} href={m.media_url ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); openLightbox(m.id); }} style={{ position: "relative", display: "block", aspectRatio: "1 / 1", borderRadius: 6, background: "var(--surface-2)", overflow: "hidden", cursor: "zoom-in" }}>
@@ -509,6 +549,17 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
         </div>
 
         <div className="composer">
+          {exportSel && (
+            <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--brand-50)", color: "var(--brand-700)", borderRadius: 8, marginBottom: 6 }}>
+              <Icon name="download" size={14} />
+              <span className="t-xs grow truncate">
+                {exportSel.from
+                  ? <>{lang === "es" ? "Exportar desde: " : "Export from: "}<b>{quoteText(exportSel.from, lang)}</b>{lang === "es" ? " · toca el último mensaje" : " · tap the last message"}</>
+                  : (lang === "es" ? "Exportar chat · toca el primer mensaje del tramo" : "Export chat · tap the first message of the range")}
+              </span>
+              <button className="iconbtn sm" onClick={() => setExportSel(null)} title={lang === "es" ? "Cancelar" : "Cancel"}><Icon name="x" size={14} /></button>
+            </div>
+          )}
           {(reply || editing) && (
             <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8, marginBottom: 6 }}>
               <Icon name={editing ? "edit" : "swap"} size={14} />
@@ -582,6 +633,11 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           <EmojiPicker rect={reactTarget.rect} onPick={(e) => react(reactTarget.id, e)} />
         </>
       )}
+      {exportRange && selThread && (
+        <ExportChatModal lang={lang} title={exportTitle} header={exportHeader} fileBase={exportFileBase(selThread.kind === "team" ? teamLabel : selThread.title)}
+          load={async () => toExportMsgs(await loadInternalMessageRange(selThread.key, exportRange.from.created_at, exportRange.to.created_at))}
+          onClose={() => setExportRange(null)} />
+      )}
       {lightbox != null && imageMsgs.length > 0 && (
         <Lightbox items={imageMsgs as unknown as ChatMessage[]} index={lightbox} onClose={() => setLightbox(null)}
           onForward={(mm) => { setLightbox(null); setFwdTarget({ id: mm.id, rect: new DOMRect(window.innerWidth / 2, window.innerHeight / 2, 0, 0) }); }}
@@ -627,7 +683,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 }
 
 /** Per-message hover menu for internal chat — same actions/icons/order as the WhatsApp chat. */
-function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForward, onEdit, onDelete, onReact, onCopied }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; media?: { url: string; mime: string | null; name: string | null } | null; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onCopied?: (r: "file" | "link" | null) => void }) {
+function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForward, onEdit, onDelete, onReact, onCopied, onExport, exportArmed }: { out: boolean; canEdit: boolean; canDelete: boolean; lang: "es" | "en"; media?: { url: string; mime: string | null; name: string | null } | null; onReply: () => void; onForward: (rect: DOMRect) => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onCopied?: (r: "file" | "link" | null) => void; onExport?: () => void; exportArmed?: boolean }) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -638,7 +694,7 @@ function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForw
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setOpen(false)} />
-          <div className="menu" style={menuStyle(rect, { width: 170, height: 210, align: out ? "right" : "left" })}>
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 280, align: out ? "right" : "left" })}>
             <button className="menu-item" onClick={() => { const r = rect; setOpen(false); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { setOpen(false); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             <button className="menu-item" onClick={() => { const r = rect; setOpen(false); onForward(r); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>
@@ -656,6 +712,11 @@ function InternalMsgMenu({ out, canEdit, canDelete, lang, media, onReply, onForw
             {media && (
               <button className="menu-item" onClick={async () => { setOpen(false); onCopied?.(await copyLink(media.url) ? "link" : null); }}>
                 <Icon name="paperclip" size={15} />{lang === "es" ? "Copiar enlace" : "Copy link"}
+              </button>
+            )}
+            {onExport && (
+              <button className="menu-item" onClick={() => { setOpen(false); onExport(); }}>
+                <Icon name="download" size={15} />{exportArmed ? (lang === "es" ? "Exportar hasta aquí" : "Export up to here") : (lang === "es" ? "Exportar desde aquí" : "Export from here")}
               </button>
             )}
             {canEdit && <button className="menu-item" onClick={() => { setOpen(false); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}

@@ -120,14 +120,17 @@ export async function getInternalUnread(businessId: string, userId: string): Pro
 }
 
 /** Messages for one internal channel, oldest→newest, paginated (newest page, or older than `before`). */
-export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; limit?: number }): Promise<InternalMsg[]> {
+export async function getInternalMessages(businessId: string, channel: string, opts?: { before?: string; after?: string; until?: string; limit?: number }): Promise<InternalMsg[]> {
   const supabase = await createClient();
   const limit = opts?.limit ?? MSG_PAGE;
   // meta (la miniatura) y media_size llegan con la 0071. Si no está aplicada la consulta falla, así
   // que se reintenta sin ellas: los mensajes importan más que la miniatura.
+  // `after`/`until` acotan un rango cerrado (exportar un tramo); `before` pagina hacia atrás.
   const page = (cols: string) => {
     let q = supabase.from("internal_messages").select(cols).eq("business_id", businessId).eq("channel", channel).order("created_at", { ascending: false }).limit(limit);
     if (opts?.before) q = q.lt("created_at", opts.before);
+    if (opts?.after) q = q.gte("created_at", opts.after);
+    if (opts?.until) q = q.lte("created_at", opts.until);
     return q;
   };
   let { data, error } = await page("id, channel, author_id, body, mentions, created_at, reply_to, edited, deleted, reactions, type, media_url, media_mime, media_name, forwarded, meta, media_size");

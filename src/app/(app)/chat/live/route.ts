@@ -55,6 +55,12 @@ export async function POST(req: NextRequest) {
       const before = typeof body.before === "string" ? body.before : undefined;
       return NextResponse.json(await getConversationMessages(convId, before ? { before } : undefined));
     }
+    case "range": {
+      // Un tramo cerrado del chat (exportar): páginas de hasta 500 hacia atrás desde `until`.
+      if (!convId || typeof body.after !== "string" || typeof body.until !== "string") return NextResponse.json([]);
+      const before = typeof body.before === "string" ? body.before : undefined;
+      return NextResponse.json(await getConversationMessages(convId, { after: body.after, until: body.until, before, limit: RANGE_PAGE }));
+    }
     case "header":
       return NextResponse.json(convId ? await getConversationHeader(convId) : null);
     case "detail":
@@ -75,5 +81,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
+const RANGE_PAGE = 500;
 const EMPTY_BADGES = { mine: 0, unassigned: 0, internal: 0, orders: 0, proofs: 0, notifications: [], dueDates: [] };
 const EMPTY_COUNTS = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };

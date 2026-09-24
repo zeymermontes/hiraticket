@@ -27,6 +27,22 @@ export async function loadInternalMessages(channel: string, before?: string): Pr
   return getInternalMessages(businessId, channel, { before });
 }
 
+/** Todos los mensajes del canal entre dos fechas (ambas incluidas), cronológico: "exportar chat". */
+export async function loadInternalMessageRange(channel: string, after: string, until: string): Promise<InternalMsg[]> {
+  const { businessId } = await ctx();
+  if (!businessId) return [];
+  const out: InternalMsg[] = [];
+  let before: string | undefined;
+  for (let i = 0; i < 40; i++) {
+    const page = await getInternalMessages(businessId, channel, { after, until, before, limit: 500 });
+    if (!page.length) break;
+    out.unshift(...page);
+    if (page.length < 500) break;
+    before = page[0].created_at;
+  }
+  return out;
+}
+
 export async function sendInternalMessage(channel: string, body: string, replyTo?: string | null, mentions?: string[]): Promise<void> {
   const text = body.trim();
   if (!text) return;

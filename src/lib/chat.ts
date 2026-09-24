@@ -490,14 +490,18 @@ const MSG_BASE = "id, business_id, direction, type, body, state, author_id, crea
  *  so long conversations don't load all at once. Always returned oldest→newest. */
 export async function getConversationMessages(
   convId: string,
-  opts?: { before?: string; limit?: number },
+  opts?: { before?: string; after?: string; until?: string; limit?: number },
 ): Promise<ChatMessage[]> {
   const supabase = await createClient();
   const limit = opts?.limit ?? MSG_PAGE;
   // Fetch the newest `limit` (descending) so we get the tail, then reverse to chronological.
+  // `after`/`until` acotan un rango cerrado (exportar un tramo del chat); `before` sigue siendo
+  // el cursor abierto con el que se pagina hacia atrás.
   const q = (cols: string) => {
     let b = supabase.from("messages").select(cols).eq("conversation_id", convId).order("created_at", { ascending: false }).limit(limit);
     if (opts?.before) b = b.lt("created_at", opts.before);
+    if (opts?.after) b = b.gte("created_at", opts.after);
+    if (opts?.until) b = b.lte("created_at", opts.until);
     return b;
   };
   // media_purged_at (0066) va en su propio nivel: metiéndolo en MSG_FULL, un despliegue sin la

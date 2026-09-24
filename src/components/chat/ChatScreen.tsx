@@ -38,7 +38,9 @@ import { useConfirm, type ConfirmOpts } from "@/components/Confirm";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { useToast, useFlowToast } from "@/components/Toast";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
-import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages } from "@/lib/chatLive";
+import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadMessageRange } from "@/lib/chatLive";
+import { ExportChatModal } from "@/components/chat/ExportChatModal";
+import { exportFileBase, type ExportMsg } from "@/lib/chatExport";
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
 import { putMessages, getMeta, setMeta, searchLocal } from "@/lib/localCache";
@@ -183,6 +185,10 @@ function useChatHeaderRefresh() {
 // Optimistically patch the open conversation's detail (instant feedback before the action resolves).
 const ChatPatchContext = createContext<((patch: Partial<ConvDetail>) => void) | null>(null);
 function useChatPatch() { return useContext(ChatPatchContext) ?? (() => {}); }
+/** "Exportar chat" vive en el panel de Acciones (Workspace) pero la selección del tramo ocurre en
+ *  el hilo (Thread), que es otro componente hermano: el panel sube un contador y el hilo entra en
+ *  modo de selección al verlo cambiar. Sin proveedor (el hilo flotante del pedido) no hace nada. */
+const ExportArmContext = createContext<{ arm: number; bump: () => void } | null>(null);
 
 function LocationBlock({ m }: { m: ChatMessage }) {
   const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
@@ -654,7 +660,7 @@ function StoryQuoteBlock({ s, out }: { s: StoryQuote; out: boolean }) {
     : <div style={style}>{inner}</div>;
 }
 
-function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopied }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void; onCopied?: (r: "file" | "link" | null) => void }) {
+function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopied, onExport, exportArmed }: { m: ChatMessage; out: boolean; onReply: () => void; onEdit: () => void; onDelete: () => void; onReact: (rect: DOMRect) => void; onForward: () => void; onCopied?: (r: "file" | "link" | null) => void; /** "Exportar desde aquí" (o "hasta aquí" si ya hay un inicio elegido). */ onExport?: () => void; exportArmed?: boolean }) {
   const { lang } = useApp();
   const { ref, open, rect, toggle, close } = usePopover();
   return (
@@ -663,7 +669,7 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
       {open && rect && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={close} />
-          <div className="menu" style={menuStyle(rect, { width: 160, height: 240, align: out ? "right" : "left" })}>
+          <div className="menu" style={menuStyle(rect, { width: 180, height: 280, align: out ? "right" : "left" })}>
             <button className="menu-item" onClick={() => { const r = rect; close(); onReact(r); }}><span style={{ fontSize: 15, width: 15, display: "inline-flex", justifyContent: "center" }}>😊</span>{lang === "es" ? "Reaccionar" : "React"}</button>
             <button className="menu-item" onClick={() => { close(); onReply(); }}><Icon name="swap" size={15} />{lang === "es" ? "Responder" : "Reply"}</button>
             {!m.deleted && (m.type === "text" || !!m.media_url) && <button className="menu-item" onClick={() => { close(); onForward(); }}><Icon name="forward" size={15} />{lang === "es" ? "Reenviar" : "Forward"}</button>}
@@ -682,6 +688,11 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
             {!m.deleted && !!m.media_url && (
               <button className="menu-item" onClick={async () => { close(); onCopied?.(await copyLink(m.media_url!) ? "link" : null); }}>
                 <Icon name="paperclip" size={15} />{lang === "es" ? "Copiar enlace" : "Copy link"}
+              </button>
+            )}
+            {onExport && (
+              <button className="menu-item" onClick={() => { close(); onExport(); }}>
+                <Icon name="download" size={15} />{exportArmed ? (lang === "es" ? "Exportar hasta aquí" : "Export up to here") : (lang === "es" ? "Exportar desde aquí" : "Export from here")}
               </button>
             )}
             {out && m.type === "text" && <button className="menu-item" onClick={() => { close(); onEdit(); }}><Icon name="edit" size={15} />{lang === "es" ? "Editar" : "Edit"}</button>}
@@ -774,6 +785,8 @@ export function ChatScreen({
   const [show360, setShow360] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
   const [tab, setTab] = useState<"mine" | "unassigned" | "all">("mine");
+  const [exportArm, setExportArm] = useState(0);
+  const exportArmCtx = useMemo(() => ({ arm: exportArm, bump: () => setExportArm((n) => n + 1) }), [exportArm]);
 
   // The list window is owned by the client from here on (the server only seeds the first page), so
   // it is NOT re-seeded from listProp — that would replace a filtered window with the default one.
@@ -1467,6 +1480,7 @@ export function ChatScreen({
     <ChatRefreshContext.Provider value={softRefresh}>
     <ChatHeaderRefreshContext.Provider value={headerRefresh}>
     <ChatPatchContext.Provider value={patchDetail}>
+    <ExportArmContext.Provider value={exportArmCtx}>
     <div
       className="chat"
       style={{
@@ -1681,6 +1695,7 @@ export function ChatScreen({
       )}
       {showCompose && <NewConversationModal lang={lang} onClose={() => setShowCompose(false)} onStarted={(id) => { setShowCompose(false); router.push(`/chat?c=${id}`); router.refresh(); }} />}
     </div>
+    </ExportArmContext.Provider>
     </ChatPatchContext.Provider>
     </ChatHeaderRefreshContext.Provider>
     </ChatRefreshContext.Provider>
@@ -1740,7 +1755,7 @@ function NewConversationModal({ lang, onClose, onStarted }: { lang: "es" | "en";
 
 /* ---------- Thread (right column) ---------- */
 export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleCtx, onBack, businessId, floating, meId, onAccepted }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; connected: boolean; ctxVisible?: boolean; onToggleCtx?: () => void; /** Solo en móvil: volver a la lista de chats. */ onBack?: () => void; businessId: string; floating?: boolean; meId?: string; onAccepted?: (convId: string) => void }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const refresh = useChatRefresh();
   const headerRefresh = useChatHeaderRefresh();
@@ -1831,6 +1846,78 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }
   const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Exportar un tramo: `from: null` = esperando el primer mensaje; con `from` = esperando el último.
+  // Al elegir los dos se abre el modal con el rango (ordenado, sin importar cuál se tocó primero).
+  const [exportSel, setExportSel] = useState<{ from: ChatMessage | null } | null>(null);
+  const [exportRange, setExportRange] = useState<{ from: ChatMessage; to: ChatMessage } | null>(null);
+  const exportArm = useContext(ExportArmContext);
+  const lastArm = useRef(exportArm?.arm ?? 0);
+  useEffect(() => {
+    if (!exportArm || exportArm.arm === lastArm.current) return;
+    lastArm.current = exportArm.arm;
+    setExportSel({ from: null });
+  }, [exportArm]);
+  useEffect(() => { setExportSel(null); setExportRange(null); }, [detail.id]);
+  const pickExport = useCallback((m: ChatMessage) => {
+    setExportSel((cur) => {
+      if (!cur || !cur.from) return { from: m };
+      const [a, b] = new Date(cur.from.created_at) <= new Date(m.created_at) ? [cur.from, m] : [m, cur.from];
+      setExportRange({ from: a, to: b });
+      return null;
+    });
+  }, []);
+  // En modo exportar, un clic en cualquier burbuja la elige (y no abre la foto ni el enlace).
+  const exportPickProps = (m: ChatMessage) => (exportSel ? {
+    onClickCapture: (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); pickExport(m); },
+    style: { cursor: "pointer" as const },
+  } : {});
+  const contactLabel = detail.is_group ? (lang === "es" ? "Grupo" : "Group") : personal ? (lang === "es" ? "Contacto" : "Contact") : (lang === "es" ? "Cliente" : "Customer");
+  const exportTitle = `${lang === "es" ? "Chat con" : "Chat with"} ${detail.contact?.name || detail.contact?.phone || "?"}`;
+  const exportHeader = [
+    { label: contactLabel, value: detail.contact?.name || "—" },
+    ...(detail.contact?.phone ? [{ label: lang === "es" ? "Teléfono" : "Phone", value: detail.contact.phone }] : []),
+    { label: lang === "es" ? "Canal" : "Channel", value: "WhatsApp" },
+  ];
+  // Traduce el tramo (tal como lo devuelve el servidor) a la forma neutra que arma la transcripción.
+  // Quién habla: el agente si salió de aquí (o "Tú" si no hay autor: automático o desde el
+  // teléfono); en grupo el remitente; en 1:1 el cliente. Misma regla que las burbujas y las citas.
+  const toExportMsgs = (list: ChatMessage[]): ExportMsg[] => {
+    const byId = new Map(list.map((m) => [m.id, m]));
+    const whoOf = (m: { direction: "in" | "out"; author_id: string | null; sender_name: string | null }): string => {
+      if (m.direction === "out") return (m.author_id && agentMap.get(m.author_id)?.name) || (lang === "es" ? "Tú" : "You");
+      if (detail.is_group && m.sender_name) return m.sender_name;
+      return detail.contact?.name || detail.contact?.phone || (lang === "es" ? "Cliente" : "Customer");
+    };
+    return list.map((m) => {
+      const q = m.reply_to ? (byId.get(m.reply_to) ?? m.quoted ?? null) : null;
+      const mq = !q ? metaQuoteOf(m) : null;
+      const quoted = q ? { who: whoOf(q), text: quoteText(q, lang) }
+        : mq ? { who: mq.mine ? (lang === "es" ? "Tú" : "You") : (detail.is_group ? null : (detail.contact?.name ?? null)), text: quoteText({ type: mq.type, body: mq.text ?? null, media_name: mq.name ?? null, media_mime: mq.mime ?? null, meta: null }, lang) }
+        : null;
+      let extra: string | null = null;
+      if (m.type === "location") {
+        const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
+        extra = `📍 ${meta.name || meta.address || (lang === "es" ? "Ubicación" : "Location")}${meta.address && meta.name ? ` — ${meta.address}` : ""}${meta.lat != null && meta.lng != null ? ` (https://www.google.com/maps?q=${meta.lat},${meta.lng})` : ""}`;
+      } else if (m.type === "contact") {
+        const meta = (m.meta ?? {}) as { name?: string; vcard?: string };
+        const phone = meta.vcard ? (meta.vcard.match(/TEL[^:]*:([+\d\s()-]+)/)?.[1]?.trim() ?? "") : "";
+        extra = `👤 ${meta.name || m.body || (lang === "es" ? "Contacto" : "Contact")}${phone ? ` · ${phone}` : ""}`;
+      } else if (m.type === "call") {
+        extra = m.state === "ringing" ? (lang === "es" ? "📞 Llamada entrante" : "📞 Incoming call") : (lang === "es" ? "📞 Llamada perdida" : "📞 Missed call");
+      }
+      const hasFile = !!m.media_url && !m.media_pending && !m.media_purged_at && m.type !== "call";
+      const mediaNote = m.media_purged_at ? (lang === "es" ? "archivo ya no disponible" : "file no longer available")
+        : (m.media_pending || m.media_fetch_error) ? (lang === "es" ? `archivo sin descargar${m.media_name ? ` "${m.media_name}"` : ""}` : `file not downloaded${m.media_name ? ` "${m.media_name}"` : ""}`)
+        : null;
+      return {
+        id: m.id, ts: m.created_at, who: whoOf(m), mine: m.direction === "out", type: m.type,
+        body: m.type === "contact" || m.type === "location" ? null : m.body,
+        media: hasFile ? { url: m.media_url!, mime: m.media_mime, name: m.media_name, size: m.media_size ?? null } : null,
+        mediaNote, quoted, deleted: m.deleted, edited: !!m.edited, forwarded: !!m.forwarded,
+        reactions: (m.reactions ?? []).map((r) => r.emoji), extra,
+      };
+    });
+  };
   // El archivo de una plantilla elegida, esperando a que se pulse enviar. Ver `pickCanned`.
   const [pendingTpl, setPendingTpl] = useState<CannedItem | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
@@ -2259,8 +2346,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             return (
               <React.Fragment key={key}>
                 {daySep}
-                <div className={"msg " + (out ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")}>
-                  <div className="bubble" style={{ padding: 3 }}>
+                <div className={"msg " + (out ? "out" : "in") + (isFresh(row.items[0]) ? " fresh" : "")} {...exportPickProps(exportSel?.from ? row.items[row.items.length - 1] : row.items[0])}>
+                  <div className="bubble" style={{ padding: 3, ...(exportSel?.from && row.items.some((it) => it.id === exportSel.from!.id) ? { outline: "2px solid var(--brand)", outlineOffset: 2 } : {}) }}>
                     <AlbumMenu out={out} onForward={() => setForwarding(row.items)}
                       onDelete={out ? async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar fotos" : "Delete photos", message: lang === "es" ? "Se eliminan para todos en la conversación." : "They are deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { for (const it of row.items) await deleteMessage(it.id); refresh(); }); } : undefined} />
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3, width: 242 }}>
@@ -2299,8 +2386,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           return (
             <React.Fragment key={key}>
             {daySep}
-            <div className={"msg " + (out ? "out" : "in") + (isFresh(m) ? " fresh" : "")}>
-              <div className="bubble" id={`m-${m.id}`}>
+            <div className={"msg " + (out ? "out" : "in") + (isFresh(m) ? " fresh" : "")} {...exportPickProps(m)}>
+              <div className="bubble" id={`m-${m.id}`} style={exportSel?.from?.id === m.id ? { outline: "2px solid var(--brand)", outlineOffset: 2 } : undefined}>
                 {author && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 2 }}>{author.name}</div>}
                 {!out && detail.is_group && m.sender_name && <div style={{ fontSize: 11.5, fontWeight: 700, color: senderColor(m.sender_jid || m.sender_name), marginBottom: 2 }}>{m.sender_name}</div>}
                 {m.forwarded && !m.deleted && <div className="row gap-1 t-xs muted" style={{ marginBottom: 2, fontStyle: "italic" }}><Icon name="forward" size={12} />{lang === "es" ? "Reenviado" : "Forwarded"}</div>}
@@ -2346,6 +2433,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 )}
                 {!m.deleted && !m.id.startsWith("tmp") && (
                   <MsgMenu m={m} out={out} onReply={() => startReply(m)} onEdit={() => startEdit(m)} onForward={() => setForwarding([m])}
+                    onExport={() => pickExport(m)} exportArmed={!!exportSel?.from}
                     onCopied={(r) => push({ kind: r ? "success" : "warn", message: r === "file" ? (lang === "es" ? "Archivo copiado" : "File copied") : r === "link" ? (lang === "es" ? "Enlace copiado" : "Link copied") : (lang === "es" ? "No se pudo copiar" : "Couldn't copy") })}
                     onReact={(rect) => setReactTarget({ id: m.id, rect })}
                     onDelete={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Eliminar mensaje" : "Delete message", message: lang === "es" ? "Se elimina para todos en la conversación." : "It is deleted for everyone in the chat.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) start(async () => { await deleteMessage(m.id); refresh(); }); }} />
@@ -2374,6 +2462,17 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <button className="btn btn-sm btn-primary" style={{ flex: "none" }} onClick={() => setTplOpen(true)}>
               <Icon name="send" size={14} />{lang === "es" ? "Enviar plantilla" : "Send template"}
             </button>
+          </div>
+        )}
+        {exportSel && (
+          <div className="row gap-2" style={{ padding: "6px 10px", background: "var(--brand-50)", color: "var(--brand-700)", borderRadius: 8, marginBottom: 6 }}>
+            <Icon name="download" size={14} />
+            <span className="t-xs grow truncate">
+              {exportSel.from
+                ? <>{lang === "es" ? "Exportar desde: " : "Export from: "}<b>{quoteText(exportSel.from, lang)}</b>{lang === "es" ? " · toca el último mensaje" : " · tap the last message"}</>
+                : (lang === "es" ? "Exportar chat · toca el primer mensaje del tramo" : "Export chat · tap the first message of the range")}
+            </span>
+            <button className="iconbtn sm" onClick={() => setExportSel(null)} title={lang === "es" ? "Cancelar" : "Cancel"}><Icon name="x" size={14} /></button>
           </div>
         )}
         {(replyTo || editing) && (
@@ -2583,6 +2682,11 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
           <EmojiPicker rect={reactTarget.rect} onPick={(e) => { const id = reactTarget.id; setReactTarget(null); start(async () => { await reactToMessage(id, e); refresh(); }); }} />
         </>
       )}
+      {exportRange && (
+        <ExportChatModal lang={lang} title={exportTitle} header={exportHeader} fileBase={exportFileBase(detail.contact?.name || detail.contact?.phone || "chat")}
+          load={async () => toExportMsgs(await loadMessageRange(detail.id, exportRange.from.created_at, exportRange.to.created_at))}
+          onClose={() => setExportRange(null)} />
+      )}
       {lightbox !== null && imageMsgs.length > 0 && (
         <Lightbox items={imageMsgs} index={lightbox} onClose={() => setLightbox(null)}
           onForward={(m) => { setLightbox(null); setForwarding([m]); }}
@@ -2749,6 +2853,7 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
   const [nameVal, setNameVal] = useState(detail.contact?.name ?? "");
   const [actOpen, setActOpen] = useState(true);
   const [showXfer, setShowXfer] = useState(false);
+  const exportArm = useContext(ExportArmContext);
   const tagBtn = useRef<HTMLButtonElement>(null);
   const [tagRect, setTagRect] = useState<DOMRect | null>(null);
   const actionsBtn = useRef<HTMLButtonElement>(null);
@@ -2985,6 +3090,10 @@ function Workspace({ detail, agents, areas, stages, products, meId, businessId, 
               </button>
               <button className={"act" + (detail.muted ? " warn" : "")} title={lang === "es" ? "Al desconectar, los mensajes entrantes ya no se guardan" : "When disconnected, incoming messages are no longer saved"} onClick={() => { patch({ muted: !detail.muted }); start(async () => { await setConvMuted(detail.id, !detail.muted); headerRefresh(); }); }}>
                 <Icon name="wifioff" />{detail.muted ? (lang === "es" ? "Conectar chat" : "Connect chat") : (lang === "es" ? "Desconectar chat" : "Disconnect chat")}
+              </button>
+              <button className="act" title={lang === "es" ? "Descargar un tramo del chat con sus archivos, para compartirlo como contexto" : "Download a range of the chat with its files, to share as context"}
+                onClick={() => { setActionsRect(null); exportArm?.bump(); }}>
+                <Icon name="download" />{lang === "es" ? "Exportar chat" : "Export chat"}
               </button>
               {detail.locked_to
                 ? <button className="act warn" title={lang === "es" ? "Quitar el candado para que pueda reasignarse" : "Remove the pin so it can be reassigned"} onClick={() => { patch({ locked_to: null }); start(async () => { await unlockConv(detail.id); headerRefresh(); }); }}>

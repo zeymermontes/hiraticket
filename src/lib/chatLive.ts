@@ -68,6 +68,21 @@ export function loadOlderMessages(convId: string, before: string): Promise<ChatM
   return post<ChatMessage[]>({ kind: "messages", convId, before });
 }
 
+/** Todos los mensajes entre dos fechas (ambas incluidas), en orden cronológico. Pagina hacia atrás
+ *  desde `until` hasta cubrir `after`; es la lectura de "exportar chat". */
+export async function loadMessageRange(convId: string, after: string, until: string): Promise<ChatMessage[]> {
+  const out: ChatMessage[] = [];
+  let before: string | undefined;
+  for (let i = 0; i < 40; i++) {
+    const page = await post<ChatMessage[]>({ kind: "range", convId, after, until, before }, 30_000);
+    if (!page.length) break;
+    out.unshift(...page);
+    if (page.length < 500) break;
+    before = page[0].created_at;
+  }
+  return out;
+}
+
 /** Solo el encabezado del chat abierto: 1 consulta, sin volver a traer mensajes ni notas. */
 export function liveConvHeader(convId: string): Promise<Partial<ConvDetail> | null> {
   return post<Partial<ConvDetail> | null>({ kind: "header", convId });
