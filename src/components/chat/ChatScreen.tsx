@@ -56,6 +56,7 @@ import { mediaTypeOf } from "@/lib/mediaUpload";
 import { uploadMedia } from "@/lib/uploadMedia";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
+import { contactCardsOf, contactCardText } from "@/lib/contactCard";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
 import { fetchLinkMeta, type LinkMeta } from "@/app/(app)/chat/link-actions";
@@ -206,14 +207,36 @@ function LocationBlock({ m }: { m: ChatMessage }) {
   );
 }
 
+/** Tarjeta(s) de contacto: nombre, empresa, teléfonos y correos, cada dato copiable con un clic y
+ *  un botón para copiar la tarjeta entera. Entiende el formato del worker y el de la API oficial. */
 function ContactBlock({ m }: { m: ChatMessage }) {
-  const meta = (m.meta ?? {}) as { name?: string; vcard?: string };
-  const name = meta.name || m.body || "Contacto";
-  const phone = meta.vcard ? (meta.vcard.match(/TEL[^:]*:([+\d\s()-]+)/)?.[1]?.trim() ?? "") : "";
+  const { lang } = useApp();
+  const { push } = useToast();
+  const cards = contactCardsOf(m.meta, m.body);
+  const copy = async (text: string) => {
+    push(await copyLink(text) ? { kind: "success", message: lang === "es" ? "Copiado" : "Copied" } : { kind: "warn", message: lang === "es" ? "No se pudo copiar" : "Couldn't copy" });
+  };
+  if (!cards.length) return <div className="row gap-1"><Icon name="user" size={13} />{lang === "es" ? "Contacto" : "Contact"}</div>;
   return (
-    <div className="row gap-2" style={{ padding: "2px 0" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="user" size={17} /></span>
-      <div style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }} className="truncate">{name}</div>{phone && <div className="t-xs muted mono">{phone}</div>}</div>
+    <div className="col gap-2" style={{ padding: "2px 0" }}>
+      {cards.map((c, i) => (
+        <div key={i} className="row gap-2" style={{ alignItems: "flex-start" }}>
+          <span style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="user" size={17} /></span>
+          <div style={{ minWidth: 0, userSelect: "text" }} className="grow">
+            <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{c.name}</div>
+            {c.org && <div className="t-xs muted">{c.org}</div>}
+            {c.phones.map((p) => (
+              <button key={p} className="t-xs mono" title={lang === "es" ? "Copiar teléfono" : "Copy phone"} onClick={() => copy(p)}
+                style={{ display: "block", border: "none", background: "transparent", padding: 0, color: "var(--blue)", cursor: "pointer", font: "inherit", fontSize: 12, textDecoration: "underline dotted" }}>{p}</button>
+            ))}
+            {c.emails.map((e) => (
+              <button key={e} className="t-xs" title={lang === "es" ? "Copiar correo" : "Copy email"} onClick={() => copy(e)}
+                style={{ display: "block", border: "none", background: "transparent", padding: 0, color: "var(--blue)", cursor: "pointer", font: "inherit", fontSize: 12, textDecoration: "underline dotted", overflowWrap: "anywhere" }}>{e}</button>
+            ))}
+          </div>
+          <button className="iconbtn sm" title={lang === "es" ? "Copiar contacto" : "Copy contact"} onClick={() => copy(contactCardText(c))} style={{ flex: "none" }}><Icon name="file" size={14} /></button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1929,9 +1952,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         const meta = (m.meta ?? {}) as { lat?: number; lng?: number; name?: string; address?: string };
         extra = `📍 ${meta.name || meta.address || (lang === "es" ? "Ubicación" : "Location")}${meta.address && meta.name ? ` — ${meta.address}` : ""}${meta.lat != null && meta.lng != null ? ` (https://www.google.com/maps?q=${meta.lat},${meta.lng})` : ""}`;
       } else if (m.type === "contact") {
-        const meta = (m.meta ?? {}) as { name?: string; vcard?: string };
-        const phone = meta.vcard ? (meta.vcard.match(/TEL[^:]*:([+\d\s()-]+)/)?.[1]?.trim() ?? "") : "";
-        extra = `👤 ${meta.name || m.body || (lang === "es" ? "Contacto" : "Contact")}${phone ? ` · ${phone}` : ""}`;
+        const cards = contactCardsOf(m.meta, m.body);
+        extra = cards.length ? cards.map((c) => `👤 ${contactCardText(c)}`).join("\n") : `👤 ${lang === "es" ? "Contacto" : "Contact"}`;
       } else if (m.type === "call") {
         extra = m.state === "ringing" ? (lang === "es" ? "📞 Llamada entrante" : "📞 Incoming call") : (lang === "es" ? "📞 Llamada perdida" : "📞 Missed call");
       }
