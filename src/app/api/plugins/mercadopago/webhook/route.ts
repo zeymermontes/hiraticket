@@ -44,7 +44,9 @@ export async function POST(req: NextRequest) {
     // external_reference es el token con el que arrancó el checkout, y desde 0089 puede ser el de
     // una ORDEN DE COBRO en vez del pedido. Sin resolver las dos, un pago de anticipo con tarjeta
     // no encontraría pedido y se perdería en silencio.
-    const tokenRef = await resolvePayToken(admin, pay.external_reference);
+    // Un pago iniciado antes de que el link venciera sigue siendo un pago: aquí no se aplica la
+    // caducidad (la aplica la página, que es donde se decide si se puede seguir cobrando).
+    const tokenRef = await resolvePayToken(admin, pay.external_reference, { allowExpired: true });
     if (!tokenRef || tokenRef.businessId !== biz) return NextResponse.json({ ok: true });
     const chargeId = (tokenRef.charge?.id as string | undefined) ?? null;
     const { data: order } = await admin.from("orders").select("id, total").eq("id", tokenRef.orderId).maybeSingle();

@@ -63,7 +63,12 @@ export async function updateMyProfile(patch: { full_name?: string; avatar_color?
 
   const clean: Record<string, unknown> = {};
   if (patch.full_name !== undefined) clean.full_name = patch.full_name.trim() || null;
-  if (patch.avatar_url !== undefined) clean.avatar_url = patch.avatar_url || null;
+  // Solo una ruta de avatar propia: `avatars/<mi id>-…`. Nada de URLs ajenas ni rutas de otros.
+  if (patch.avatar_url !== undefined) {
+    const a = patch.avatar_url || null;
+    if (a && !(a.startsWith(`avatars/${user.id}-`) && !a.includes(".."))) return { ok: false, error: "bad-avatar" };
+    clean.avatar_url = a;
+  }
   if (Object.keys(clean).length > 0) {
     const { data, error } = await supabase.from("profiles").update(clean).eq("id", user.id).select("id");
     if (error) return { ok: false, error: error.message };

@@ -86,6 +86,12 @@ export async function updatePaymentConfig(
   patch: { pay_branch_enabled?: boolean; pay_transfer_enabled?: boolean; branches?: Branch[]; bank_accounts?: BankAccount[]; pay_promo_images?: PayPromo[]; pay_promo_placement?: PayPromoPlacement },
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
+  // Las promos son rutas del bucket privado bajo `promo/<negocio>-…` (o la URL pública de antes
+  // con ese mismo prefijo). El enlace firmado que pone el servidor para pintar no se guarda.
+  if (patch.pay_promo_images) {
+    const ok = (u: string) => typeof u === "string" && !u.includes("..") && (u.startsWith(`promo/${businessId}-`) || u.includes(`/object/public/media/promo/${businessId}-`));
+    patch = { ...patch, pay_promo_images: patch.pay_promo_images.filter((p) => p && ok(p.url)).map((p) => ({ id: p.id, url: p.url })) };
+  }
   const { data, error } = await supabase.from("businesses").update(patch).eq("id", businessId).select("id");
   revalidateAll();
   if (error) return { ok: false, error: error.message };

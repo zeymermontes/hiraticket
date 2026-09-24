@@ -782,8 +782,13 @@ func (m *Manager) uploadMedia(ctx context.Context, path string, data []byte, mim
 // fetchMedia resolves a stored media_url (a storage path, or a legacy full URL) to bytes,
 // authenticating with the service role so it works with the private 'media' bucket.
 func (m *Manager) fetchMedia(ctx context.Context, ref string) ([]byte, string, error) {
-	if strings.HasPrefix(ref, "http") {
-		return httpGet(ctx, ref) // legacy rows stored a full public URL
+	// Filas viejas guardaron la URL pública completa: el bucket ya es privado, así que se recorta
+	// a la ruta y se baja con la llave de servicio como cualquier otra. Una URL externa (CDN de
+	// WhatsApp, proveedor de guías) se baja tal cual.
+	if i := strings.Index(ref, "/object/public/media/"); i >= 0 {
+		ref = strings.SplitN(ref[i+len("/object/public/media/"):], "?", 2)[0]
+	} else if strings.HasPrefix(ref, "http") {
+		return httpGet(ctx, ref)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", m.supaURL+"/storage/v1/object/media/"+ref, nil)
 	if err != nil {

@@ -58,9 +58,10 @@ export function ProfileScreen({ initial, orgName = null }: { initial: { userId: 
       const path = `avatars/${initial.userId}-${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
       if (error) { setErr(lang === "es" ? "No se pudo subir la imagen." : "Couldn't upload the image."); return; }
-      const url = supabase.storage.from("media").getPublicUrl(path).data.publicUrl;
-      setAvatarUrl(url);
-      save({ avatar_url: url });
+      // Se guarda la RUTA (el bucket es privado; el servidor la firma al leerla). Para verla ya,
+      // sin esperar, la vista previa sale del archivo local.
+      setAvatarUrl(URL.createObjectURL(file));
+      save({ avatar_url: path });
     } finally { setUploading(false); }
   }
 

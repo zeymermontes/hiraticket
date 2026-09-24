@@ -129,7 +129,8 @@ export function BusinessConfig({
   // Se avisa si el guardado falla en vez de dejar el botón "guardado" a mentiras (p. ej. las
   // migraciones 0080/0081 sin correr: la columna no existe y Supabase devuelve error).
   const savePromo = (patch: { pay_promo_images?: PayPromo[]; pay_promo_placement?: PayPromoPlacement }) =>
-    start(() => updatePaymentConfig(businessId, patch).then((r) => {
+    // El enlace firmado es solo para pintar: a la base va id + ruta.
+    start(() => updatePaymentConfig(businessId, patch.pay_promo_images ? { ...patch, pay_promo_images: patch.pay_promo_images.map((p) => ({ id: p.id, url: p.url })) } : patch).then((r) => {
       setPromoErr(r.ok ? null : (lang === "es" ? "No se pudo guardar el cambio." : "Couldn't save the change."));
     }));
   const setPlacement = (p: PayPromoPlacement) => { setPromoPlacement(p); savePromo({ pay_promo_placement: p }); };
@@ -164,7 +165,8 @@ export function BusinessConfig({
         if (!r.ok) { patchJob(job.id, { stage: "err", pct: 100, error: lang === "es" ? "No se pudo subir." : "Upload failed." }); continue; }
 
         patchJob(job.id, { stage: "done", pct: 100, converted: opt.converted });
-        added.push({ id: rid(), url: supabase.storage.from("media").getPublicUrl(path).data.publicUrl });
+        // Se guarda la ruta (bucket privado); para verla ya, la vista previa local del archivo.
+        added.push({ id: rid(), url: path, signed: URL.createObjectURL(opt.blob) });
       }
 
       if (added.length) {
@@ -417,7 +419,7 @@ export function BusinessConfig({
             <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
               {promos.map((p) => (
                 <div key={p.id} style={{ position: "relative", width: 150, height: 100, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", overflow: "hidden", flex: "none" }}>
-                  <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                  <img src={p.signed ?? p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                   <button className="iconbtn sm" title={lang === "es" ? "Quitar" : "Remove"} disabled={promoBusy} onClick={() => removePromo(p.id)}
                     style={{ position: "absolute", top: 4, right: 4, background: "var(--surface)", border: "1px solid var(--border)" }}>
                     <Icon name="x" size={13} />

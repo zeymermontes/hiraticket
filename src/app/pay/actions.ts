@@ -94,7 +94,8 @@ export async function submitPaymentProof(formData: FormData): Promise<{ ok: bool
   const path = `proofs/${order.business_id}/${order.id}/${globalThis.crypto.randomUUID()}.${ext}`;
   const { error: upErr } = await admin.storage.from("media").upload(path, file, { contentType: file.type || undefined, upsert: true });
   if (upErr) return { ok: false, error: "upload-failed" };
-  const image_url = admin.storage.from("media").getPublicUrl(path).data.publicUrl;
+  // Se guarda la ruta: el bucket es privado y el detalle del pedido la firma al leerla.
+  const image_url = path;
 
   const amount = amountRaw ? Number(amountRaw.replace(/[^0-9.]/g, "")) : null;
   const proofRow = {

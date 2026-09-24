@@ -10,6 +10,7 @@ import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { InvitePopup } from "@/components/InvitePopup";
 import { getMyPendingInvite } from "@/app/(app)/invites/actions";
 import { parseNotifPrefs } from "@/lib/notifPrefs";
+import { signMediaUrl } from "@/lib/mediaSign";
 
 export default async function AppLayout({
   children,
@@ -65,7 +66,7 @@ export default async function AppLayout({
   const shellUser: ShellUser = {
     id: user.id, email: user.email ?? "", name: myName,
     color: ((mem as { avatar_color?: string | null } | null)?.avatar_color) || baseColor,
-    avatarUrl: (prof?.avatar_url as string | null) ?? null,
+    avatarUrl: await signMediaUrl((prof?.avatar_url as string | null) ?? null),
   };
 
   return (

@@ -3,6 +3,7 @@ import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
 import { listTagCatalog } from "@/lib/tags";
 import { BusinessConfig } from "@/components/BusinessConfig";
+import { signMediaUrls } from "@/lib/mediaSign";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,10 @@ export default async function BusinessPage() {
     listTagCatalog(business.id),
   ]);
 
+  // Las promos se guardan como ruta del bucket privado: se firman para la galería.
+  const promoRaw = business.pay_promo_images ?? [];
+  const promoSigned = await signMediaUrls(promoRaw.map((p) => p.url));
+  const promoImages = promoRaw.map((p, i) => ({ id: p.id, url: p.url, signed: promoSigned[i] ?? undefined }));
   return (
     <BusinessConfig
       businessId={business.id}
@@ -40,7 +45,7 @@ export default async function BusinessPage() {
       invoiceAddTax={business.invoice_add_tax ?? true}
       invoiceTaxRate={business.invoice_tax_rate ?? 16}
       manualMarginPct={business.manual_margin_pct ?? 50}
-      payPromoImages={business.pay_promo_images ?? []}
+      payPromoImages={promoImages}
       payPromoPlacement={business.pay_promo_placement ?? "off"}
     />
   );

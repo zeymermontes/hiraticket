@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { signMediaUrls } from "@/lib/mediaSign";
 
 export interface DetailedAgent {
   id: string;
@@ -55,7 +56,8 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
     results.forEach((r) => { const u = r.data?.user; if (u?.email) emailMap.set(u.id, u.email); });
   } catch { /* admin not configured — skip emails */ }
 
-  return members.map((m) => {
+  const avatars = await signMediaUrls(members.map((m) => (pmap.get(m.user_id as string)?.avatar_url as string | null) ?? null));
+  return members.map((m, i) => {
     const uid = m.user_id as string;
     const p = pmap.get(uid);
     const ar = m.area_id ? amap.get(m.area_id as string) : null;
@@ -63,7 +65,7 @@ export async function getAgentsDetailed(businessId: string): Promise<DetailedAge
       id: uid,
       name: (p?.full_name as string) || "Agente",
       color: (m.avatar_color as string | null) || (p?.avatar_color as string) || "#5A6373",
-      avatar_url: (p?.avatar_url as string | null) ?? null,
+      avatar_url: avatars[i],
       role: m.role as DetailedAgent["role"],
       email: emailMap.get(uid) ?? null,
       area: ar ? { id: ar.id as string, name: ar.name as string, color: ar.color as string } : null,

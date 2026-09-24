@@ -78,18 +78,35 @@ export async function recomputeChargeStatus(supabase: AnySupabase, chargeId: str
  *
  * Devuelve el cobro entero para que quien llame no tenga que volver a pedirlo.
  */
-export async function resolvePayToken(admin: AnySupabase, token: string): Promise<{
+export async function resolvePayToken(admin: AnySupabase, token: string, opts?: { allowExpired?: boolean }): Promise<{
   orderId: string; businessId: string; charge: Record<string, unknown> | null;
 } | null> {
   if (!token) return null;
+  const CHARGE = "id, order_id, business_id, seq, kind, label, amount, due_at, status";
   // La tabla puede no existir todavía (0089 sin aplicar): entonces solo hay tokens de pedido.
-  const { data: charge, error } = await admin
-    .from("charges").select("id, order_id, business_id, seq, kind, label, amount, due_at, status")
-    .eq("pay_token", token).maybeSingle();
-  if (!error && charge) {
+  // pay_token_expires_at llega con 0093: sin ella se lee sin caducidad.
+  let ch = await admin.from("charges").select(CHARGE + ", pay_token_expires_at").eq("pay_token", token).maybeSingle();
+  if (ch.error) ch = await admin.from("charges").select(CHARGE).eq("pay_token", token).maybeSingle();
+  if (!ch.error && ch.data) {
+    const charge = ch.data as Record<string, unknown>;
+    if (!opts?.allowExpired && payLinkExpired(charge.pay_token_expires_at as string | null | undefined)) return null;
     return { orderId: charge.order_id as string, businessId: charge.business_id as string, charge };
   }
-  const { data: order } = await admin.from("orders").select("id, business_id").eq("pay_token", token).maybeSingle();
+  let od = await admin.from("orders").select("id, business_id, pay_token_expires_at").eq("pay_token", token).maybeSingle();
+  if (od.error) od = await admin.from("orders").select("id, business_id").eq("pay_token", token).maybeSingle();
+  const order = od.data as Record<string, unknown> | null;
   if (!order) return null;
+  if (!opts?.allowExpired && payLinkExpired(order.pay_token_expires_at as string | null | undefined)) return null;
   return { orderId: order.id as string, businessId: order.business_id as string, charge: null };
+}
+
+/** Cuánto vive un link de pago desde que se genera (o se regenera al vencer). Un link que
+ *  circuló por WhatsApp no debería seguir abriendo el pedido meses después. */
+export const PAY_LINK_DAYS = 30;
+export function payLinkExpiry(): string {
+  return new Date(Date.now() + PAY_LINK_DAYS * 24 * 3600_000).toISOString();
+}
+/** Sin fecha (fila anterior a 0093) no caduca; la migración les pone 30 días a las existentes. */
+export function payLinkExpired(at: string | null | undefined): boolean {
+  return !!at && new Date(at).getTime() < Date.now();
 }

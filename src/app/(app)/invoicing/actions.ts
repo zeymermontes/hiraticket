@@ -7,6 +7,7 @@ import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type FiscalData } from "@/lib/invoicing";
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
+import { mediaPath, signMediaUrl } from "@/lib/mediaSign";
 
 /** The contact's saved tax profile (recurring customers), or null. */
 export async function getFiscalProfile(contactId: string): Promise<FiscalData | null> {
@@ -66,7 +67,8 @@ export async function issueInvoice(
     const admin = createAdminClient();
     const path = `invoices/${businessId}/${orderId}/${r.invoice.uuid || r.invoice.id}.pdf`;
     const up = await admin.storage.from("media").upload(path, pdf, { contentType: "application/pdf", upsert: true });
-    if (!up.error) pdfUrl = admin.storage.from("media").getPublicUrl(path).data.publicUrl;
+    // En la base va la RUTA (bucket privado); a quien la emitió se le devuelve firmada.
+    if (!up.error) pdfUrl = path;
   }
 
   const { data: invRow } = await supabase.from("invoices").insert({
@@ -84,7 +86,7 @@ export async function issueInvoice(
   if (sendEmail && fiscal.email?.trim()) await facturapiSendEmail(apiKey, r.invoice.id, fiscal.email);
 
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
-  return { ok: true, invoiceId: (invRow?.id as string) ?? undefined, uuid: r.invoice.uuid, pdfUrl };
+  return { ok: true, invoiceId: (invRow?.id as string) ?? undefined, uuid: r.invoice.uuid, pdfUrl: await signMediaUrl(pdfUrl, 3600) };
 }
 
 /** WhatsApp the invoice (folio + PDF link) to the order's conversation. */
@@ -100,10 +102,15 @@ export async function notifyInvoice(orderId: string, invoiceId: string): Promise
   const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
   const first = ((contact?.name as string) ?? "").split(" ")[0];
   const businessId = order.business_id as string;
-  const body = `¡Hola ${first}! 🧾 Aquí está tu factura del pedido ${order.code}.${inv.uuid ? ` Folio fiscal: ${inv.uuid}.` : ""}${inv.pdf_url ? ` Descárgala aquí: ${inv.pdf_url}` : ""}`;
+  // El PDF va ADJUNTO, no como enlace: el bucket es privado y un enlace firmado caduca; el
+  // archivo en el chat del cliente se queda. Con la ruta en media_url, el worker y la API oficial
+  // lo mandan como documento igual que cualquier archivo. Sin PDF propio, solo el texto.
+  const pdfPath = mediaPath(inv.pdf_url as string | null);
+  const body = `¡Hola ${first}! 🧾 Aquí está tu factura del pedido ${order.code}.${inv.uuid ? ` Folio fiscal: ${inv.uuid}.` : ""}`;
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: order.conversation_id,
-    direction: "out", type: "text", body: encryptBody(businessId, body), author_id: user?.id ?? null, state: "queued",
+    direction: "out", type: pdfPath ? "document" : "text", body: encryptBody(businessId, body), author_id: user?.id ?? null, state: "queued",
+    ...(pdfPath ? { media_url: pdfPath, media_mime: "application/pdf", media_name: `Factura-${order.code}.pdf` } : {}),
   });
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
   await flushCloudOutbox(businessId);

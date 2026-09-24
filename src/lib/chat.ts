@@ -6,15 +6,7 @@ import { MSG_PAGE } from "@/lib/types";
 import { decryptBody } from "@/lib/msgcrypto";
 import { getSessions } from "@/lib/whatsapp";
 
-const PUBLIC_MEDIA_MARKER = "/object/public/media/";
-/** Stored media_url → storage path (handles raw paths and legacy full public URLs). */
-function mediaPath(u: string | null): string | null {
-  if (!u) return null;
-  const i = u.indexOf(PUBLIC_MEDIA_MARKER);
-  if (i >= 0) return decodeURIComponent(u.slice(i + PUBLIC_MEDIA_MARKER.length));
-  if (!u.startsWith("http")) return u; // already a bare path
-  return null; // external URL — leave untouched
-}
+import { mediaPath, signMediaUrls } from "@/lib/mediaSign";
 
 /**
  * La miniatura viaja SIEMPRE, sin importar el peso de la foto.
@@ -212,13 +204,15 @@ async function _getAgents(businessId: string): Promise<Agent[]> {
   if (!profs) profs = (await supabase.from("profiles").select("id, full_name, avatar_color").in("id", ids)).data as Record<string, unknown>[] | null;
 
   const pmap = new Map((profs ?? []).map((p) => [p.id as string, p]));
-  return members.map((m) => {
+  // El bucket es privado: la foto guardada es una ruta y aquí se convierte en enlace firmado.
+  const avatars = await signMediaUrls(members.map((m) => (pmap.get(m.user_id as string)?.avatar_url as string | null) ?? null));
+  return members.map((m, i) => {
     const p = pmap.get(m.user_id as string);
     return {
       id: m.user_id as string,
       name: (p?.full_name as string) || "Agente",
       color: (m.avatar_color as string | null) || (p?.avatar_color as string) || "#5A6373",
-      avatar_url: (p?.avatar_url as string | null) ?? null,
+      avatar_url: avatars[i],
       role: m.role as Agent["role"],
     };
   });

@@ -12,6 +12,7 @@ import { chargeTitle, suggestKind, CHARGE_KINDS } from "@/lib/charges";
 import { runPaymentAutomations } from "@/lib/flows";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
+import { payLinkExpiry, payLinkExpired } from "@/lib/payments";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -38,20 +39,31 @@ function appBaseUrl(): string {
   return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "https://app.hiraticket.com").replace(/\/+$/, "");
 }
 
-/** Ensure an order has an unguessable pay_token (generating + persisting one if missing). */
-async function ensurePayToken(supabase: SB, orderId: string, existing: string | null): Promise<string> {
-  if (existing) return existing;
+/** Ensure an order has an unguessable, unexpired pay_token (generating + persisting one if
+ *  missing or expired: a new link, so the old one stops opening). */
+async function ensurePayToken(supabase: SB, orderId: string, existing: string | null, expiresAt: string | null): Promise<string> {
+  if (existing && !payLinkExpired(expiresAt)) return existing;
   const token = "p" + globalThis.crypto.randomUUID().replace(/-/g, "");
-  await supabase.from("orders").update({ pay_token: token }).eq("id", orderId);
+  const r = await supabase.from("orders").update({ pay_token: token, pay_token_expires_at: payLinkExpiry() }).eq("id", orderId);
+  if (r.error) await supabase.from("orders").update({ pay_token: token }).eq("id", orderId); // 0093 sin aplicar
   return token;
+}
+
+/** pay_token + su caducidad (0093; sin la columna, solo el token). */
+async function payTokenOf(supabase: SB, orderId: string): Promise<{ token: string | null; expiresAt: string | null } | null> {
+  let r = await supabase.from("orders").select("pay_token, pay_token_expires_at").eq("id", orderId).maybeSingle();
+  if (r.error) r = await supabase.from("orders").select("pay_token").eq("id", orderId).maybeSingle();
+  const d = r.data as Record<string, unknown> | null;
+  if (!d) return null;
+  return { token: (d.pay_token as string | null) ?? null, expiresAt: (d.pay_token_expires_at as string | null) ?? null };
 }
 
 /** Get (creating if needed) the public checkout link for an order — for copying to the clipboard. */
 export async function getPayLink(orderId: string): Promise<string | null> {
   const supabase = await createClient();
-  const { data: order } = await supabase.from("orders").select("pay_token").eq("id", orderId).maybeSingle();
-  if (!order) return null;
-  const token = await ensurePayToken(supabase, orderId, (order.pay_token as string | null) ?? null);
+  const cur = await payTokenOf(supabase, orderId);
+  if (!cur) return null;
+  const token = await ensurePayToken(supabase, orderId, cur.token, cur.expiresAt);
   return `${appBaseUrl()}/pay/${token}`;
 }
 
@@ -59,11 +71,12 @@ export async function getPayLink(orderId: string): Promise<string | null> {
 export async function chargeOrder(orderId: string): Promise<void> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id, pay_token").eq("id", orderId).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("business_id, code, total, contact_id, conversation_id").eq("id", orderId).maybeSingle();
   if (!order?.conversation_id) return;
   const { data: contact } = await supabase.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
   const first = ((contact?.name as string) ?? "").split(" ")[0];
-  const token = await ensurePayToken(supabase, orderId, (order.pay_token as string | null) ?? null);
+  const cur = await payTokenOf(supabase, orderId);
+  const token = await ensurePayToken(supabase, orderId, cur?.token ?? null, cur?.expiresAt ?? null);
   const link = `${appBaseUrl()}/pay/${token}`;
   const body = `Hola ${first} 👋 aquí está tu link de pago para el pedido ${order.code} por $${Number(order.total).toLocaleString("es-MX")} MXN: ${link} 💳`;
   await supabase.from("messages").insert({
@@ -95,8 +108,7 @@ const money = (n: number) => "$" + Number(n).toLocaleString("es-MX", { minimumFr
 /** Manda el cobro al chat del pedido y lo marca enviado. Devuelve false si no hay a dónde mandarlo
  *  —- un pedido sin conversación —- para que quien llame lo diga en vez de fingir que salió. */
 async function deliverCharge(supabase: SB, chargeId: string, userId: string | null): Promise<boolean> {
-  const { data: c } = await supabase.from("charges")
-    .select("id, amount, kind, label, pay_token, order_id, business_id").eq("id", chargeId).maybeSingle();
+  const c = await chargeWithFreshToken(supabase, chargeId);
   if (!c) return false;
   const { data: order } = await supabase.from("orders")
     .select("code, total, contact_id, conversation_id").eq("id", c.order_id).maybeSingle();
@@ -154,13 +166,15 @@ export async function createCharge(orderId: string, input: {
     : suggestKind({ existing: (existing ?? []).length, amount, balance });
 
   const token = newChargeToken();
-  const { data: row, error } = await supabase.from("charges").insert({
+  const chargeRow = {
     business_id: order.business_id, order_id: orderId,
     seq: (existing ?? []).length + 1,
     kind, label: (input.label ?? "").trim() || null,
     amount, due_at: input.dueAt || null,
     status: "draft", pay_token: token, created_by: user?.id ?? null,
-  }).select("id").single();
+  };
+  let { data: row, error } = await supabase.from("charges").insert({ ...chargeRow, pay_token_expires_at: payLinkExpiry() }).select("id").single();
+  if (error && /pay_token_expires_at/.test(error.message)) ({ data: row, error } = await supabase.from("charges").insert(chargeRow).select("id").single()); // 0093 sin aplicar
   // Sin 0089 aplicada esto falla, y hay que decirlo: un botón que no hace nada y no se queja es
   // peor que uno que no está.
   if (error || !row) return { ok: false, error: error?.message ?? "insert-failed" };
@@ -206,9 +220,26 @@ export async function voidCharge(chargeId: string): Promise<{ ok: boolean; error
 /** El link público de un cobro, para copiarlo al portapapeles. */
 export async function getChargeLink(chargeId: string): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase.from("charges").select("pay_token").eq("id", chargeId).maybeSingle();
-  const token = (data?.pay_token as string | null) ?? null;
+  const c = await chargeWithFreshToken(supabase, chargeId);
+  const token = (c?.pay_token as string | null) ?? null;
   return token ? `${appBaseUrl()}/pay/${token}` : null;
+}
+
+/** El cobro con un token vigente: si el suyo ya caducó, se emite otro (con 30 días más) antes de
+ *  compartirlo. Un link vencido no debe salir al chat. */
+async function chargeWithFreshToken(supabase: SB, chargeId: string): Promise<Record<string, unknown> | null> {
+  const COLS = "id, amount, kind, label, pay_token, order_id, business_id";
+  let r = await supabase.from("charges").select(COLS + ", pay_token_expires_at").eq("id", chargeId).maybeSingle();
+  if (r.error) r = await supabase.from("charges").select(COLS).eq("id", chargeId).maybeSingle();
+  const c = r.data as Record<string, unknown> | null;
+  if (!c) return null;
+  if (!c.pay_token || payLinkExpired(c.pay_token_expires_at as string | null | undefined)) {
+    const token = newChargeToken();
+    const u = await supabase.from("charges").update({ pay_token: token, pay_token_expires_at: payLinkExpiry() }).eq("id", chargeId);
+    if (u.error) await supabase.from("charges").update({ pay_token: token }).eq("id", chargeId);
+    c.pay_token = token;
+  }
+  return c;
 }
 
 type SB = Awaited<ReturnType<typeof createClient>>;

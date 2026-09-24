@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Charge } from "@/lib/charges";
+import { signMediaUrls } from "@/lib/mediaSign";
 
 export interface OrderItem { id: string; name: string; qty: number; unit_price: number; subtotal: number; stage_id: string | null; stage: { name: string; color: string } | null; note: string | null }
 export interface OrderNote { id: string; body: string; author_id: string | null; created_at: string; item_id: string | null }
@@ -133,6 +134,16 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   const shipments = (shipRes.error ? [] : (shipRes.data ?? [])) as unknown as OrderShipment[];
   // invoices table may not exist yet (0055 not applied).
   const invoices = (invRes.error ? [] : (invRes.data ?? [])) as unknown as OrderInvoice[];
+  // Comprobantes, guías y facturas viven en el bucket privado: lo guardado es la ruta (o una URL
+  // pública de antes) y aquí se vuelve enlace firmado. Una guía de Skydropx es externa y se deja.
+  const [proofUrls, labelUrls, pdfUrls] = await Promise.all([
+    signMediaUrls(proofs.map((p) => p.image_url)),
+    signMediaUrls(shipments.map((s) => s.label_url)),
+    signMediaUrls(invoices.map((i) => i.pdf_url)),
+  ]);
+  proofs.forEach((p, i) => { p.image_url = proofUrls[i] ?? p.image_url; });
+  shipments.forEach((s, i) => { s.label_url = labelUrls[i]; });
+  invoices.forEach((inv, i) => { inv.pdf_url = pdfUrls[i]; });
   // order_waste table may not exist yet (0074 not applied).
   const waste = (wasteRes.error ? [] : (wasteRes.data ?? [])) as unknown as OrderWaste[];
 

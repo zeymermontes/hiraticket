@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness, listMyOrgs } from "@/lib/queries";
 import { ProfileScreen } from "@/components/ProfileScreen";
+import { signMediaUrl } from "@/lib/mediaSign";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export default async function ProfilePage() {
     email: user.email ?? "",
     name: (prof?.full_name as string) || (user.email ? user.email.split("@")[0] : ""),
     color: memberColor || (prof?.avatar_color as string) || "#0E8C82",
-    avatarUrl: (prof?.avatar_url as string | null) ?? null,
+    avatarUrl: await signMediaUrl((prof?.avatar_url as string | null) ?? null),
   };
   // Solo con más de una organización tiene sentido decir que el color es de esta.
   return <ProfileScreen initial={initial} orgName={orgs.length > 1 && business ? business.name : null} />;

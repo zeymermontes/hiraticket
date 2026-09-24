@@ -56,10 +56,12 @@ export interface Business {
   pay_promo_placement?: PayPromoPlacement;
 }
 
-/** Un anuncio de la galería: imagen pública en el bucket 'media' (0081). */
+/** Un anuncio de la galería (0081). `url` es la RUTA en el bucket privado 'media' (o una URL
+ *  pública de antes); `signed` es el enlace firmado que pone el servidor solo para pintarlo. */
 export interface PayPromo {
   id: string;
   url: string;
+  signed?: string;
 }
 
 /** Dónde aparece el anuncio en el link de pago (0080). */

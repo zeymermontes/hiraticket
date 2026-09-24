@@ -3,6 +3,7 @@ import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { PayCheckout, type PayItem } from "@/components/PayCheckout";
 import type { Branch, BankAccount, PayPromo, PayPromoPlacement } from "@/lib/types";
 import { resolvePayToken } from "@/lib/payments";
+import { signMediaUrl } from "@/lib/mediaSign";
 import { chargeTitle, isLive } from "@/lib/charges";
 import type { PayCharge } from "@/components/PayCheckout";
 
@@ -97,7 +98,7 @@ export default async function PayPage({ params, searchParams }: { params: Promis
   // habría chocado con el HTML del servidor en la hidratación.
   const promoPool = (Array.isArray(biz?.pay_promo_images) ? (biz.pay_promo_images as PayPromo[]) : [])
     .filter((p) => p && typeof p.url === "string" && p.url.trim());
-  const promoUrl = promoPool.length ? promoPool[Math.floor(Math.random() * promoPool.length)].url : null;
+  const promoUrl = promoPool.length ? await signMediaUrl(promoPool[Math.floor(Math.random() * promoPool.length)].url, 3600) : null;
   const promoPlacementRaw = biz?.pay_promo_placement as string | undefined;
 
   return (

@@ -7,6 +7,7 @@ import { getPluginRuntimeConfig } from "@/lib/plugins";
 import { skydropxQuote, skydropxCreate, enviosperrosQuote, enviosperrosCreate, type ShipAddress, type ShipParcel, type ShipRate } from "@/lib/shipping";
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
+import { signMediaUrl } from "@/lib/mediaSign";
 
 /** Per-provider config sanity check (fields the adapters can't work without). */
 function cfgReady(provider: string, cfg: Record<string, string> | null): boolean {
@@ -101,7 +102,7 @@ export async function createOrderShipment(
       const admin = createAdminClient();
       const path = `labels/${businessId}/${orderId}/${r.label.tracking}.pdf`;
       const up = await admin.storage.from("media").upload(path, Buffer.from(r.label.pdfBase64, "base64"), { contentType: "application/pdf", upsert: true });
-      if (!up.error) labelUrl = admin.storage.from("media").getPublicUrl(path).data.publicUrl;
+      if (!up.error) labelUrl = path; // ruta: bucket privado, se firma al leer el pedido
     } catch { /* label exists at the provider — non-fatal */ }
   }
 
@@ -118,7 +119,9 @@ export async function createOrderShipment(
   });
   await supabase.from("plugin_usage").insert({ business_id: businessId, plugin_id: provider, unit: "guía", qty: 1, meta: { tracking: r.label.tracking, cost: r.label.cost } });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
-  return { ok: true, shipmentId: (shipRow?.id as string) ?? undefined, tracking: r.label.tracking, labelUrl: r.label.labelUrl };
+  // Antes se devolvía solo la del proveedor: con Envíos Perros (PDF propio) el modal se quedaba
+  // sin botón de etiqueta aunque la guía sí estuviera guardada.
+  return { ok: true, shipmentId: (shipRow?.id as string) ?? undefined, tracking: r.label.tracking, labelUrl: await signMediaUrl(labelUrl, 3600) };
 }
 
 /** WhatsApp the tracking number to the order's conversation (queued; worker sends). */
