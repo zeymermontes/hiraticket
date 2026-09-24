@@ -706,6 +706,24 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
   );
 }
 
+/** Motivos de fallo de Meta que tienen una salida concreta: se explican en el idioma del agente
+ *  y con el paso a dar, en vez de dejar el texto crudo del error. */
+function failHint(reason: string, lang: "es" | "en"): string | null {
+  const r = reason.toLowerCase();
+  if (r.includes("payment issue") || r.includes("131042")) {
+    return lang === "es"
+      ? "La cuenta de WhatsApp Business no tiene método de pago y las plantillas fuera de la ventana de 24 h se cobran. Agrégalo en WhatsApp Manager → Configuración → Pagos, y vuelve a intentar."
+      : "The WhatsApp Business account has no payment method and templates outside the 24h window are billed. Add one in WhatsApp Manager → Settings → Payments, then retry.";
+  }
+  if (r.includes("re-engagement") || r.includes("131047")) {
+    return lang === "es" ? "Pasaron más de 24 h desde el último mensaje del cliente: solo se puede iniciar con una plantilla aprobada." : "More than 24h since the customer's last message: you can only start with an approved template.";
+  }
+  if (r.includes("131049") || r.includes("healthy ecosystem")) {
+    return lang === "es" ? "Meta limitó las plantillas de marketing a este contacto por ahora. Espera o usa una plantilla de utilidad." : "Meta is limiting marketing templates to this contact for now. Wait or use a utility template.";
+  }
+  return null;
+}
+
 /** La plantilla oficial que salió con este mensaje, si guardó algo más que el texto (encabezado,
  *  pie o botones): la burbuja se pinta como la ve el cliente en WhatsApp, botones incluidos. */
 function templateCardOf(m: ChatMessage): { header: string | null; footer: string | null; buttons: TemplateButton[] } | null {
@@ -2386,9 +2404,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       )}
                       <span title={fullStamp(row.created_at, lang)}>{clockTime(row.created_at, lang)}</span>{out && <Tick state={row.items.some((it) => it.state === "failed") ? "failed" : row.items[row.items.length - 1].state} />}
                     </div>
-                    {out && row.items.find((it) => it.state === "failed" && it.fail_reason) && (
-                      <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, padding: "0 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>{row.items.find((it) => it.state === "failed" && it.fail_reason)!.fail_reason}</div>
-                    )}
+                    {out && row.items.find((it) => it.state === "failed" && it.fail_reason) && (() => { const r = row.items.find((it) => it.state === "failed" && it.fail_reason)!.fail_reason!; return (
+                      <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, padding: "0 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>{failHint(r, lang) ?? r}</div>
+                    ); })()}
                   </div>
                 </div>
               </React.Fragment>
@@ -2447,7 +2465,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                   <span title={fullStamp(m.created_at, lang)}>{clockTime(m.created_at, lang)}</span>{out && <Tick state={m.state} />}</div>
                 {/* El motivo tal como lo dio Meta o el worker. Sin esto, "Reintentar" era adivinar. */}
                 {out && m.state === "failed" && m.fail_reason && !m.deleted && (
-                  <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>{m.fail_reason}</div>
+                  <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>
+                    {failHint(m.fail_reason, lang) ?? m.fail_reason}
+                    {failHint(m.fail_reason, lang) && <div style={{ opacity: 0.7, marginTop: 1 }}>{m.fail_reason}</div>}
+                  </div>
                 )}
                 {!m.deleted && m.reactions?.length > 0 && (
                   <div className="msg-reacts">

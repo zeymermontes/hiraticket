@@ -479,7 +479,9 @@ async function applyStatus(
   const patch: Record<string, unknown> = { state };
   if (state === "failed") {
     const e = st.errors?.[0];
-    patch.fail_reason = (e ? [e.title, e.message].filter(Boolean).join(": ") : "failed").slice(0, 300);
+    // Meta suele repetir el mismo texto en title y message ("X: X"): se deja uno solo.
+    const parts = e ? [e.title, e.message].filter((x): x is string => !!x) : [];
+    patch.fail_reason = (parts.length ? [...new Set(parts)].join(": ") : "failed").slice(0, 300);
   }
   let q = supabase
     .from("messages")
