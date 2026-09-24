@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { ownsMediaPath } from "@/lib/stickers";
 
 interface CannedInput {
   title: string;
@@ -17,6 +18,9 @@ interface CannedInput {
 
 export async function createCanned(businessId: string, input: CannedInput): Promise<void> {
   const supabase = await createClient();
+  // El adjunto tiene que ser un archivo de este negocio: la ruta la manda el navegador y luego se
+  // firma con la llave de servicio al enviar la plantilla.
+  if (input.media_url && !ownsMediaPath(businessId, input.media_url)) return;
   await supabase.from("canned_messages").insert({
     business_id: businessId,
     title: input.title.trim() || "Plantilla",
@@ -35,6 +39,10 @@ export async function createCanned(businessId: string, input: CannedInput): Prom
 
 export async function updateCanned(id: string, patch: Partial<CannedInput>): Promise<void> {
   const supabase = await createClient();
+  if (patch.media_url) {
+    const { data } = await supabase.from("canned_messages").select("business_id").eq("id", id).maybeSingle();
+    if (!ownsMediaPath((data?.business_id as string) ?? "", patch.media_url)) return;
+  }
   await supabase.from("canned_messages").update(patch).eq("id", id);
   revalidatePath("/canned");
 }

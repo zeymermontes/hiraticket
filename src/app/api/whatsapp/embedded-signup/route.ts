@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMyBusiness } from "@/lib/queries";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/secrets";
-import { subscribeAppToWaba, registerPhone, getPhoneNumberInfo } from "@/lib/whatsapp-cloud";
+import { subscribeAppToWaba, registerPhone, getPhoneNumberInfo, listWabaPhoneNumbers } from "@/lib/whatsapp-cloud";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,6 +65,17 @@ export async function POST(req: NextRequest) {
   // Wire the WABA to our app. Without this subscription Meta never delivers webhooks, so a
   // failure here is fatal (the session would look connected but stay silent).
   const warnings: string[] = [];
+  // Los ids vienen del navegador: antes de tocar nada se comprueba con el token recién obtenido
+  // que ESE número pertenece a ESA cuenta. Sin esto, cualquier usuario con una WABA propia podía
+  // mandar el phone_number_id de otro negocio, "liberarlo" y quedarse con sus webhooks.
+  const owned = await listWabaPhoneNumbers(wabaId, token);
+  if (!owned.ok) {
+    return NextResponse.json({ ok: false, error: "phone_lookup_failed", detail: owned.error }, { status: 502 });
+  }
+  if (!owned.data.data.some((p) => p.id === phoneNumberId)) {
+    console.warn("[embedded-signup] phone_number_id ajeno a la WABA", { wabaId, phoneNumberId, by: user.id });
+    return NextResponse.json({ ok: false, error: "phone_not_in_waba" }, { status: 403 });
+  }
   const sub = await subscribeAppToWaba(wabaId, token);
   if (!sub.ok) {
     return NextResponse.json({ ok: false, error: "subscribe_failed", detail: sub.error }, { status: 502 });

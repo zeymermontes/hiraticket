@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   const dest = UUID.test(conv) ? `/chat?c=${conv}` : "/chat";
   const res = new NextResponse(null, { status: 307, headers: { location: dest } });
   if (UUID.test(org)) {
-    res.cookies.set(ORG_COOKIE, org, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+    res.cookies.set(ORG_COOKIE, org, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production" });
   }
   return res;
 }

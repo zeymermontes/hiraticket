@@ -1,4 +1,5 @@
 "use client";
+import { safeNext } from "@/lib/url";
 import React, { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -9,7 +10,7 @@ function Inner() {
   const { lang, setLang, theme, setTheme, t } = useApp();
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/chat";
+  const next = safeNext(params.get("next"));
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");

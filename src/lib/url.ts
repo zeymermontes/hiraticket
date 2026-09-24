@@ -6,6 +6,15 @@ export function configuredOrigin(): string {
   return env ? env.replace(/\/+$/, "") : "";
 }
 
+/** Un destino de redirección seguro: solo rutas relativas del propio sitio. Un `next` con dominio,
+ *  con `//` o con `/\` (que el navegador lee como otro host) se descarta y se va a `fallback`. */
+export function safeNext(next: string | null | undefined, fallback = "/chat"): string {
+  const n = (next ?? "").trim();
+  if (!n.startsWith("/") || n.startsWith("//") || n.startsWith("/\\") || /[\r\n]/.test(n)) return fallback;
+  try { if (new URL(n, "https://x.invalid").origin !== "https://x.invalid") return fallback; } catch { return fallback; }
+  return n;
+}
+
 /** The app's public origin for server-side redirects (logout, auth callback).
  *  Behind a proxy (Render/Vercel) `new URL(request.url).origin` is the internal http://localhost:PORT,
  *  so we prefer, in order: APP_URL/NEXT_PUBLIC_SITE_URL, the forwarded host, the Host header (ignoring

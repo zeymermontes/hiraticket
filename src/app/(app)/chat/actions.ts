@@ -355,7 +355,9 @@ export async function sendMediaMessage(
 ): Promise<void> {
   const { supabase, userId } = await ctx();
   const businessId = await businessOf(convId);
-  if (!businessId) return;
+  // La ruta la manda el navegador: tiene que ser un archivo de ESTE negocio. Si no, se firmaría y
+  // enviaría un archivo de otro inquilino nomás cambiando el parámetro.
+  if (!businessId || !ownsMediaPath(businessId, input.mediaUrl)) return;
   await supabase.from("messages").insert({
     business_id: businessId, conversation_id: convId, direction: "out",
     type: input.type, body: input.caption ? encryptBody(businessId, input.caption) : null, author_id: userId, state: "queued",
@@ -736,10 +738,12 @@ export async function requestMediaFetch(messageId: string): Promise<{ ok: boolea
  *  El payload de realtime trae la RUTA de storage, no algo que el navegador pueda pintar. */
 export async function getMediaPreviewUrl(messageId: string): Promise<string | null> {
   const { supabase } = await ctx();
-  const { data } = await supabase.from("messages").select("media_url").eq("id", messageId).maybeSingle();
+  const { data } = await supabase.from("messages").select("media_url, business_id").eq("id", messageId).maybeSingle();
   const path = (data as { media_url?: string | null } | null)?.media_url;
   if (!path) return null;
   if (path.startsWith("http")) return path;
+  // Solo se firma un archivo del negocio del mensaje: la llave de servicio firma cualquier ruta.
+  if (!ownsMediaPath((data as { business_id?: string }).business_id ?? "", path)) return null;
   const admin = createAdminClient();
   const { data: signed } = await admin.storage.from("media").createSignedUrl(path, 60 * 10);
   return signed?.signedUrl ?? null;

@@ -151,7 +151,7 @@ export async function createBusiness(name: string, mode: string = "business", ex
     }
   }
   // La organización recién creada pasa a ser la activa: quien la crea quiere entrar en ella.
-  if (businessId) (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+  if (businessId) (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production" });
   revalidatePath("/", "layout");
 }
 
@@ -164,7 +164,7 @@ export async function createBusiness(name: string, mode: string = "business", ex
 export async function setActiveOrg(businessId: string): Promise<{ ok: boolean }> {
   const orgs = await listMyOrgs();
   if (!orgs.some((o) => o.id === businessId)) return { ok: false };
-  (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+  (await cookies()).set(ORG_COOKIE, businessId, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production" });
   // El layout entero se rearma: insignias, riel, realtime y la sección en la que estés.
   revalidatePath("/", "layout");
   return { ok: true };

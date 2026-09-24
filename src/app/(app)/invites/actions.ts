@@ -123,7 +123,7 @@ export async function acceptInvite(inviteId: string): Promise<{ ok: boolean; err
   await admin.from("team_invites").delete().eq("id", inviteId);
   // Entrar a la organización a la que te acaban de invitar es lo que espera cualquiera; sin esto
   // aterrizarías en la primera que tengas y parecería que la invitación no hizo nada.
-  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production" });
   revalidatePath("/", "layout");
   // Se devuelve el id además de dejar la cookie puesta: quien llama aterriza por /chat/open?org=…,
   // que vuelve a fijarla en una navegación completa. La cookie de aquí viaja en la respuesta de la
@@ -151,10 +151,18 @@ export async function acceptToken(token: string): Promise<{ ok: boolean; error?:
   if (await alreadyInThisTeam(u.id, inv.business_id as string)) return { ok: false, error: "already-in-team" };
   if (inv.expires_at && new Date(inv.expires_at as string) < new Date()) return { ok: false, error: "expired" };
   if (inv.max_uses != null && (inv.used_count as number) >= (inv.max_uses as number)) return { ok: false, error: "used" };
+  // El uso se consume ANTES de dar de alta y con condición sobre el contador: dos aceptaciones
+  // simultáneas de un enlace de un solo uso ya no entran las dos.
+  let take = admin.from("team_invites").update({ used_count: (inv.used_count as number) + 1 }).eq("id", inv.id as string).eq("used_count", inv.used_count as number);
+  if (inv.max_uses != null) take = take.lt("used_count", inv.max_uses as number);
+  const { data: taken } = await take.select("id");
+  if (!taken?.length) return { ok: false, error: "used" };
   const { error } = await admin.from("business_members").insert({ business_id: inv.business_id, user_id: u.id, role: inv.role, area_id: inv.area_id ?? null });
-  if (error) return { ok: false, error: error.message };
-  await admin.from("team_invites").update({ used_count: (inv.used_count as number) + 1 }).eq("id", inv.id as string);
-  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+  if (error) {
+    await admin.from("team_invites").update({ used_count: inv.used_count as number }).eq("id", inv.id as string);
+    return { ok: false, error: error.message };
+  }
+  (await cookies()).set(ORG_COOKIE, inv.business_id as string, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production" });
   revalidatePath("/", "layout");
   return { ok: true, businessId: inv.business_id as string };
 }

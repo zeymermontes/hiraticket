@@ -24,6 +24,9 @@ export async function POST(req: NextRequest) {
     } catch { /* no JSON body (legacy notification) */ }
     if (!paymentId) paymentId = req.nextUrl.searchParams.get("id") || req.nextUrl.searchParams.get("data.id") || "";
     if (!biz || !paymentId || (kind && kind !== "payment")) return NextResponse.json({ ok: true });
+    // El id va en la URL de la API de MercadoPago: solo dígitos, o cualquiera podría dirigir la
+    // llamada (con el token del negocio) a otro endpoint metiendo "?" o "/../".
+    if (!/^\d{1,20}$/.test(paymentId)) return NextResponse.json({ ok: true });
 
     const cfg = await getPluginRuntimeConfig(biz, "mercadopago");
     const accessToken = cfg?.access_token?.trim();

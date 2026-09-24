@@ -58,7 +58,8 @@ export async function sendInternalMessage(channel: string, body: string, replyTo
 /** Queue an internal media message (file already uploaded to the 'media' bucket). */
 export async function sendInternalMedia(channel: string, input: { type: string; mediaUrl: string; mime: string; name?: string; caption?: string; thumb?: string; size?: number }): Promise<void> {
   const { supabase, userId, businessId } = await ctx();
-  if (!userId || !businessId) return;
+  // La ruta viene del navegador: tiene que ser un archivo de este negocio (ver sendMediaMessage).
+  if (!userId || !businessId || !ownsMediaPath(businessId, input.mediaUrl)) return;
   const row = {
     business_id: businessId, channel, author_id: userId, body: input.caption ? encryptBody(businessId, input.caption) : "",
     type: input.type, media_url: input.mediaUrl, media_mime: input.mime, media_name: input.name ?? null,

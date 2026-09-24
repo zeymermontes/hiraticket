@@ -133,6 +133,12 @@ export function registerPhone(phoneNumberId: string, token: string, pin = "00000
   });
 }
 
+// Los números que administra la WABA. Se usa para comprobar que el phone_number_id que llegó del
+// navegador de verdad pertenece a la cuenta cuyo token acabamos de obtener.
+export function listWabaPhoneNumbers(wabaId: string, token: string) {
+  return graph<{ data: { id: string }[] }>(`${wabaId}/phone_numbers?fields=id&limit=200`, token);
+}
+
 export function getPhoneNumberInfo(phoneNumberId: string, token: string) {
   return graph<{ display_phone_number?: string; verified_name?: string }>(
     `${phoneNumberId}?fields=display_phone_number,verified_name`,

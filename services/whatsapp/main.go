@@ -679,6 +679,15 @@ func (m *Manager) pollHeartbeat(ctx context.Context) {
 
 // ---------- media storage ----------
 
+// safeStorageKey deja solo [A-Za-z0-9._-] en el id del mensaje antes de usarlo como nombre de
+// archivo: el id lo pone el cliente remoto, y un "/" o ".." cambiaría la ruta dentro del bucket.
+// Es el mismo filtro que aplica la ingesta de la API oficial en Node.
+func safeStorageKey(id string) string {
+	return storageKeyRe.ReplaceAllString(id, "_")
+}
+
+var storageKeyRe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
 func extFromMime(mime string) string {
 	switch {
 	case strings.Contains(mime, "jpeg"):
@@ -1768,7 +1777,7 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 				if len(data) == 0 {
 					return
 				}
-				path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, waID, extFromMime(mmime))
+				path := fmt.Sprintf("%s/in/%s.%s", s.BusinessID, safeStorageKey(waID), extFromMime(mmime))
 				if u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream")); uerr == nil {
 					mediaURL = u
 				} else {
@@ -2068,7 +2077,7 @@ func (m *Manager) fetchDeferredMedia(ctx context.Context, client *whatsmeow.Clie
 	}
 	var mmime string
 	_ = m.db.QueryRowContext(ctx, `SELECT COALESCE(media_mime,'') FROM messages WHERE id=$1`, id).Scan(&mmime)
-	path := fmt.Sprintf("%s/in/%s.%s", biz, waID, extFromMime(mmime))
+	path := fmt.Sprintf("%s/in/%s.%s", biz, safeStorageKey(waID), extFromMime(mmime))
 	u, uerr := m.uploadMedia(ctx, path, data, firstNonEmpty(mmime, "application/octet-stream"))
 	if uerr != nil {
 		m.exec(ctx, `UPDATE messages SET pending_op=NULL, media_fetch_error='upload' WHERE id=$1`, id)
