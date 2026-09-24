@@ -18,7 +18,7 @@ export function WaTemplateModal({
 }: {
   convId: string;
   onClose: () => void;
-  onSent: (renderedBody: string) => void;
+  onSent: (renderedBody: string, meta: Record<string, unknown>) => void;
 }) {
   const { lang } = useApp();
   const [templates, setTemplates] = useState<WaTemplateOption[] | null>(null);
@@ -51,13 +51,13 @@ export function WaTemplateModal({
     setErr(null);
     const res = await sendWaTemplate(
       convId,
-      { name: picked.name, language: picked.language, body: picked.body },
+      { name: picked.name, language: picked.language, body: picked.body, header: picked.header, footer: picked.footer, buttons: picked.buttons },
       params.slice(0, picked.varCount).map((p) => p.trim()),
       picked.headerVar ? headerParam.trim() : "",
     );
     setSending(false);
     if (res.ok) {
-      onSent(preview);
+      onSent(preview, { template: { name: picked.name, lang: picked.language, params: params.slice(0, picked.varCount), header: previewHeader, footer: picked.footer, buttons: picked.buttons } });
       onClose();
     } else {
       setErr(res.error ?? (lang === "es" ? "No se pudo enviar." : "Could not send."));

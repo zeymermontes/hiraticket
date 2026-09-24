@@ -190,7 +190,7 @@ export async function getWaTemplates(): Promise<WaTemplateOption[]> {
  *  window closed). Stores the rendered text for display; cloud-outbox sends the real template. */
 export async function sendWaTemplate(
   convId: string,
-  tpl: { name: string; language: string; body: string },
+  tpl: { name: string; language: string; body: string; header?: string | null; footer?: string | null; buttons?: TemplateButton[] },
   params: string[],
   headerParam = "",
 ): Promise<{ ok: boolean; error?: string }> {
@@ -209,12 +209,24 @@ export async function sendWaTemplate(
     body: encryptBody(businessId, rendered),
     author_id: userId,
     state: "queued",
-    meta: { template: { name: tpl.name, lang: tpl.language, params, ...(headerParam ? { headerParam } : {}) } },
+    // Encabezado, pie y botones se guardan para que la burbuja se vea como la ve el cliente;
+    // cloud-outbox solo lee name/lang/params/headerParam (los botones fijos los agrega Meta).
+    meta: { template: waTemplateMeta(tpl, params, headerParam) },
   });
   if (error) return { ok: false, error: error.message };
   await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", convId);
   await flushCloudOutbox(businessId);
   return { ok: true };
+}
+
+/** Lo que se guarda en meta.template de un envío de plantilla (y lo que pinta la burbuja). */
+export type WaTemplateMeta = { name: string; lang: string; params: string[]; headerParam?: string; header?: string | null; footer?: string | null; buttons?: TemplateButton[] };
+function waTemplateMeta(tpl: { name: string; language: string; header?: string | null; footer?: string | null; buttons?: TemplateButton[] }, params: string[], headerParam: string): WaTemplateMeta {
+  const header = tpl.header ? tpl.header.replace(VAR_RE, () => headerParam) : null;
+  return {
+    name: tpl.name, lang: tpl.language, params, ...(headerParam ? { headerParam } : {}),
+    ...(header ? { header } : {}), ...(tpl.footer ? { footer: tpl.footer } : {}), ...(tpl.buttons?.length ? { buttons: tpl.buttons } : {}),
+  };
 }
 
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
@@ -252,7 +264,23 @@ export async function reactToMessage(messageId: string, emoji: string): Promise<
 /** Delete an outbound message for everyone (worker revokes it). */
 export async function deleteMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();
-  await supabase.from("messages").update({ pending_op: "delete" }).eq("id", messageId).eq("direction", "out");
+  const { data: m } = await supabase.from("messages").select("business_id, wa_id, state").eq("id", messageId).eq("direction", "out").maybeSingle();
+  if (!m) return;
+  // Un mensaje que nunca llegó a WhatsApp (fallido, en cola) no tiene nada que revocar allá: se
+  // marca eliminado aquí mismo. Antes se dejaba un pending_op que el worker solo atiende con wa_id,
+  // así que "eliminar" un fallido no hacía nada. Si estaba en cola se cierra como fallido para que
+  // ningún despachador lo mande después de borrado.
+  if (!m.wa_id) {
+    await supabase.from("messages").update({ deleted: true, body: "", pending_op: null, ...(m.state === "queued" || m.state === "sending" ? { state: "failed", fail_reason: "cancelado antes de enviarse" } : {}) }).eq("id", messageId);
+    return;
+  }
+  // La API oficial no permite borrar "para todos": en esa sesión no hay worker que procese el
+  // pending_op, así que solo se quita de la conversación en Hiraticket.
+  if (await officialSessionOf(m.business_id as string)) {
+    await supabase.from("messages").update({ deleted: true, body: "", pending_op: null }).eq("id", messageId);
+    return;
+  }
+  await supabase.from("messages").update({ pending_op: "delete" }).eq("id", messageId);
 }
 
 /** Forward a message's content into another conversation as a new outbound message. */

@@ -7,6 +7,8 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { Icon } from "@/components/Icon";
 import { Spinner } from "@/components/Spinner";
 import { WaTemplateModal } from "@/components/chat/WaTemplateModal";
+import { WaTemplatePreview } from "@/components/WaTemplatePreview";
+import type { TemplateButton } from "@/lib/template-rules";
 import { Pill, Avatar, deriveInitials, avatarColor, PayDot } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { PillColor } from "@/lib/types";
@@ -702,6 +704,16 @@ function MsgMenu({ m, out, onReply, onEdit, onDelete, onReact, onForward, onCopi
       )}
     </span>
   );
+}
+
+/** La plantilla oficial que salió con este mensaje, si guardó algo más que el texto (encabezado,
+ *  pie o botones): la burbuja se pinta como la ve el cliente en WhatsApp, botones incluidos. */
+function templateCardOf(m: ChatMessage): { header: string | null; footer: string | null; buttons: TemplateButton[] } | null {
+  const t = (m.meta as { template?: { header?: string | null; footer?: string | null; buttons?: TemplateButton[] } } | null)?.template;
+  if (!t) return null;
+  const buttons = Array.isArray(t.buttons) ? t.buttons : [];
+  if (!t.header && !t.footer && !buttons.length) return null;
+  return { header: t.header ?? null, footer: t.footer ?? null, buttons };
 }
 
 /** Options menu for a grouped-photo album (forward / delete all). */
@@ -2374,6 +2386,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                       )}
                       <span title={fullStamp(row.created_at, lang)}>{clockTime(row.created_at, lang)}</span>{out && <Tick state={row.items.some((it) => it.state === "failed") ? "failed" : row.items[row.items.length - 1].state} />}
                     </div>
+                    {out && row.items.find((it) => it.state === "failed" && it.fail_reason) && (
+                      <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, padding: "0 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>{row.items.find((it) => it.state === "failed" && it.fail_reason)!.fail_reason}</div>
+                    )}
                   </div>
                 </div>
               </React.Fragment>
@@ -2414,15 +2429,26 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                     : (
                       <>
                         {(m.media_url || m.type === "call" || m.media_purged_at || m.media_pending || m.media_fetch_error) && <MediaBlock m={m} onImage={openLightbox} />}
-                        {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
+                        {templateCardOf(m)
+                          ? <WaTemplatePreview compact header={templateCardOf(m)!.header} body={m.body ?? ""} footer={templateCardOf(m)!.footer} buttons={templateCardOf(m)!.buttons} />
+                          : m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
                     )}
                 <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}
                   {out && m.state === "failed" && !m.id.startsWith("tmp") && (
-                    <button onClick={() => start(async () => { await retryMessage(m.id); refresh(); })} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
+                    <button onClick={async () => {
+                      // Una plantilla se manda fuera de la ventana de 24 h: si en realidad sí llegó
+                      // (el fallo fue después del envío), reintentar es mandarla dos veces al cliente.
+                      if ((m.meta as { template?: unknown } | null)?.template && !(await ask({ icon: "refresh", title: lang === "es" ? "Reenviar la plantilla" : "Resend the template", message: lang === "es" ? "Se vuelve a mandar al cliente. Si ya le había llegado, la recibiría dos veces." : "It is sent to the customer again. If it had already arrived, they would get it twice.", confirmLabel: lang === "es" ? "Reenviar" : "Resend", cancelLabel: lang === "es" ? "Volver" : "Back" }))) return;
+                      start(async () => { await retryMessage(m.id); refresh(); });
+                    }} style={{ marginRight: 5, border: "none", background: "transparent", color: "var(--red)", cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 600, padding: 0, display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="refresh" size={11} />{lang === "es" ? "Reintentar" : "Retry"}</button>
                   )}
                   <span title={fullStamp(m.created_at, lang)}>{clockTime(m.created_at, lang)}</span>{out && <Tick state={m.state} />}</div>
+                {/* El motivo tal como lo dio Meta o el worker. Sin esto, "Reintentar" era adivinar. */}
+                {out && m.state === "failed" && m.fail_reason && !m.deleted && (
+                  <div className="t-xs" style={{ color: "var(--red)", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word", opacity: 0.9 }}>{m.fail_reason}</div>
+                )}
                 {!m.deleted && m.reactions?.length > 0 && (
                   <div className="msg-reacts">
                     {m.reactions.map((r, ri) => (
@@ -2644,8 +2670,8 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         <WaTemplateModal
           convId={detail.id}
           onClose={() => setTplOpen(false)}
-          onSent={(body) => {
-            setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta: null, reactions: [], sender_name: null, sender_jid: null }]);
+          onSent={(body, meta) => {
+            setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta, reactions: [], sender_name: null, sender_jid: null }]);
           }}
         />
       )}

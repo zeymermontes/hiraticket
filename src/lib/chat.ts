@@ -120,6 +120,8 @@ export interface ChatMessage {
   media_mime: string | null;
   media_name: string | null;
   media_purged_at?: string | null; // 0066 — el archivo se purgó por peso+antigüedad
+  /** Por qué no salió (state='failed'): el texto de Meta o del worker, para que el agente lo vea. */
+  fail_reason?: string | null;
   media_size?: number | null;        // 0067 — tamaño, para mostrarlo antes de bajar
   media_pending?: boolean;           // 0067 — pesado: hay puntero pero aún no se baja
   media_fetch_error?: string | null; // 0067 — "expired" si WhatsApp ya lo purgó, "too-big" si no cabe
@@ -506,7 +508,7 @@ export async function getConversationMessages(
   };
   // media_purged_at (0066) va en su propio nivel: metiéndolo en MSG_FULL, un despliegue sin la
   // migración caería hasta MSG_BASE y se perderían reacciones, forwarded y edited.
-  let res = await q(MSG_FULL + ", media_purged_at, media_size, media_fetch_error, media_ptr, sender_name, sender_jid");
+  let res = await q(MSG_FULL + ", media_purged_at, media_size, media_fetch_error, media_ptr, fail_reason, sender_name, sender_jid");
   if (res.error) res = await q(MSG_FULL + ", sender_name, sender_jid");
   let messages: ChatMessage[];
   if (res.error) {

@@ -45,6 +45,7 @@ export async function flushCloudOutbox(businessId: string): Promise<void> {
     .eq("business_id", businessId)
     .eq("direction", "out")
     .eq("state", "queued")
+    .eq("deleted", false)
     .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
     .order("created_at", { ascending: true })
     .limit(BATCH);

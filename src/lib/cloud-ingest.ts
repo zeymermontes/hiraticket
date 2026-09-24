@@ -241,6 +241,29 @@ async function ingestMessage(
   if (!conv) return;
   if (opts.live && conv.muted) return; // worker parity: muted conversations drop the message entirely
 
+  // Carrera con nuestro propio envío: Meta puede mandar el eco ANTES de que cloud-outbox guarde el
+  // wamid en la fila que acaba de despachar (sigue en 'sending'). Sin esto, el eco se insertaba
+  // como un segundo mensaje sin autor y el hilo mostraba el mismo texto dos veces. Se le cuelga el
+  // wamid a esa fila en vez de duplicarla; la ventana es corta para no robarle el eco a un mensaje
+  // que sí salió del teléfono.
+  if (outbound && opts.live) {
+    const { data: mine } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", conv.convId)
+      .eq("direction", "out")
+      .is("wa_id", null)
+      .eq("state", "sending")
+      .gte("created_at", new Date(Date.now() - 90_000).toISOString())
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (mine) {
+      const { data: took } = await supabase.from("messages").update({ wa_id: msg.id, state: "sent" }).eq("id", mine.id).is("wa_id", null).select("id");
+      if (took?.length) return;
+    }
+  }
+
   const parsed = await parseContent(supabase, session, msg);
   if (!parsed) return; // unsupported type (interactive/order/system/…) — nothing to render yet
 
