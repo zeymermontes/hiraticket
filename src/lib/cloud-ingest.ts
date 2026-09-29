@@ -105,7 +105,32 @@ function profileNames(value: CloudValue): Record<string, string> {
 
 // ---------- contact + conversation (mirrors the worker's 1:1 upsert) ----------
 
+/**
+ * Un candado en memoria por (negocio, teléfono): Meta entrega los webhooks en paralelo, y dos
+ * mensajes seguidos del mismo cliente llegaban a "no hay conversación → la creo" al mismo tiempo.
+ * Vale dentro de una instancia (que es lo que corre); el índice único de contactos (0094) cubre
+ * lo que se cuele entre instancias.
+ */
+const peerLocks = new Map<string, Promise<unknown>>();
+async function withPeerLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = peerLocks.get(key) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(fn);
+  peerLocks.set(key, run);
+  try { return await run; } finally { if (peerLocks.get(key) === run) peerLocks.delete(key); }
+}
+
+type ContactRow = { id: string; name: string; created_at?: string };
+
 async function ensureConversation(
+  supabase: Admin,
+  session: CloudSession,
+  phoneDigits: string,
+  name?: string,
+): Promise<{ convId: string; muted: boolean; status: string; unread: number; lastAt: string | null; name: string } | null> {
+  return withPeerLock(`${session.businessId}:${phoneDigits}`, () => ensureConversationLocked(supabase, session, phoneDigits, name));
+}
+
+async function ensureConversationLocked(
   supabase: Admin,
   session: CloudSession,
   phoneDigits: string,
@@ -114,24 +139,34 @@ async function ensureConversation(
   const businessId = session.businessId;
   const normalized = "+" + phoneDigits;
 
-  let { data: contact } = await supabase
-    .from("contacts")
-    .select("id, name")
-    .eq("business_id", businessId)
-    .eq("phone", normalized)
-    .maybeSingle();
-  if (!contact) {
-    const ins = await supabase
-      .from("contacts")
-      .insert({ business_id: businessId, name: name || normalized, phone: normalized })
-      .select("id, name")
-      .single();
-    contact = ins.data;
-  } else if (name && (contact.name === normalized || contact.name === phoneDigits)) {
+  // TODOS los contactos con ese teléfono, no `.maybeSingle()`: con dos filas iguales PostgREST
+  // devuelve error y data null, y eso se leía como "no existe" → otro contacto y otra
+  // conversación por CADA mensaje. Así se duplicó el chat de un cliente entero. Se usa el más
+  // antiguo y las conversaciones se buscan en todos.
+  const findContacts = async (): Promise<ContactRow[]> => {
+    const { data } = await supabase.from("contacts").select("id, name, created_at").eq("business_id", businessId).eq("phone", normalized).order("created_at", { ascending: true }).limit(20);
+    return (data ?? []) as ContactRow[];
+  };
+  let contacts = await findContacts();
+  if (!contacts.length) {
+    // Con el índice único (0094) el upsert no duplica aunque dos instancias lleguen a la vez;
+    // sin él, PostgREST rechaza el ON CONFLICT y se cae al insert de siempre.
+    const row = { business_id: businessId, name: name || normalized, phone: normalized };
+    const up = await supabase.from("contacts").upsert(row, { onConflict: "business_id,phone", ignoreDuplicates: true }).select("id, name, created_at");
+    if (up.error) {
+      const ins = await supabase.from("contacts").insert(row).select("id, name, created_at").single();
+      if (ins.data) contacts = [ins.data as ContactRow];
+    } else {
+      contacts = (up.data?.length ? up.data : await findContacts()) as ContactRow[];
+    }
+  }
+  const contact = contacts[0];
+  if (!contact) return null;
+  if (name && (contact.name === normalized || contact.name === phoneDigits)) {
     // Placeholder (phone-as-name) → adopt the WhatsApp profile name; never clobber a custom name.
     await supabase.from("contacts").update({ name }).eq("id", contact.id);
+    contact.name = name;
   }
-  if (!contact) return null;
 
   // Reuse the contact's most recent conversation OF THIS NUMBER — even a resolved one (the worker
   // reopens it). Strictly scoped by number_phone (0078): a freshly onboarded number never adopts
@@ -140,7 +175,7 @@ async function ensureConversation(
     .from("conversations")
     .select("id, muted, status, unread, last_message_at")
     .eq("business_id", businessId)
-    .eq("contact_id", contact.id);
+    .in("contact_id", contacts.map((c) => c.id));
   if (session.phone) query = query.eq("number_phone", session.phone);
   let { data: conv } = await query
     .order("last_message_at", { ascending: false, nullsFirst: false })
