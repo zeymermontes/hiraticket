@@ -544,7 +544,11 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
             }
             return <Fragment key={row.m.id}>{daySep}{renderBubble(row.m, isFresh(row.m))}</Fragment>;
           })}
-          {extra.map((m) => <Fragment key={m.id}>{renderBubble(m, true)}</Fragment>)}
+          {/* Igual que el chat de clientes: si la fila real ya llegó, la optimista no se pinta doble. */}
+          {extra.filter((t) => !msgs.some((m) => m.author_id === meId && m.type === t.type && (t.body ? m.body === t.body : !m.body)
+            && (t.media_url ? m.media_url === t.media_url || m.media_path === t.media_url : true)
+            && Math.abs(new Date(m.created_at).getTime() - new Date(t.created_at).getTime()) < 120_000))
+            .map((m) => <Fragment key={m.id}>{renderBubble(m, true)}</Fragment>)}
           {typingName && <div className="msg in"><div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div></div>}
         </div>
 

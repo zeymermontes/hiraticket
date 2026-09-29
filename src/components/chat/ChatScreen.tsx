@@ -2211,7 +2211,13 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   }, [text]);
 
   const assignee = detail.assignee_id ? agentMap.get(detail.assignee_id) : null;
-  const messages = [...msgs, ...extra];
+  // Una burbuja optimista se retira cuando su fila real ya está en `msgs`. El efecto que vacía
+  // `extra` al cambiar msgs.length no cubre el caso en que la fila real llega ANTES de que se
+  // pinte la optimista (una plantilla: la acción espera a Meta y el realtime le gana), y el
+  // mensaje se veía doble hasta salir y volver a entrar.
+  const messages = [...msgs, ...extra.filter((t) => !msgs.some((m) => m.direction === "out" && m.type === t.type
+    && (t.body ? m.body === t.body : !m.body) && (t.media_url ? m.media_url === t.media_url || m.media_path === t.media_url : true)
+    && Math.abs(new Date(m.created_at).getTime() - new Date(t.created_at).getTime()) < 120_000))];
   // Animate only newly-arrived bubbles (incoming) + my optimistic sends — never the whole history on open.
   const seenIds = useRef<Set<string>>(new Set());
   const isFresh = (m: ChatMessage) => m.id.startsWith("tmp") || (m.direction === "in" && !seenIds.current.has(m.id));
