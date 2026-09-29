@@ -117,16 +117,36 @@ async function sendOne(supabase: Admin, session: CloudSession, businessId: strin
   }
 
   // Reply context: Cloud API wants the wamid of the quoted message.
+  //
+  // Solo un wamid de la API oficial ("wamid.…") sirve como cita. Un chat que vivió antes en el
+  // worker de WhatsApp Web tiene mensajes con ids de otro formato: mandarlos como `context` hace
+  // que Meta rechace el mensaje ENTERO, y el agente veía su respuesta en Hiraticket sin que
+  // saliera nunca. Sin cita válida, el mensaje sale igual, solo que sin la referencia.
+  let quotedId: string | null = null;
   if (m.reply_to) {
     const { data: quoted } = await supabase.from("messages").select("wa_id").eq("id", m.reply_to).maybeSingle();
-    if (quoted?.wa_id) payload.context = { message_id: quoted.wa_id };
+    const id = (quoted?.wa_id as string | null) ?? null;
+    if (id && id.startsWith("wamid.")) { quotedId = id; payload.context = { message_id: id }; }
   }
 
-  const res = await sendCloudPayload(session.phoneNumberId, session.token, to, payload);
+  let res = await sendCloudPayload(session.phoneNumberId, session.token, to, payload);
+  // Meta puede rechazar la cita aunque el id tenga forma de wamid (un mensaje del historial
+  // sincronizado, uno demasiado viejo). Que la respuesta llegue importa más que la cita: se
+  // reintenta una vez sin `context` y se deja constancia en meta de que salió sin ella.
+  let contextDropped = false;
+  if (!res.ok && quotedId) {
+    const firstError = res.error;
+    delete payload.context;
+    const retry = await sendCloudPayload(session.phoneNumberId, session.token, to, payload);
+    if (retry.ok) { res = retry; contextDropped = true; console.warn("[cloud-outbox] cita rechazada por Meta, mensaje enviado sin ella", { messageId: m.id, quotedId, error: firstError }); }
+  }
   if (res.ok) {
     await supabase
       .from("messages")
-      .update({ state: "sent", wa_id: res.data.messages?.[0]?.id ?? null, send_attempts: 0, next_retry_at: null })
+      .update({
+        state: "sent", wa_id: res.data.messages?.[0]?.id ?? null, send_attempts: 0, next_retry_at: null,
+        ...(contextDropped ? { meta: { ...(m.meta ?? {}), context_dropped: true } } : {}),
+      })
       .eq("id", m.id);
   } else {
     await fail(res.error);
