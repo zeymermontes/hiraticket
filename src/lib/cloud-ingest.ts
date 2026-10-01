@@ -354,6 +354,16 @@ async function ingestMessage(
     }
     if (Object.keys(patch).length) await supabase.from("conversations").update(patch).eq("id", conv.convId);
 
+    // El cliente respondió: lo que el agente dejó en espera (0095) sale ahora, una sola vez. La
+    // función marca cada fila como enviada, así que la siguiente respuesta no encuentra nada.
+    if (!outbound) {
+      const { data: released, error } = await supabase.rpc("release_followups", { conv: conv.convId });
+      if (!error && Number(released) > 0) {
+        const { flushCloudOutbox } = await import("@/lib/cloud-outbox");
+        await flushCloudOutbox(session.businessId);
+      }
+    }
+
     // Push a quien le toque. Solo para mensajes ENTRANTES y no tardíos: el eco de algo que mandó
     // el propio equipo no se avisa, y un webhook que aterriza tres horas tarde tampoco —- avisar de
     // un mensaje ya contestado es peor que no avisar. No se espera (`void`): un aviso que falla no

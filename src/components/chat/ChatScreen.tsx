@@ -32,7 +32,7 @@ import { ReorderList } from "@/components/ReorderList";
 import { tagColor, payStatusLabel } from "@/lib/types";
 import { TransferModal } from "@/components/TransferModal";
 import {
-  sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv,
+  sendMessage, sendMediaMessage, editMessage, deleteMessage, setConvStatus, acceptConv, addConvNote, transferConv, setConvHidden, snoozeConv, cancelFollowUp,
   requestMediaFetch, deleteConv, renameContact, requestContactInfo, markConvRead, addContactTag, removeContactTag, reactToMessage, retryMessage, forwardMessage, startConversation, sendSticker, saveStickerFavorite, removeStickerFavorite, emptyChatTrash, setConvMuted, bulkSetStatus, bulkAssign, bulkDeleteConvs, lockConvToMe, unlockConv,
 } from "@/app/(app)/chat/actions";
 import { menuStyle, menuStyleAbove } from "@/lib/popover";
@@ -42,6 +42,7 @@ import { useToast, useFlowToast } from "@/components/Toast";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadMessageRange } from "@/lib/chatLive";
 import { ExportChatModal } from "@/components/chat/ExportChatModal";
+import { FollowUpModal } from "@/components/chat/FollowUpModal";
 import { exportFileBase, type ExportMsg } from "@/lib/chatExport";
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
@@ -115,7 +116,7 @@ function skeletonDetail(c: ConvListItem): ConvDetail {
     // ser entrante); el fetch la corrige en cuanto llega.
     last_inbound_at: c.last_message_at,
     wa_official: false,
-    messages: [], notes: [], events: [], orders: [],
+    messages: [], notes: [], events: [], orders: [], followups: [],
   };
 }
 
@@ -2272,6 +2273,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   // Ventana de 24 h de la API oficial: solo se puede escribir libre si el cliente escribió en las
   // últimas 24 h; cerrada → únicamente plantillas aprobadas. whatsmeow y grupos no tienen ventana.
   const [tplOpen, setTplOpen] = useState(false);
+  const [followUpOpen, setFollowUpOpen] = useState(false); // "mensaje en espera" (0095)
   const [nowMin, setNowMin] = useState(() => Date.now());
   useEffect(() => { const iv = setInterval(() => setNowMin(Date.now()), 60_000); return () => clearInterval(iv); }, []);
   const lastInboundAt = useMemo(() => {
@@ -2526,6 +2528,28 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       </div>
 
       <div className="composer">
+        {/* Lo que quedó en espera: se ve hasta que salga (cuando el cliente responda) o se cancele. */}
+        {(detail.followups ?? []).length > 0 && (
+          <div className="col gap-1" style={{ padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", marginBottom: 6 }}>
+            <div className="row gap-2 t-xs" style={{ color: "var(--brand-700)", fontWeight: 700 }}>
+              <Icon name="clock" size={13} />{lang === "es"
+                ? `En espera · se enviará cuando ${personal ? "el contacto" : "el cliente"} responda`
+                : `Waiting · will be sent when the ${personal ? "contact" : "customer"} replies`}
+            </div>
+            {detail.followups.map((f) => (
+              <div key={f.id} className="row gap-2" style={{ alignItems: "center" }}>
+                {f.media_name || f.type !== "text" ? <Icon name="paperclip" size={13} /> : <Icon name="edit" size={13} />}
+                <span className="t-sm grow truncate">{f.body || f.media_name || quoteText({ type: f.type, body: null, media_name: f.media_name, media_mime: f.media_mime, meta: null }, lang)}</span>
+                <button className="iconbtn sm" title={lang === "es" ? "Cancelar envío" : "Cancel"} onClick={async () => {
+                  if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Cancelar mensaje en espera" : "Cancel waiting message", message: lang === "es" ? "No se enviará." : "It will not be sent.", confirmLabel: lang === "es" ? "Cancelar envío" : "Cancel it", cancelLabel: lang === "es" ? "Volver" : "Back" })) {
+                    patch({ followups: detail.followups.filter((x) => x.id !== f.id) });
+                    start(async () => { await cancelFollowUp(f.id); refresh(); });
+                  }
+                }}><Icon name="x" size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {waBlocked && (
           <div className="row gap-3" style={{ padding: "10px 12px", background: "var(--amber-bg, var(--surface-2))", border: "1px solid var(--amber-bd, var(--border))", borderRadius: "var(--r-md)", marginBottom: 6, alignItems: "center" }}>
             <Icon name="clock" size={16} />
@@ -2534,6 +2558,9 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                 ? "La ventana de 24 h está cerrada: WhatsApp solo permite iniciar con una plantilla aprobada. Cuando el cliente responda, el chat libre se reabre."
                 : "The 24h window is closed: WhatsApp only allows starting with an approved template. Once the customer replies, free chat reopens."}
             </div>
+            <button className="btn btn-sm btn-outline" style={{ flex: "none" }} title={lang === "es" ? "Redacta ahora lo que quieres decirle; sale solo cuando responda" : "Write now what you want to say; it goes out on its own when they reply"} onClick={() => setFollowUpOpen(true)}>
+              <Icon name="clock" size={14} />{lang === "es" ? "Mensaje en espera" : "Waiting message"}
+            </button>
             <button className="btn btn-sm btn-primary" style={{ flex: "none" }} onClick={() => setTplOpen(true)}>
               <Icon name="send" size={14} />{lang === "es" ? "Enviar plantilla" : "Send template"}
             </button>
@@ -2719,10 +2746,14 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         <WaTemplateModal
           convId={detail.id}
           onClose={() => setTplOpen(false)}
-          onSent={(body, meta) => {
+          onSent={(body, meta, followUp) => {
             setExtra((e) => [...e, { id: "tmp" + e.length, direction: "out", type: "text", body, state: "sent", author_id: null, created_at: new Date().toISOString(), media_url: null, media_mime: null, media_name: null, reply_to: null, deleted: false, forwarded: false, edited: false, meta, reactions: [], sender_name: null, sender_jid: null }]);
+            if (followUp) setFollowUpOpen(true);
           }}
         />
+      )}
+      {followUpOpen && (
+        <FollowUpModal convId={detail.id} businessId={businessId} onClose={() => setFollowUpOpen(false)} onSaved={refresh} />
       )}
 
       {staged.length > 0 && (

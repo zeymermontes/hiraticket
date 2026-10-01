@@ -1896,6 +1896,9 @@ func (m *Manager) handleIncoming(ctx context.Context, s session, client *whatsme
 			VALUES ($1,'conversation',$2,'status','Reabierto por nuevo mensaje')`, s.BusinessID, convID)
 	}
 	if dir == "in" {
+		// Lo que el agente dejó "en espera" (0095) sale ahora como mensajes en cola; la función
+		// marca cada fila como enviada, así que la siguiente respuesta no manda nada.
+		m.exec(ctx, `SELECT public.release_followups($1)`, convID)
 		// A new customer message resurfaces the chat: clear snooze/hidden and reopen if it was resolved.
 		// A reactivated chat (resolved → open) comes back UNASSIGNED so anyone can take it — except a
 		// pinned one ("mantener conmigo"), which returns to locked_to. An already-open chat keeps its

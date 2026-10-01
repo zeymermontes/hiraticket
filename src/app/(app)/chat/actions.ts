@@ -229,6 +229,41 @@ function waTemplateMeta(tpl: { name: string; language: string; header?: string |
   };
 }
 
+/** Un mensaje en espera (0095): texto y/o archivos que saldrán solos cuando el cliente responda.
+ *  Cada archivo es una fila; el texto va como pie del primero, o solo, igual que al enviar. */
+export async function queueFollowUp(
+  convId: string,
+  items: { type: string; body?: string; mediaUrl?: string; mime?: string; name?: string; size?: number; thumb?: string }[],
+): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, userId } = await ctx();
+  const businessId = await businessOf(convId);
+  if (!businessId) return { ok: false, error: "conversation" };
+  const rows = items
+    .filter((it) => (it.body && it.body.trim()) || it.mediaUrl)
+    .map((it, i) => {
+      if (it.mediaUrl && !ownsMediaPath(businessId, it.mediaUrl)) return null;
+      return {
+        business_id: businessId, conversation_id: convId, author_id: userId, seq: i,
+        type: it.mediaUrl ? it.type : "text",
+        body: it.body && it.body.trim() ? encryptBody(businessId, it.body.trim()) : null,
+        media_url: it.mediaUrl ?? null, media_mime: it.mime ?? null, media_name: it.name ?? null, media_size: it.size ?? null,
+        meta: it.thumb ? { thumb: it.thumb } : null,
+      };
+    });
+  if (rows.some((r) => !r)) return { ok: false, error: "media-path" };
+  const clean = rows.filter((r): r is NonNullable<typeof r> => !!r);
+  if (!clean.length) return { ok: false, error: "empty" };
+  const { error } = await supabase.from("conversation_followups").insert(clean);
+  if (error) return { ok: false, error: /conversation_followups/.test(error.message) ? "migration-0095" : error.message };
+  return { ok: true };
+}
+
+/** Quitar un mensaje en espera que todavía no salió. */
+export async function cancelFollowUp(id: string): Promise<void> {
+  const { supabase } = await ctx();
+  await supabase.from("conversation_followups").delete().eq("id", id).is("sent_at", null);
+}
+
 /** Re-queue a failed outbound message so the worker tries to send it again (resets backoff). */
 export async function retryMessage(messageId: string): Promise<void> {
   const { supabase } = await ctx();

@@ -139,6 +139,12 @@ export interface ConvNote {
   created_at: string;
 }
 
+/** Mensaje en espera (0095): sale solo cuando el cliente responda. */
+export interface ConvFollowUp {
+  id: string; type: string; body: string | null; media_name: string | null; media_mime: string | null;
+  author_id: string | null; created_at: string;
+}
+
 export interface ConvEvent {
   id: string;
   kind: string;
@@ -186,6 +192,8 @@ export interface ConvDetail {
   notes: ConvNote[];
   events: ConvEvent[];
   orders: ChatOrderCard[];
+  /** Pendientes de salir en cuanto el cliente responda (0095). */
+  followups: ConvFollowUp[];
 }
 
 /** Members of a business with their display name + avatar color. */
@@ -647,7 +655,18 @@ export async function getConversationDetail(
     notes: (notes ?? []) as ConvNote[],
     events: (events ?? []) as ConvEvent[],
     orders: ordersWithProof,
+    followups: await pendingFollowUps(supabase, convId, conv.business_id as string),
   };
+}
+
+/** Los mensajes en espera de la conversación. Sin 0095 la tabla no existe: lista vacía. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function pendingFollowUps(supabase: any, convId: string, businessId: string): Promise<ConvFollowUp[]> {
+  const { data, error } = await supabase.from("conversation_followups")
+    .select("id, type, body, media_name, media_mime, author_id, created_at")
+    .eq("conversation_id", convId).is("sent_at", null).order("seq", { ascending: true });
+  if (error || !data) return [];
+  return (data as ConvFollowUp[]).map((f) => ({ ...f, body: f.body ? decryptBody(businessId, f.body) : null }));
 }
 
 /**

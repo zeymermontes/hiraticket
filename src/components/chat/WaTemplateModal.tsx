@@ -18,9 +18,11 @@ export function WaTemplateModal({
 }: {
   convId: string;
   onClose: () => void;
-  onSent: (renderedBody: string, meta: Record<string, unknown>) => void;
+  /** `followUp`: el agente pidió dejar un mensaje en espera al terminar (ver FollowUpModal). */
+  onSent: (renderedBody: string, meta: Record<string, unknown>, followUp: boolean) => void;
 }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
+  const [followUp, setFollowUp] = useState(false);
   const [templates, setTemplates] = useState<WaTemplateOption[] | null>(null);
   const [picked, setPicked] = useState<WaTemplateOption | null>(null);
   const [params, setParams] = useState<string[]>([]);
@@ -57,7 +59,7 @@ export function WaTemplateModal({
     );
     setSending(false);
     if (res.ok) {
-      onSent(preview, { template: { name: picked.name, lang: picked.language, params: params.slice(0, picked.varCount), header: previewHeader, footer: picked.footer, buttons: picked.buttons } });
+      onSent(preview, { template: { name: picked.name, lang: picked.language, params: params.slice(0, picked.varCount), header: previewHeader, footer: picked.footer, buttons: picked.buttons } }, followUp);
       onClose();
     } else {
       setErr(res.error ?? (lang === "es" ? "No se pudo enviar." : "Could not send."));
@@ -125,6 +127,17 @@ export function WaTemplateModal({
                 </div>
               ))}
               <WaTemplatePreview header={previewHeader} mediaHeader={picked.mediaHeader} body={preview} footer={picked.footer} buttons={picked.buttons} />
+              {/* La plantilla abre la puerta; lo que de verdad se quiere decir se deja en espera y
+                  sale solo cuando responda. Así nadie tiene que estar vigilando el chat. */}
+              <label className="row gap-2" style={{ alignItems: "flex-start", cursor: "pointer" }}>
+                <input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} style={{ marginTop: 3 }} />
+                <span className="t-sm">
+                  <b>{lang === "es" ? "Dejar un mensaje en espera" : "Leave a waiting message"}</b>
+                  <div className="muted t-xs">{lang === "es"
+                    ? `Al enviar, redactas el mensaje (con archivos si quieres) y sale solo, una vez, cuando ${personal ? "el contacto" : "el cliente"} responda.`
+                    : `After sending, you write the message (with files if you like) and it goes out on its own, once, when the ${personal ? "contact" : "customer"} replies.`}</div>
+                </span>
+              </label>
             </>
           )}
           {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
