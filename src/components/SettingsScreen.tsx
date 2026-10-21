@@ -151,6 +151,15 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
   const linked = (x: WaSession) => !!x.phone || x.status === "connected";
   const linkedBridge = bridgeSessions.filter(linked);
   const anyLinked = officialSessions.length > 0 || linkedBridge.length > 0;
+  const officialLive = officialSessions.some((x) => x.status === "connected");
+  // Meta API es la vía por defecto para TODOS. `showOfficial` (el allowlist) ya solo marca a
+  // los probadores / revisores de Meta: a ellos se les esconde el QR por completo y ven el panel
+  // de pruebas. Para el resto, el QR sigue existiendo pero como segunda opción: se muestra si el
+  // negocio ya lo usa, o si la persona lo pide expresamente.
+  const tester = showOfficial;
+  const [qrWanted, setQrWanted] = useState(false);
+  const qrVisible = !tester && (linkedBridge.length > 0 || qrWanted);
+  const metaConfigured = !!fbAppId && !!esConfigId;
 
   // Notification sound mute (per-browser preference).
   const [muted, setMuted] = useState(false);
@@ -202,9 +211,10 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                     : (lang === "es" ? "Usa QR (no oficial)" : "Using QR (unofficial)")}
               </Pill>
             )}
-            {/* Official-flow (allowlisted) accounts must never link via the unofficial bridge —
-                hide the whatsmeow UI entirely (ban risk + App Review reviewers must not see it). */}
-            {!showOfficial && (sessions.length === 0 ? (
+            {/* Los controles del QR solo cuando esa vía está a la vista (ver qrVisible). Los
+                probadores del camino oficial no la ven nunca: riesgo de baneo y los revisores de
+                Meta no deben toparse con la vía no oficial. */}
+            {qrVisible && (sessions.length === 0 ? (
               <button className="btn btn-sm btn-outline" onClick={() => run(() => addSession(businessId, lang === "es" ? "Número" : "Number"))}>
                 <Icon name="plus" size={14} />{lang === "es" ? "Agregar número" : "Add number"}
               </button>
@@ -239,7 +249,8 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                 </div>
               </div>
             )}
-            {showOfficial && !officialSessions.some((s) => s.status === "connected") && (
+            {/* La vía por defecto, para todos, mientras no haya un número oficial conectado. */}
+            {!officialLive && (tester || metaConfigured) && (
               <div className="col gap-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 14, background: "var(--surface-2)" }}>
                 <div className="row gap-2">
                   <Icon name="whatsapp" size={16} />
@@ -251,18 +262,31 @@ export function SettingsScreen({ businessId, sessions, stages = [], doneFromStag
                     ? "Conecta tu número por la API oficial de Meta. Mantienes WhatsApp en tu teléfono (coexistencia) y habilitas plantillas, campañas y agentes, sin riesgo de baneo."
                     : "Connect via Meta's official API. Keep WhatsApp on your phone (coexistence) and enable templates, campaigns and agents, with no ban risk."}
                 </div>
+                {linkedBridge.length > 0 && (
+                  <div className="t-xs" style={{ color: "var(--amber)" }}>
+                    {lang === "es"
+                      ? "Este negocio ya tiene un número por QR. Para pasar ese mismo número a Meta, desconéctalo del QR primero; un número no puede estar en las dos vías a la vez."
+                      : "This business already has a QR-linked number. To move that same number to Meta, disconnect it from QR first; a number can't be on both paths at once."}
+                  </div>
+                )}
                 <EmbeddedSignup appId={fbAppId} configId={esConfigId} />
               </div>
             )}
-            {showOfficial && <WaCloudTester />}
-            {!showOfficial && sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
-            {!showOfficial && bridgeSessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
-            {!showOfficial && (
+            {tester && <WaCloudTester />}
+            {qrVisible && sessions.length === 0 && <div className="muted t-sm">{lang === "es" ? "Sin números." : "No numbers."}</div>}
+            {qrVisible && bridgeSessions.map((s, i) => <SessionCard key={s.id} session={s} primary={i === 0} />)}
+            {qrVisible && (
               <div className="t-xs muted">
                 {lang === "es"
-                  ? "Conecta el número de tu negocio para recibir y responder mensajes de tus clientes."
-                  : "Connect your business number to receive and reply to your customers' messages."}
+                  ? "Vinculación por QR: funciona, pero no es la vía oficial de WhatsApp y conlleva riesgo de baneo. Si puedes, conecta por Meta."
+                  : "QR linking works, but it isn't WhatsApp's official path and carries a ban risk. If you can, connect via Meta."}
               </div>
+            )}
+            {/* El QR como segunda opción: un enlace discreto, no un botón al mismo nivel que Meta. */}
+            {!tester && !qrVisible && !officialLive && (
+              <button className="btn btn-sm btn-ghost" style={{ width: "fit-content", color: "var(--text-muted)" }} onClick={() => setQrWanted(true)}>
+                <Icon name="qr" size={14} />{lang === "es" ? "Prefiero vincular por código QR (no oficial)" : "I'd rather link via QR code (unofficial)"}
+              </button>
             )}
           </div>
         </section>
