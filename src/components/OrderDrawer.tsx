@@ -20,7 +20,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste, previewOrderInvoice, setOrderInvoice } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste, previewOrderInvoice, setOrderInvoice, recalcOrderTotal } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
@@ -450,8 +450,23 @@ export function OrderDrawer({
                 const disc = Math.min(base, Number(detail.discount ?? 0));
                 const tax = editItems || rate === 0 ? Math.round((base - disc) * (rate / 100) * 100) / 100 : Math.max(0, detail.total - (base - disc));
                 const liveTotal = editItems ? Math.round((base - disc + tax) * 100) / 100 : detail.total;
+                // El total guardado debería salir siempre de los renglones. Si no (un renglón borrado
+                // sin recalcular, un pedido viejo), se dice y se ofrece arreglarlo con un clic.
+                const expected = Math.round((base - disc) * (1 + rate / 100) * 100) / 100;
+                const stale = !editItems && Math.abs(detail.total - expected) >= 0.01;
                 return (
                   <div className="col gap-1" style={{ paddingTop: 12, marginTop: 4, borderTop: "1px solid var(--border)" }}>
+                    {stale && (
+                      <div className="row gap-2" style={{ alignItems: "center", padding: "6px 8px", borderRadius: 8, background: "var(--amber-bg, var(--surface-2))", border: "1px solid var(--amber-bd, var(--border))" }}>
+                        <Icon name="flag" size={13} />
+                        <span className="grow t-xs">{lang === "es"
+                          ? `El total guardado ($${formatMoney(detail.total)}) no sale de los productos ($${formatMoney(expected)}).`
+                          : `The saved total ($${formatMoney(detail.total)}) doesn't match the items ($${formatMoney(expected)}).`}</span>
+                        <button className="btn btn-sm btn-outline" disabled={pending} onClick={() => run(async () => { await recalcOrderTotal(detail.id); })}>
+                          <Icon name="refresh" size={13} />{lang === "es" ? "Recalcular" : "Recalculate"}
+                        </button>
+                      </div>
+                    )}
                     {(rate > 0 || disc > 0) && (
                       <div className="row"><span className="grow t-sm muted">Subtotal</span><span className="mono t-sm">${formatMoney(base)}</span></div>
                     )}

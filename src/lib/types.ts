@@ -83,7 +83,9 @@ export interface OrderRow {
   stage: { name: string; color: string } | null;
   area: { name: string; color: string } | null;
   contact: { name: string } | null;
-  items: { name: string }[];
+  items: { name: string; subtotal?: number }[];
+  /** El total guardado no sale de sus renglones (descuento e IVA incluidos): hay que recalcular. */
+  total_mismatch?: boolean;
   pending_proof?: boolean; // a customer transfer receipt is awaiting review
 }
 

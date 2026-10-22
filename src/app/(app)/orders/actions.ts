@@ -13,6 +13,7 @@ import { runPaymentAutomations } from "@/lib/flows";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 import { payLinkExpiry, payLinkExpired } from "@/lib/payments";
+import { computeOrderTotal } from "@/lib/orderTotal";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -483,9 +484,25 @@ export async function bulkMoveOrderStage(orderIds: string[], stageId: string): P
 /** Total de un pedido a partir de sus piezas: suma de renglones, menos el descuento en $, más el IVA
  *  sobre lo que queda. Es LA fórmula —- la misma de `createOrder`—, para que editar artículos o
  *  cambiar la factura después nunca dé un número distinto al de la creación. */
-function computeOrderTotal(base: number, discount: number, taxRate: number): number {
-  const taxed = base - Math.min(base, Math.max(0, discount));
-  return taxRate > 0 ? Math.round(taxed * (1 + taxRate / 100) * 100) / 100 : Math.round(taxed * 100) / 100;
+/** Recalcular el total desde los renglones, a mano. Para el pedido cuyo total quedó desfasado de
+ *  sus productos (un renglón borrado sin que el total se actualizara): el reporte lo marca y el
+ *  cajón ofrece este botón. Deja rastro en la actividad con el antes y el después. */
+export async function recalcOrderTotal(orderId: string): Promise<{ ok: boolean; from: number; to: number }> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: o } = await supabase.from("orders").select("business_id, total").eq("id", orderId).maybeSingle();
+  if (!o) return { ok: false, from: 0, to: 0 };
+  const from = Number(o.total) || 0;
+  const to = await recomputeOrderTotal(supabase, orderId);
+  if (Math.abs(to - from) >= 0.01) {
+    await supabase.from("events").insert({
+      business_id: o.business_id, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+      kind: "refresh", text: `Total recalculado: $${from.toFixed(2)} → $${to.toFixed(2)}`,
+    });
+    await recomputePayStatus(supabase, orderId, to);
+  }
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/reports");
+  return { ok: true, from, to };
 }
 
 /** order.total := sum of its line-item subtotals − discount (+ the order's IVA when it requires an

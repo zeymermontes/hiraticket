@@ -99,6 +99,10 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       [null, null],
       ...(personal ? [] : [
         [es ? "Ventas" : "Sales", data.totalSales],
+        [es ? "· Productos (suma de renglones, sin IVA ni descuentos)" : "· Products (line items, before tax and discounts)", data.itemsTotal],
+        [es ? "· IVA incluido en ventas" : "· Tax included in sales", data.taxTotal],
+        [es ? "· Descuentos (restan)" : "· Discounts (subtracted)", -data.discountTotal],
+        [es ? "· Ajustes (totales que no salen de sus productos)" : "· Adjustments (totals not matching their items)", data.mismatchTotal],
         [es ? "Ganancia estimada" : "Estimated profit", data.totalProfit],
         [es ? "Ticket promedio" : "Avg ticket", data.avgTicket],
         [es ? "Descuentos otorgados" : "Discounts granted", data.discountCount],
@@ -156,7 +160,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         es ? "Prioridad" : "Priority",
         ...(personal ? [] : [es ? "Pago" : "Payment"]),
         itemLabel,
-        ...(personal ? [] : [es ? "Descuento" : "Discount", es ? "Motivo desc." : "Disc. reason", "Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance"]),
+        ...(personal ? [] : [es ? "Productos" : "Items", es ? "Descuento" : "Discount", es ? "Motivo desc." : "Disc. reason", "IVA %", "IVA", es ? "Ajuste" : "Adjustment", "Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance"]),
         es ? "Creado" : "Created",
         es ? "Fecha límite" : "Deadline",
         es ? "Actualizado" : "Updated",
@@ -166,7 +170,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         prioLabel(o.priority),
         ...(personal ? [] : [payLabel(o.pay_status)]),
         o.items.map((it) => `${it.qty}× ${it.name}`).join(" · "),
-        ...(personal ? [] : [o.discount || "", o.discount_note ?? "", o.total, o.paid, o.total - o.paid]),
+        ...(personal ? [] : [o.items_total, o.discount || "", o.discount_note ?? "", o.tax_rate || "", o.tax || "", o.diff || "", o.total, o.paid, o.total - o.paid]),
         fmtTs(o.created_at),
         o.due_at ? fmtTs(o.due_at) : "",
         fmtTs(o.updated_at),
@@ -398,6 +402,31 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {!personal && data.refundedTotal > 0 && (
                   <Stat icon="ban" tone="red" valueColor="var(--red)" label={lang === "es" ? "Reembolsado" : "Refunded"} value={money(Math.round(data.refundedTotal))} />
                 )}
+              </div>
+            </section>
+          )}
+          {!personal && (
+            <section className="ws-block">
+              <div className="ws-block-head">
+                <Icon name="orders" size={16} /><h4>{lang === "es" ? "De qué se compone \"Ventas\"" : "What \"Sales\" is made of"}</h4>
+              </div>
+              <div className="ws-block-body col gap-1">
+                {/* La pregunta que siempre vuelve: "¿por qué ventas no cuadra con los productos?".
+                    Porque el total lleva IVA y descuentos, que no son renglones. Aquí se ve de frente. */}
+                <div className="row"><span className="grow t-sm">{lang === "es" ? "Productos vendidos (suma de renglones)" : "Products sold (line items)"}</span><span className="mono t-sm">{money(data.itemsTotal)}</span></div>
+                <div className="row"><span className="grow t-sm" style={{ color: "var(--green)" }}>{lang === "es" ? "Descuentos" : "Discounts"}</span><span className="mono t-sm" style={{ color: "var(--green)" }}>−{money(data.discountTotal)}</span></div>
+                <div className="row"><span className="grow t-sm">{lang === "es" ? "IVA incluido (pedidos facturados)" : "Tax included (invoiced orders)"}</span><span className="mono t-sm">+{money(data.taxTotal)}</span></div>
+                {data.mismatchCount > 0 && (
+                  <div className="row" title={data.mismatches.slice(0, 8).map((m) => `${m.code}: ${money(m.total)} vs ${money(m.expected)}`).join("\n")}>
+                    <span className="grow t-sm" style={{ color: "var(--amber)" }}>
+                      <Icon name="flag" size={12} /> {lang === "es"
+                        ? `${data.mismatchCount} pedido(s) con total que no sale de sus productos (${data.mismatches.slice(0, 3).map((m) => m.code).join(", ")}${data.mismatchCount > 3 ? "…" : ""})`
+                        : `${data.mismatchCount} order(s) whose total doesn't match their items (${data.mismatches.slice(0, 3).map((m) => m.code).join(", ")}${data.mismatchCount > 3 ? "…" : ""})`}
+                    </span>
+                    <span className="mono t-sm" style={{ color: "var(--amber)" }}>{data.mismatchTotal >= 0 ? "+" : ""}{money(data.mismatchTotal)}</span>
+                  </div>
+                )}
+                <div className="row" style={{ borderTop: "1px solid var(--border)", paddingTop: 6, marginTop: 2 }}><span className="grow" style={{ fontWeight: 700 }}>{lang === "es" ? "Ventas" : "Sales"}</span><span className="mono" style={{ fontWeight: 800 }}>{money(data.totalSales)}</span></div>
               </div>
             </section>
           )}

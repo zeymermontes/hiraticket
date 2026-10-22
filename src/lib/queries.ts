@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Business, OrderRow } from "@/lib/types";
+import { orderBreakdown } from "@/lib/orderTotal";
 
 /** The caller's business (tenant), or null if they genuinely don't belong to one yet.
  *
@@ -157,7 +158,7 @@ const CONTACT_MATCH_CAP = 500;
 
 const ORDER_COLS = (opt: string) =>
   `id, code, priority, pay_status, total, updated_at, created_at, stage_id, area_id, ${opt}assignee_id, ` +
-  `stage:stages!stage_id(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name)`;
+  `stage:stages!stage_id(name,color), area:areas(name,color), contact:contacts(name), items:order_items(name,subtotal)`;
 
 const SORT_COL: Record<OrderSortKey, string> = {
   code: "code_num",       // 0061 — numeric part, so HIR-999 sorts before HIR-1144
@@ -245,7 +246,10 @@ export async function getOrdersPage(businessId: string, f: OrderQuery = {}): Pro
     b.order(col, { ascending, nullsFirst: false }).range(page * per, page * per + per - 1);
 
   // code_num (0061) / due_at (0029) / deleted_at (0039) may not be applied yet — cascade.
-  let { data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, "), true), SORT_COL[sortKey]);
+  // discount / requires_invoice / tax_rate (0058, 0050): para marcar en la lista el pedido cuyo
+  // total no sale de sus productos. Sin esas columnas se cae al set de siempre.
+  let { data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, discount, requires_invoice, tax_rate, "), true), SORT_COL[sortKey]);
+  if (error) ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, "), true), SORT_COL[sortKey]));
   // Without 0061 there's no code_num: fall back to the lexical code (HIR-999 lands after HIR-1144,
   // the one ordering difference; every other sort key is unaffected).
   if (error && sortKey === "code") ({ data, error, count } = await ordered(build(ORDER_COLS("due_at, deleted_at, cancelled_at, "), true), "code"));
@@ -264,7 +268,8 @@ export async function getOrdersPage(businessId: string, f: OrderQuery = {}): Pro
   }
 
   return {
-    rows: rows.map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string) })) as unknown as OrderRow[],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rows: rows.map((o) => ({ ...o, due_at: (o.due_at as string | null) ?? null, pending_proof: pendingSet.has(o.id as string), total_mismatch: o.discount !== undefined ? orderBreakdown(o as any).mismatch : false })) as unknown as OrderRow[],
     total: count ?? rows.length,
     capped,
   };

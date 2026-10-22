@@ -4,6 +4,7 @@ import { doneStageIds } from "@/lib/doneStage";
 import { getAgents } from "@/lib/chat";
 import { getStages, getAreas } from "@/lib/business";
 import type { PriceTier } from "@/lib/types";
+import { orderBreakdown } from "@/lib/orderTotal";
 
 export interface Automation {
   id: string;
@@ -162,6 +163,15 @@ export interface ReportData {
   // Discounts granted in the range (count + $), attributed to the order's assignee.
   discountCount: number;
   discountTotal: number;
+  // Desglose de "ventas" (la pregunta recurrente "¿por qué no cuadra con los productos?"):
+  //   ventas = productos − descuentos + IVA + ajustes. `itemsTotal` es la suma de renglones,
+  //   `taxTotal` el IVA incluido en los totales facturados, y `mismatch*` los pedidos cuyo total
+  //   guardado no sale de esa fórmula (un renglón borrado sin recalcular, etc.).
+  itemsTotal: number;
+  taxTotal: number;
+  mismatchCount: number;
+  mismatchTotal: number;
+  mismatches: { code: string; total: number; expected: number; diff: number }[];
   // Cancelados (0065): fuera de ventas/utilidad, contados aparte para que no "desaparezcan".
   cancelledCount: number;
   cancelledTotal: number;   // suma de sus totales — lo que se dejó de vender
@@ -185,6 +195,7 @@ export interface ReportData {
     priority: string; pay_status: string;
     items: { name: string; qty: number; unit_price: number; subtotal: number }[];
     total: number; paid: number; discount: number; discount_note: string | null;
+    items_total: number; tax: number; tax_rate: number; diff: number;
     created_at: string | null; updated_at: string | null; due_at: string | null;
   }[];
 }
@@ -200,7 +211,8 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       .eq("business_id", businessId).is("deleted_at", null).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false });
     // discount (0058) / due_at (0029) / cancelled_at (0065) may not exist yet — cascade.
-    let { data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, ");
+    let { data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, requires_invoice, tax_rate, ");
+    if (error) ({ data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, "));
     if (error) ({ data, error } = await get("due_at, discount, discount_pct, discount_note, "));
     if (error) ({ data, error } = await get("due_at, "));
     if (error) ({ data } = await get(""));
@@ -363,6 +375,15 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   }).filter((a) => a.count > 0).sort((a, b) => b.amount - a.amount);
 
   const total = rows.reduce((n, o) => n + Number(o.total ?? 0), 0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const breakdowns = new Map(rows.map((o) => [o as any, orderBreakdown(o as any)]));
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const itemsTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.items, 0));
+  const taxTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.tax, 0));
+  const mismatches = rows.filter((o) => breakdowns.get(o)!.mismatch)
+    .map((o) => ({ code: (o.code as string) ?? "", total: Number(o.total ?? 0), expected: breakdowns.get(o)!.expected, diff: breakdowns.get(o)!.diff }))
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  const mismatchTotal = r2(mismatches.reduce((s, m) => s + m.diff, 0));
   const doneIds = doneStageIds(stages, doneFromStageId);
   const stageName = new Map(stages.map((s) => [s.id, s.name]));
   const areaName = new Map(areas.map((a) => [a.id, a.name]));
@@ -386,6 +407,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
     discountCount: discounted.length,
     discountTotal,
+    itemsTotal, taxTotal, mismatchCount: mismatches.length, mismatchTotal, mismatches,
     cancelledCount,
     cancelledTotal,
     refundedTotal,
@@ -418,6 +440,10 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       paid: ((o.payments ?? []) as any[]).reduce((s, p) => s + Number(p.amount ?? 0), 0),
       discount: Number(o.discount ?? 0),
       discount_note: (o.discount_note as string) ?? null,
+      items_total: breakdowns.get(o)?.items ?? 0,
+      tax: breakdowns.get(o)?.tax ?? 0,
+      tax_rate: breakdowns.get(o)?.rate ?? 0,
+      diff: breakdowns.get(o)?.diff ?? 0,
       created_at: (o.created_at as string) ?? null,
       updated_at: (o.updated_at as string) ?? null,
       due_at: (o.due_at as string) ?? null,

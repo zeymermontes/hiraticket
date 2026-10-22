@@ -330,6 +330,7 @@ export function OrdersTable({
                   <span className="row gap-1" style={{ alignItems: "center", flex: "none" }}>
                     <PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} />
                     <span className="mono" style={{ fontWeight: 800 }}>${formatMoney(o.total)}</span>
+                    {o.total_mismatch && <span title={lang === "es" ? "El total no coincide con sus productos: ábrelo y recalcula" : "Total doesn't match its items: open it and recalculate"} style={{ color: "var(--amber)", display: "inline-flex" }}><Icon name="flag" size={12} /></span>}
                   </span>
                 )}
               </CardTop>
@@ -393,7 +394,7 @@ export function OrdersTable({
                 <td>{ag ? <div className="cust"><Avatar name={ag.name} initials={deriveInitials(ag.name)} color={ag.color} src={ag.avatar_url ?? undefined} size={22} /><span className="t-sm truncate" style={{ maxWidth: 96 }}>{ag.name}</span></div> : <span className="muted t-sm">—</span>}</td>
                 <td><PriorityFlag p={o.priority} lang={lang} /></td>
                 <td><span className="t-sm truncate" style={{ display: "inline-block", maxWidth: 170 }}>{item0 ?? "—"}{o.items && o.items.length > 1 ? <span className="muted"> +{o.items.length - 1}</span> : null}</span></td>
-                {!personal && <td><div className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span>{o.pending_proof && <Pill color="violet" dot title={lang === "es" ? "Comprobante por revisar" : "Receipt to review"}><Icon name="clock" size={10} /></Pill>}</div></td>}
+                {!personal && <td><div className="row gap-1" style={{ alignItems: "center" }}><PayDot status={o.pay_status} title={payStatusLabel(o.pay_status, lang)} /><span className="mono" style={{ fontWeight: 700 }}>${formatMoney(o.total)}</span>{o.total_mismatch && <Pill color="amber" title={lang === "es" ? "El total no coincide con sus productos: ábrelo y recalcula" : "Total doesn't match its items: open it and recalculate"}><Icon name="flag" size={10} /></Pill>}{o.pending_proof && <Pill color="violet" dot title={lang === "es" ? "Comprobante por revisar" : "Receipt to review"}><Icon name="clock" size={10} /></Pill>}</div></td>}
                 <td className="t-sm">{o.due_at ? <span className="row gap-1" style={{ color: overdue ? "var(--red)" : "var(--text-muted)", fontWeight: overdue ? 700 : 400 }}>{overdue && <Icon name="clock" size={12} />}{relDate(o.due_at)}</span> : <span className="muted">—</span>}</td>
                 <td className="muted t-sm">{o.created_at ? relDate(o.created_at) : "—"}</td>
                 {trashView ? (
