@@ -172,7 +172,17 @@ export function OrdersTable({
   async function exportCsv() {
     // The export covers the whole filtered set, not the visible page, so it re-queries with a
     // wide window. Rare and user-initiated, unlike the per-page reads.
-    const { rows: all, total: matched } = await loadOrdersPage({ ...filters, page: 0, per: EXPORT_CAP });
+    // Por páginas de 1 000: PostgREST corta cada respuesta ahí aunque se pidan más, así que una
+    // sola llamada de 5 000 devolvía 1 000 en silencio.
+    const PAGE = 1000;
+    let all: typeof rows = [];
+    let matched = 0;
+    for (let page = 0; page * PAGE < EXPORT_CAP; page++) {
+      const r = await loadOrdersPage({ ...filters, page, per: PAGE });
+      matched = r.total;
+      all = all.concat(r.rows);
+      if (r.rows.length < PAGE) break;
+    }
     if (matched > all.length) {
       alert(lang === "es"
         ? `Se exportan los primeros ${all.length} de ${matched}. Afina los filtros para exportar el resto.`

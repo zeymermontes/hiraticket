@@ -203,19 +203,41 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const supabase = await createClient();
   const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
   const toISO = new Date(`${range.to}T23:59:59.999`).toISOString();
+  /**
+   * Trae TODAS las filas de una consulta, por páginas de 1 000.
+   *
+   * PostgREST corta cada respuesta en 1 000 filas sin avisar. El reporte pedía los pedidos del
+   * rango de una sola vez, así que un negocio con más de mil pedidos en el periodo veía solo los
+   * primeros mil: "Ventas" salía a la mitad, los tops a medias, y nadie se enteraba —- el síntoma
+   * fue un "Por área: 999" que no cuadraba con la base. Cada página repite la misma consulta con
+   * su `range`; se para en la primera que llegue incompleta.
+   */
+  const PAGE = 1000;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fetchAll = async (build: () => any): Promise<{ data: Record<string, unknown>[]; error: unknown }> => {
+    const out: Record<string, unknown>[] = [];
+    for (let page = 0; page < 50; page++) {
+      const { data, error } = await build().range(page * PAGE, page * PAGE + PAGE - 1);
+      if (error) return { data: out, error };
+      out.push(...((data ?? []) as Record<string, unknown>[]));
+      if (!data || data.length < PAGE) break;
+    }
+    return { data: out, error: null };
+  };
+
   const fetchOrders = async () => {
     const cols = (opt: string) =>
       `code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${opt}` +
       `contact:contacts(name,phone), items:order_items(name,qty,unit_price,subtotal), payments(amount)`;
-    const get = (opt: string) => supabase.from("orders").select(cols(opt))
+    const get = (opt: string) => () => supabase.from("orders").select(cols(opt))
       .eq("business_id", businessId).is("deleted_at", null).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false });
     // discount (0058) / due_at (0029) / cancelled_at (0065) may not exist yet — cascade.
-    let { data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, requires_invoice, tax_rate, ");
-    if (error) ({ data, error } = await get("due_at, cancelled_at, discount, discount_pct, discount_note, "));
-    if (error) ({ data, error } = await get("due_at, discount, discount_pct, discount_note, "));
-    if (error) ({ data, error } = await get("due_at, "));
-    if (error) ({ data } = await get(""));
+    let { data, error } = await fetchAll(get("due_at, cancelled_at, discount, discount_pct, discount_note, requires_invoice, tax_rate, "));
+    if (error) ({ data, error } = await fetchAll(get("due_at, cancelled_at, discount, discount_pct, discount_note, ")));
+    if (error) ({ data, error } = await fetchAll(get("due_at, discount, discount_pct, discount_note, ")));
+    if (error) ({ data, error } = await fetchAll(get("due_at, ")));
+    if (error) ({ data } = await fetchAll(get("")));
     return data ?? [];
   };
   // Cobrado por su propia fecha de pago (no la del pedido) — un pedido puede pagarse días o
@@ -223,20 +245,21 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   // por `orders.deleted_at`; payments.order_id es la única FK entre las dos tablas, así que no
   // hay ambigüedad de embedding aquí (a diferencia de orders→stages tras la 0072).
   const fetchPayments = async () => {
-    const { data, error } = await supabase.from("payments")
+    const { data, error } = await fetchAll(() => supabase.from("payments")
       .select("amount, created_at, order_id, orders!inner(created_at, deleted_at)")
       .eq("business_id", businessId).is("orders.deleted_at", null)
-      .gte("created_at", fromISO).lte("created_at", toISO);
+      .gte("created_at", fromISO).lte("created_at", toISO)
+      .order("created_at", { ascending: false }));
     return error ? [] : (data ?? []);
   };
   // Mermas (0074): puede no existir la tabla aún si la migración no se ha corrido. order_waste
   // solo tiene una FK a orders (order_id), así que el embed no es ambiguo (a diferencia de
   // orders→stages tras la 0072).
   const fetchWaste = async () => {
-    const { data, error } = await supabase.from("order_waste")
+    const { data, error } = await fetchAll(() => supabase.from("order_waste")
       .select("name, qty, cost, reason, created_at, order:orders(code)")
       .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }));
     return error ? [] : (data ?? []);
   };
   const [orders, { count: resolved }, stages, areas, agents, catalog, payRows, wasteRows] = await Promise.all([
