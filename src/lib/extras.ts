@@ -168,6 +168,9 @@ export interface ReportData {
   //   `taxTotal` el IVA incluido en los totales facturados, y `mismatch*` los pedidos cuyo total
   //   guardado no sale de esa fórmula (un renglón borrado sin recalcular, etc.).
   itemsTotal: number;
+  /** Descuento efectivamente aplicado (nunca más que los renglones del pedido): es el que cierra
+   *  la suma. `discountTotal` es lo capturado, para "descuentos por agente". */
+  discountApplied: number;
   taxTotal: number;
   mismatchCount: number;
   mismatchTotal: number;
@@ -403,6 +406,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const itemsTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.items, 0));
   const taxTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.tax, 0));
+  const discountApplied = r2([...breakdowns.values()].reduce((s, b) => s + b.discount, 0));
   const mismatches = rows.filter((o) => breakdowns.get(o)!.mismatch)
     .map((o) => ({ code: (o.code as string) ?? "", total: Number(o.total ?? 0), expected: breakdowns.get(o)!.expected, diff: breakdowns.get(o)!.diff }))
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
@@ -430,7 +434,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
     discountCount: discounted.length,
     discountTotal,
-    itemsTotal, taxTotal, mismatchCount: mismatches.length, mismatchTotal, mismatches,
+    itemsTotal, discountApplied, taxTotal, mismatchCount: mismatches.length, mismatchTotal, mismatches,
     cancelledCount,
     cancelledTotal,
     refundedTotal,
