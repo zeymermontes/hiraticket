@@ -4,14 +4,17 @@
  *    total =  suma de renglones − descuento                 si no
  *  El IVA y el descuento no son renglones: por eso "ventas" y "productos" nunca coinciden. */
 export function computeOrderTotal(base: number, discount: number, taxRate: number): number {
-  const taxed = base - Math.min(base, Math.max(0, discount));
+  // El descuento no puede pasar de la suma de renglones, pero esa suma puede ser NEGATIVA (un
+  // reembolso capturado como renglón con precio negativo): entonces el tope es cero, no la suma,
+  // o el total de un reembolso se "corregía" a $0 y el reporte lo marcaba como desajustado.
+  const taxed = base - Math.min(Math.max(base, 0), Math.max(0, discount));
   return taxRate > 0 ? Math.round(taxed * (1 + taxRate / 100) * 100) / 100 : Math.round(taxed * 100) / 100;
 }
 
 /** Desglose de un pedido a partir de sus renglones y lo guardado en la fila. */
 export function orderBreakdown(o: { total: number; discount?: number | null; requires_invoice?: boolean | null; tax_rate?: number | null; items?: { subtotal?: number | null }[] | null }) {
   const items = (o.items ?? []).reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-  const discount = Math.min(items, Math.max(0, Number(o.discount) || 0));
+  const discount = Math.min(Math.max(items, 0), Math.max(0, Number(o.discount) || 0));
   const rate = o.requires_invoice ? Number(o.tax_rate) || 0 : 0;
   const tax = Math.round((items - discount) * (rate / 100) * 100) / 100;
   const expected = computeOrderTotal(items, discount, rate);

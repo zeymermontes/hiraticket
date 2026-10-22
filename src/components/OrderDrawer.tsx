@@ -447,7 +447,7 @@ export function OrderDrawer({
                 const draft = editItems ? (Number(newItem.qty) || 0) * (Number(newItem.price) || 0) : 0;
                 const base = detail.items.reduce((s, it) => s + it.subtotal, 0) + draft;
                 const rate = detail.requires_invoice ? Number(detail.tax_rate ?? 0) : 0;
-                const disc = Math.min(base, Number(detail.discount ?? 0));
+                const disc = Math.min(Math.max(base, 0), Number(detail.discount ?? 0));
                 const tax = editItems || rate === 0 ? Math.round((base - disc) * (rate / 100) * 100) / 100 : Math.max(0, detail.total - (base - disc));
                 const liveTotal = editItems ? Math.round((base - disc + tax) * 100) / 100 : detail.total;
                 // El total guardado debería salir siempre de los renglones. Si no (un renglón borrado
