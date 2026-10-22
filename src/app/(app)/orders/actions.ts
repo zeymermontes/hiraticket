@@ -279,6 +279,31 @@ export async function addPayment(orderId: string, amount: number, method?: strin
 }
 
 /** Delete a payment and recompute the order's pay status. */
+/** Reembolso parcial de un pedido VIVO: devolver dinero sin cancelar ni tocar la venta.
+ *  Es un pago negativo con método "refund", el mismo que deja cancelOrder, así que Reportes lo
+ *  suma en "Reembolsado" y lo resta de lo cobrado. La venta queda como era; "Pagado" baja. Antes
+ *  no había vía y se capturaba un renglón con precio negativo, que ensuciaba el top de productos. */
+export async function refundOrder(orderId: string, amount: number, note?: string | null): Promise<{ ok: boolean; error?: string }> {
+  const amt = Math.round((Number(amount) || 0) * 100) / 100;
+  if (amt <= 0) return { ok: false, error: "amount" };
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: order } = await supabase.from("orders").select("business_id, total, code").eq("id", orderId).maybeSingle();
+  if (!order) return { ok: false, error: "not-found" };
+  const { error } = await supabase.from("payments").insert({
+    business_id: order.business_id, order_id: orderId, amount: -amt, method: "refund",
+    note: (note ?? "").trim() || "Reembolso", created_by: user?.id ?? null,
+  });
+  if (error) return { ok: false, error: error.message };
+  await recomputePayStatus(supabase, orderId, Number(order.total) || 0);
+  await supabase.from("events").insert({
+    business_id: order.business_id, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+    kind: "amount", text: `Reembolso de $${amt.toFixed(2)}${(note ?? "").trim() ? ` · ${(note ?? "").trim()}` : ""}`,
+  });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/reports");
+  return { ok: true };
+}
+
 export async function deletePayment(paymentId: string): Promise<void> {
   const supabase = await createClient();
   // El cobro al que pertenecía se lee ANTES de borrar: después ya no hay a quién preguntárselo, y

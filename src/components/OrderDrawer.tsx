@@ -20,7 +20,7 @@ import { Thread } from "@/components/chat/ChatScreen";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import type { ConvDetail } from "@/lib/chat";
 import { moveOrderStage, moveOrderArea } from "@/app/(app)/actions";
-import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste, previewOrderInvoice, setOrderInvoice, recalcOrderTotal } from "@/app/(app)/orders/actions";
+import { addOrderNote, chargeOrder, getPayLink, markPaid, createCharge, sendCharge, voidCharge, getChargeLink, assignOrder, setOrderPriority, addOrderTag, setItemStage, setAllItemStages, addPayment, deletePayment, reviewPaymentProof, loadOrderDetail, setOrderDue, updateOrderItem, addOrderItem, deleteOrderItem, setOrderDeleted, cancelOrder, uncancelOrder, setOrderDoneFrom, addOrderWaste, updateOrderWaste, deleteOrderWaste, previewOrderInvoice, setOrderInvoice, recalcOrderTotal, refundOrder } from "@/app/(app)/orders/actions";
 import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
@@ -85,6 +85,10 @@ export function OrderDrawer({
   const [itemDraft, setItemDraft] = useState<Record<string, string>>({});
   const [newItem, setNewItem] = useState({ name: "", qty: "1", price: "" });
   const [payAmount, setPayAmount] = useState("");
+  // Reembolso parcial (pago negativo "refund"): monto + motivo, en el bloque de Pagos.
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundNote, setRefundNote] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
   const [showCharge, setShowCharge] = useState(false);
   const [copiedCharge, setCopiedCharge] = useState<string | null>(null);
@@ -524,8 +528,10 @@ export function OrderDrawer({
                     const au = p.created_by ? agents.find((a) => a.id === p.created_by) : null;
                     return (
                       <div className="row gap-2" key={p.id} style={{ alignItems: "center", fontSize: 12.5 }}>
-                        <span className="mono" style={{ fontWeight: 700 }}>${formatMoney(p.amount)}</span>
-                        {p.method && <Pill color="slate">{p.method}</Pill>}
+                        <span className="mono" style={{ fontWeight: 700, color: p.amount < 0 ? "var(--red)" : undefined }}>{p.amount < 0 ? "−" : ""}${formatMoney(Math.abs(p.amount))}</span>
+                        {p.method === "refund"
+                          ? <Pill color="red">{lang === "es" ? "Reembolso" : "Refund"}</Pill>
+                          : p.method && <Pill color="slate">{p.method}</Pill>}
                         <span className="t-xs muted truncate grow">{p.note || (au ? au.name : "")} · {new Date(p.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
                         <button className="iconbtn sm" title={lang === "es" ? "Eliminar pago" : "Delete payment"} onClick={() => run(() => deletePayment(p.id))}><Icon name="x" size={13} /></button>
                       </div>
@@ -570,6 +576,31 @@ export function OrderDrawer({
                 <div className="row gap-2" style={{ alignItems: "center" }}>
                   <div className="field field-sm field-filled grow"><span className="t-sm muted">$</span><input type="number" min={0} placeholder={lang === "es" ? "Monto del pago" : "Payment amount"} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} /></div>
                   <button className="btn btn-sm btn-outline" disabled={pending || !(Number(payAmount) > 0)} onClick={() => { run(() => addPayment(detail.id, Number(payAmount))); setPayAmount(""); }}><Icon name="plus" size={14} />{lang === "es" ? "Registrar" : "Add"}</button>
+                </div>
+              )}
+              {/* Devolver dinero sin cancelar el pedido ni tocar la venta. Solo si hay algo pagado:
+                  no se puede devolver lo que no entró. */}
+              {detail.paid > 0 && !refundOpen && (
+                <button className="btn btn-sm btn-ghost" style={{ width: "fit-content", color: "var(--text-muted)" }} onClick={() => { setRefundOpen(true); setRefundAmount(""); setRefundNote(""); }}>
+                  <Icon name="swap" size={14} />{lang === "es" ? "Reembolsar" : "Refund"}
+                </button>
+              )}
+              {refundOpen && (
+                <div className="col gap-2" style={{ padding: 10, borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <div className="t-xs muted">{lang === "es"
+                    ? `Se registra como pago negativo: la venta queda igual y "Pagado" baja. Máximo lo pagado: $${formatMoney(detail.paid)}.`
+                    : `Recorded as a negative payment: the sale stays as is and "Paid" goes down. At most what was paid: $${formatMoney(detail.paid)}.`}</div>
+                  <div className="row gap-2" style={{ alignItems: "center" }}>
+                    <div className="field field-sm field-filled" style={{ width: 140 }}><span className="t-sm muted">$</span><input type="number" min={0} max={detail.paid} autoFocus placeholder={lang === "es" ? "Monto" : "Amount"} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} /></div>
+                    <div className="field field-sm field-filled grow"><input placeholder={lang === "es" ? "Motivo (opcional)" : "Reason (optional)"} value={refundNote} onChange={(e) => setRefundNote(e.target.value)} /></div>
+                  </div>
+                  <div className="row gap-2" style={{ justifyContent: "flex-end" }}>
+                    <button className="btn btn-sm btn-outline" onClick={() => setRefundOpen(false)}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+                    <button className="btn btn-sm btn-primary" disabled={pending || !(Number(refundAmount) > 0) || Number(refundAmount) > detail.paid + 0.001}
+                      onClick={() => { const a = Number(refundAmount); const n = refundNote; setRefundOpen(false); run(async () => { await refundOrder(detail.id, a, n); }); }}>
+                      <Icon name="swap" size={14} />{lang === "es" ? "Reembolsar" : "Refund"}
+                    </button>
+                  </div>
                 </div>
               )}
 

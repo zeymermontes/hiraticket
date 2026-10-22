@@ -168,6 +168,9 @@ export interface ReportData {
   //   `taxTotal` el IVA incluido en los totales facturados, y `mismatch*` los pedidos cuyo total
   //   guardado no sale de esa fórmula (un renglón borrado sin recalcular, etc.).
   itemsTotal: number;
+  /** Renglones con precio negativo (reembolsos capturados a mano), en negativo. Van fuera de
+   *  "productos vendidos" y se muestran aparte para que la suma siga cerrando. */
+  itemRefunds: number;
   /** Descuento efectivamente aplicado (nunca más que los renglones del pedido): es el que cierra
    *  la suma. `discountTotal` es lo capturado, para "descuentos por agente". */
   discountApplied: number;
@@ -378,6 +381,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     for (const it of ((o.items ?? []) as any[])) {
       const key = norm((it.name as string) ?? "");
       if (!key) continue;
+      // Un renglón con precio negativo es un reembolso capturado a mano (antes no había botón):
+      // no es un producto vendido. Se cuenta aparte en `itemRefunds`.
+      if (Number(it.subtotal ?? 0) < 0) continue;
       const cur = prodAgg.get(key) ?? { name: (it.name as string).trim(), qty: 0, revenue: 0, profit: 0 };
       cur.qty += Number(it.qty ?? 0);
       cur.revenue += Number(it.subtotal ?? 0);
@@ -404,7 +410,9 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const breakdowns = new Map(rows.map((o) => [o as any, orderBreakdown(o as any)]));
   const r2 = (n: number) => Math.round(n * 100) / 100;
-  const itemsTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.items, 0));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const itemRefunds = r2(rows.reduce((s, o) => s + ((o.items ?? []) as any[]).reduce((t, it) => t + Math.min(0, Number(it.subtotal ?? 0)), 0), 0));
+  const itemsTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.items, 0) - itemRefunds);
   const taxTotal = r2([...breakdowns.values()].reduce((s, b) => s + b.tax, 0));
   const discountApplied = r2([...breakdowns.values()].reduce((s, b) => s + b.discount, 0));
   const mismatches = rows.filter((o) => breakdowns.get(o)!.mismatch)
@@ -434,7 +442,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     byAgent: agents.map((a) => ({ id: a.id, name: a.name, color: a.color, count: rows.filter((o) => o.assignee_id === a.id).length })),
     discountCount: discounted.length,
     discountTotal,
-    itemsTotal, discountApplied, taxTotal, mismatchCount: mismatches.length, mismatchTotal, mismatches,
+    itemsTotal, itemRefunds, discountApplied, taxTotal, mismatchCount: mismatches.length, mismatchTotal, mismatches,
     cancelledCount,
     cancelledTotal,
     refundedTotal,

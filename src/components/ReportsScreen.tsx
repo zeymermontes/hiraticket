@@ -100,6 +100,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
       ...(personal ? [] : [
         [es ? "Ventas" : "Sales", data.totalSales],
         [es ? "· Productos (suma de renglones, sin IVA ni descuentos)" : "· Products (line items, before tax and discounts)", data.itemsTotal],
+        ...(data.itemRefunds < 0 ? [[es ? "· Reembolsos capturados como renglón" : "· Refunds entered as line items", data.itemRefunds]] : []),
         [es ? "· IVA incluido en ventas" : "· Tax included in sales", data.taxTotal],
         [es ? "· Descuentos (restan)" : "· Discounts (subtracted)", -data.discountApplied],
         [es ? "· Ajustes (totales que no salen de sus productos)" : "· Adjustments (totals not matching their items)", data.mismatchTotal],
@@ -414,6 +415,9 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
                 {/* La pregunta que siempre vuelve: "¿por qué ventas no cuadra con los productos?".
                     Porque el total lleva IVA y descuentos, que no son renglones. Aquí se ve de frente. */}
                 <div className="row"><span className="grow t-sm">{lang === "es" ? "Productos vendidos (suma de renglones)" : "Products sold (line items)"}</span><span className="mono t-sm">{money(data.itemsTotal)}</span></div>
+                {data.itemRefunds < 0 && (
+                  <div className="row"><span className="grow t-sm" style={{ color: "var(--red)" }}>{lang === "es" ? "Reembolsos capturados como renglón" : "Refunds entered as line items"}</span><span className="mono t-sm" style={{ color: "var(--red)" }}>−{money(-data.itemRefunds)}</span></div>
+                )}
                 <div className="row"><span className="grow t-sm" style={{ color: "var(--green)" }}>{lang === "es" ? "Descuentos" : "Discounts"}</span><span className="mono t-sm" style={{ color: "var(--green)" }}>−{money(data.discountApplied)}</span></div>
                 <div className="row"><span className="grow t-sm">{lang === "es" ? "IVA incluido (pedidos facturados)" : "Tax included (invoiced orders)"}</span><span className="mono t-sm">+{money(data.taxTotal)}</span></div>
                 {data.mismatchCount > 0 && (
