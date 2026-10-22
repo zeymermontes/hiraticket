@@ -175,7 +175,7 @@ export function OrdersTable({
     // Por páginas de 1 000: PostgREST corta cada respuesta ahí aunque se pidan más, así que una
     // sola llamada de 5 000 devolvía 1 000 en silencio.
     const PAGE = 1000;
-    let all: typeof rows = [];
+    let all: OrderRow[] = [];
     let matched = 0;
     for (let page = 0; page * PAGE < EXPORT_CAP; page++) {
       const r = await loadOrdersPage({ ...filters, page, per: PAGE });
