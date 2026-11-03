@@ -27,6 +27,7 @@ export default async function FlowsPage() {
       stages={stages}
       agents={agents}
       confirmPaymentStageId={resolveConfirmPaymentStageId(stages, business.confirm_payment_stage_id ?? null)}
+      timezone={business.timezone}
     />
   );
 }

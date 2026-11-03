@@ -8,6 +8,7 @@ import type { Automation } from "@/lib/extras";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
 import { toggleAutomation, deleteAutomation, createAutomation, updateAutomation } from "@/app/(app)/features-actions";
+import { DEFAULT_TZ, tzLabel, tzOffset } from "@/lib/timezones";
 
 const TRIGGERS: Record<string, { es: string; en: string }> = {
   order_stage: { es: "Un pedido cambia de etapa", en: "An order changes stage" },
@@ -136,7 +137,7 @@ function FlowCard({ w, areas, stages, agents, onEdit, editing }: { w: Automation
 }
 
 export function FlowsScreen({
-  businessId, automations, cannedTitles, areas, stages, agents, confirmPaymentStageId = null,
+  businessId, automations, cannedTitles, areas, stages, agents, confirmPaymentStageId = null, timezone,
 }: {
   businessId: string;
   automations: Automation[];
@@ -147,10 +148,22 @@ export function FlowsScreen({
   /** La etapa de "confirmar pago" del negocio (0075), ya resuelta (elegida, o la última). Un flujo
    *  cuyo trigger apunte exactamente ahí puede contestar de antemano si se marca pagado. */
   confirmPaymentStageId?: string | null;
+  /** Zona horaria del negocio (Negocio → Zona horaria): las horas y fechas de estos flujos se leen ahí. */
+  timezone?: string;
 }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Las horas de estos flujos se evalúan en la zona del negocio, que se elige en Negocio. Se dice
+  // aquí porque es donde uno capturó "09:00" y se pregunta "¿09:00 de dónde?".
+  const tz = timezone || DEFAULT_TZ;
+  const TzHint = () => (
+    <span className="t-xs muted">
+      {lang === "es" ? "Horas en la zona del negocio: " : "Times in the business timezone: "}
+      <b>{tzLabel(tz, lang)}</b> ({tzOffset(tz)}).{" "}
+      <a href="/business" style={{ color: "var(--brand-700)", textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); router.push("/business"); }}>{lang === "es" ? "Cambiar en Negocio" : "Change in Business"}</a>
+    </span>
+  );
   const [q, setQ] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -356,6 +369,7 @@ export function FlowsScreen({
                   })}
                 </div>
                 <span className="t-xs muted">{lang === "es" ? "Fuera del horario de cada día (o en días cerrados) se responde con la plantilla." : "Outside each day's hours (or on closed days) the template is sent."}</span>
+                <TzHint />
               </>
             )}
             {trigger === "message_date" && (
@@ -365,6 +379,7 @@ export function FlowsScreen({
                   <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
                   <span className="t-sm">{lang === "es" ? "Repetir cada año (asueto permanente)" : "Repeat every year (permanent holiday)"}</span>
                 </label>
+                <TzHint />
               </>
             )}
             {isSchedule(trigger) && (

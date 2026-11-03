@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect, useTransition } from "react";
+import React, { useState, useRef, useEffect, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { menuStyle } from "@/lib/popover";
@@ -18,6 +18,7 @@ import {
 import type { TagCatalogItem } from "@/lib/tags";
 import type { Branch, BankAccount, PayPromo, PayPromoPlacement } from "@/lib/types";
 import { DAY_ORDER, DAY_LABEL, defaultHours, normalizeHours, type DayHours } from "@/lib/hours";
+import { DEFAULT_TZ, MX_ZONES, listTimeZones, tzLabel, tzOffset, tzRegion, tzNow } from "@/lib/timezones";
 
 const rid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "id-" + Math.random().toString(36).slice(2));
 
@@ -63,12 +64,6 @@ interface PromoJob {
   error?: string;
 }
 
-const TIMEZONES = [
-  "America/Mexico_City", "America/Tijuana", "America/Cancun", "America/Monterrey",
-  "America/Bogota", "America/Lima", "America/Santiago", "America/Argentina/Buenos_Aires",
-  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-  "America/Sao_Paulo", "Europe/Madrid", "UTC",
-];
 
 export function BusinessConfig({
   businessId, businessName, stages, areas, agents, tags = [], vertical, objectSingular, customFields, productStages, showTyping, allowGroups, mode, timezone,
@@ -209,7 +204,20 @@ export function BusinessConfig({
   const [mounted, setMounted] = useState(false);
   const [, setTick] = useState(0);
   useEffect(() => { setMounted(true); const id = setInterval(() => setTick((t) => t + 1), 60000); return () => clearInterval(id); }, []);
-  const tzTime = (tz: string) => { try { return new Date().toLocaleTimeString(lang === "es" ? "es-MX" : "en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+  // La lista completa sale del navegador, así que se arma al montar; en el servidor queda la fija.
+  const tzGroups = useMemo(() => {
+    const all = mounted ? listTimeZones() : [DEFAULT_TZ, ...MX_ZONES.map((z) => z.tz).filter((t) => t !== DEFAULT_TZ)];
+    const mx = new Set(MX_ZONES.map((z) => z.tz));
+    const byRegion = new Map<string, string[]>();
+    for (const tz of all) {
+      if (mx.has(tz)) continue;
+      const r = tzRegion(tz, lang);
+      byRegion.set(r, [...(byRegion.get(r) ?? []), tz]);
+    }
+    return { all, regions: [...byRegion.entries()] };
+  }, [mounted, lang]);
+  // "Culiacán · Mazatlán (GMT-7) · 10:32 a.m." — la hora solo tras montar para no desfasar SSR/cliente.
+  const tzOption = (tz: string) => `${tzLabel(tz, lang)} (${tzOffset(tz)})${mounted ? ` · ${tzNow(tz, lang)}` : ""}`;
   const addStage = () => { if (newStage.trim()) { run(() => createStage(businessId, newStage, stages.length)); setNewStage(""); } };
   const addArea = () => { if (newArea.trim()) { run(() => createArea(businessId, newArea, areas.length)); setNewArea(""); } };
 
@@ -577,9 +585,17 @@ export function BusinessConfig({
                 <div style={{ fontWeight: 600, fontSize: 13.5 }}>{lang === "es" ? "Zona horaria" : "Timezone"}</div>
                 <div className="t-xs muted">{lang === "es" ? "Usada por los flujos de horario y asueto para saber qué hora es donde estás." : "Used by schedule & holiday flows to know your local time."}</div>
               </div>
-              <select className="select" style={{ width: 220 }} value={TIMEZONES.includes(timezone) ? timezone : "America/Mexico_City"}
+              <select className="select" style={{ width: 300, maxWidth: "100%" }} value={timezone || DEFAULT_TZ}
                 onChange={(e) => run(() => updateBusinessProfile(businessId, { timezone: e.target.value }))}>
-                {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}{mounted ? ` · ${tzTime(tz)}` : ""}</option>)}
+                {timezone && !tzGroups.all.includes(timezone) && <option value={timezone}>{tzOption(timezone)}</option>}
+                <optgroup label={lang === "es" ? "México" : "Mexico"}>
+                  {MX_ZONES.map((z) => <option key={z.tz} value={z.tz}>{tzOption(z.tz)}</option>)}
+                </optgroup>
+                {tzGroups.regions.map(([region, zones]) => (
+                  <optgroup key={region} label={region}>
+                    {zones.map((tz) => <option key={tz} value={tz}>{tzOption(tz)}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </div>
           </div>
