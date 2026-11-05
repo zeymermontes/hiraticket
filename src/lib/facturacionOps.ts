@@ -7,7 +7,7 @@ import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
 import { planInvoice, productKey, toNetPrice, fromNetPrice, type InvoicePlan, type InvoiceLine } from "@/lib/invoiceLines";
 import {
-  PLUGIN_ID, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct,
+  PLUGIN_ID, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
   type FxCfdi, type FxConcept, type FxProduct, type FxProductInput,
 } from "@/lib/facturacion";
 
@@ -135,6 +135,58 @@ export async function settleLinkInvoice(db: DB, cfg: FxConfig, inv: InvoiceRowRe
   const { changed } = await recordIssuedInvoice(db, cfg, inv, cfdi, { actorId, eventText: "Factura emitida desde el link" });
   if (changed && cfg.autoWhatsapp) await sendInvoiceToChat(db, inv.order_id, inv.id, null);
   return changed;
+}
+
+/* ---------- links ---------- */
+
+export interface LinkRowRef extends InvoiceRowRef { link_code: string }
+
+/** Pone la fila al día con lo que Facturación dice del link: facturado (deja la factura en el
+ *  pedido, igual que el webhook), vencido, cerrado o en la factura global. Devuelve el estatus que
+ *  quedó en la fila, o null si no se pudo consultar. */
+export async function syncLinkRow(db: DB, cfg: FxConfig, row: LinkRowRef, actorId: string | null): Promise<{ status: string | null; error?: string }> {
+  const r = await getLink(cfg.apiKey, row.link_code);
+  // El link ya no existe del otro lado (lo borraron): para nosotros es un link cerrado.
+  if (r.status === 404) { await db.from("invoices").update({ status: "cerrado" }).eq("id", row.id).eq("status", "link_enviado"); return { status: "cerrado" }; }
+  if (!r.ok || !r.data) return { status: null, error: r.status === 0 ? undefined : r.error };
+  const st = r.data.estatus;
+  if (st === "facturado" && r.data.cfdi) { await settleLinkInvoice(db, cfg, row, r.data.cfdi, actorId); return { status: "issued" }; }
+  if (st === "vencido" || st === "global" || st === "cerrado") {
+    await db.from("invoices").update({ status: st }).eq("id", row.id).eq("status", "link_enviado");
+    return { status: st };
+  }
+  return { status: "link_enviado" };
+}
+
+/** Cierra en Facturación un link que ya no debe usarse y deja la fila en `cerrado`. Un link
+ *  abierto (o vencido) sin factura entra a la factura global del negocio, así que el que se queda
+ *  colgado no solo permite facturar dos veces: esa venta se factura dos veces sola.
+ *
+ *  Si Facturación dice que ya se facturó o que ya entró a la global (409), no se fuerza nada: se
+ *  lee el estado real y se refleja. Devuelve el estatus final de la fila, o null si no se pudo. */
+export async function closeLinkRow(db: DB, cfg: FxConfig, row: LinkRowRef, actorId: string | null): Promise<{ status: string | null; error?: string }> {
+  const r = await closeLink(cfg.apiKey, row.link_code);
+  if (r.ok || r.status === 404) {
+    await db.from("invoices").update({ status: "cerrado" }).eq("id", row.id).eq("status", "link_enviado");
+    return { status: "cerrado" };
+  }
+  if (r.status === 409) return syncLinkRow(db, cfg, row, actorId);
+  return { status: null, error: r.status === 0 ? undefined : r.error };
+}
+
+/** Un pedido que se cancela o se borra ya no es una venta: se cierran sus links abiertos para que
+ *  no entren a la factura global. Sin el plugin activo, o sin links, no hace nada. */
+export async function closeOrderLinks(db: DB, orderId: string, actorId: string | null): Promise<void> {
+  const { data, error } = await db.from("invoices").select("id, business_id, order_id, link_code").eq("order_id", orderId).eq("provider", PLUGIN_ID).eq("status", "link_enviado").not("link_code", "is", null);
+  if (error || !data?.length) return;
+  const cfg = await loadFxConfig(data[0].business_id as string);
+  if (!cfg) return;
+  for (const r of data) {
+    const res = await closeLinkRow(db, cfg, { id: r.id as string, business_id: r.business_id as string, order_id: r.order_id as string, link_code: r.link_code as string }, actorId);
+    if (res.status === "cerrado") {
+      await db.from("events").insert({ business_id: r.business_id, parent_type: "order", parent_id: orderId, actor_id: actorId, kind: "file", text: `Link de facturación cerrado · ${r.link_code}` });
+    }
+  }
 }
 
 /** Manda la factura al chat del pedido: el PDF adjunto si lo tenemos; si no, la liga pública. */
@@ -280,7 +332,11 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
   }
 
   if (cfg.sync === "pull" || cfg.sync === "ambos") {
-    const cursor = full ? "" : raw?._products_cursor || "";
+    // Se pide desde un minuto antes de lo último visto: un cambio que se confirmó tarde del otro
+    // lado puede traer una fecha anterior a la del cursor. Lo repetido no hace daño (no cambia nada).
+    const seen = full ? "" : raw?._products_cursor || "";
+    const seenMs = seen ? Date.parse(seen) : NaN;
+    const cursor = Number.isNaN(seenMs) ? seen : new Date(seenMs - 60_000).toISOString();
     const fetchAll = async (desde: string): Promise<FxProduct[] | null> => {
       const out: FxProduct[] = [];
       for (let page = 1; page <= 100; page++) {
@@ -300,7 +356,7 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
     const byRemoteId = new Map(locals.filter((p) => p.facturacion_id).map((p) => [p.facturacion_id as string, p]));
     const byId = new Map(locals.map((p) => [p.id, p]));
     const byName = new Map(locals.map((p) => [productKey(p.name), p]));
-    let maxSeen = cursor;
+    let maxSeen = seen;
     for (const rp of remote) {
       if (rp.actualizado && rp.actualizado > maxSeen) maxSeen = rp.actualizado;
       const iva = rp.exento ? 0 : IVAS.includes(Number(rp.iva)) ? Number(rp.iva) : null;

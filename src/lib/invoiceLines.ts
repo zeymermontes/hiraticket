@@ -45,6 +45,13 @@ export interface InvoicePlan {
   orderTotal: number;
   /** La factura sale por más de lo que dice el pedido porque el IVA se suma al facturar. */
   addsTax: boolean;
+  /**
+   * Un solo concepto por el total exacto, con IVA incluido. Solo viene cuando los conceptos
+   * desglosados no pueden sumar lo cobrado (p. ej. 2 × $250 = $500 da $499.99 al desglosar) y
+   * pasarlo a un concepto no pierde nada fiscal: un solo renglón, al 16 %, sin descuento y sin
+   * clave SAT propia. Hiraticket Facturación timbra ese total exacto; `total` ya lo refleja.
+   */
+  single?: { total: number; description: string };
 }
 
 export interface PlanInput {
@@ -116,31 +123,47 @@ export function planInvoice(input: PlanInput): InvoicePlan {
     };
   });
 
-  // Al desglosar el IVA hacia atrás, el redondeo por renglón puede dejar la factura un centavo
-  // arriba o abajo de lo cobrado. Se corrige moviendo unos centavos la base del renglón más grande
-  // (su precio ya es un número derivado, no el que capturó el negocio).
+  // Al desglosar el IVA hacia atrás, el redondeo por renglón puede dejar la factura a un centavo de
+  // lo cobrado. Se corrige moviendo unos centavos la base de los dos renglones más grandes (sus
+  // precios ya son números derivados, no los que capturó el negocio): subir uno, bajar otro o
+  // pasar centavos entre ellos cambia hacia dónde redondea el IVA de cada uno.
   if (mode === "tax-included") {
     const diff0 = r2(linesTotal(lines) - orderTotal);
     if (diff0 !== 0 && Math.abs(diff0) <= 0.05) {
-      let big = 0;
-      lines.forEach((l, i) => { if (lineAmounts(l).sub > lineAmounts(lines[big]).sub) big = i; });
-      const orig = lines[big];
-      const sub = lineAmounts(orig).sub;
-      let best = { price: orig.price, diff: Math.abs(diff0) };
-      for (let k = -5; k <= 5; k++) {
-        if (k === 0) continue;
-        const price = r6((sub + k * 0.01) / orig.qty);
-        if (price <= 0) continue;
-        lines[big] = { ...orig, price };
-        const d = Math.abs(r2(linesTotal(lines) - orderTotal));
-        if (d < best.diff) best = { price, diff: d };
+      const order = lines.map((l, i) => ({ i, sub: lineAmounts(l).sub })).sort((a, b) => b.sub - a.sub);
+      const A = order[0], B = order[1];
+      const withSub = (l: InvoiceLine, sub: number): InvoiceLine | null => {
+        const price = r6(sub / l.qty);
+        return price > 0 && r2(l.qty * price) === r2(sub) ? { ...l, price } : null;
+      };
+      let best: { cost: number; diff: number; a: InvoiceLine; b?: InvoiceLine } = { cost: 0, diff: Math.abs(diff0), a: lines[A.i], b: B ? lines[B.i] : undefined };
+      for (let ka = -4; ka <= 4; ka++) {
+        for (let kb = B ? -4 : 0; kb <= (B ? 4 : 0); kb++) {
+          if (ka === 0 && kb === 0) continue;
+          const a = withSub(lines[A.i], A.sub + ka * 0.01);
+          const b = B ? withSub(lines[B.i], B.sub + kb * 0.01) : undefined;
+          if (!a || (B && !b)) continue;
+          const trial = lines.slice(); trial[A.i] = a; if (B && b) trial[B.i] = b;
+          const d = Math.abs(r2(linesTotal(trial) - orderTotal));
+          const cost = Math.abs(ka) + Math.abs(kb);
+          if (d < best.diff - 1e-9 || (Math.abs(d - best.diff) < 1e-9 && cost < best.cost)) best = { cost, diff: d, a, b: b ?? undefined };
+        }
       }
-      lines[big] = { ...orig, price: best.price };
+      lines[A.i] = best.a;
+      if (B && best.b) lines[B.i] = best.b;
     }
   }
 
   const total = linesTotal(lines);
   if (total <= 0) return fail("non-positive");
+  // Lo que ni así cuadra y es un pedido de un solo renglón sin datos fiscales propios se factura
+  // como un concepto por el total exacto (ver `single`).
+  const only = lines.length === 1 ? lines[0] : null;
+  if (mode === "tax-included" && only && total !== orderTotal && orderTotal > 0 && only.discount === 0 && only.iva === 0.16
+    && (!only.satCode || only.satCode === "01010101")) {
+    const description = only.qty === 1 ? only.description : `${only.qty} × ${only.description}`;
+    return { ok: true, mode, rate, lines, total: orderTotal, orderTotal, addsTax: false, single: { total: orderTotal, description } };
+  }
   return { ok: true, mode, rate, lines, total, orderTotal, addsTax: mode === "adds-tax" && total > orderTotal + 0.005 };
 }
 

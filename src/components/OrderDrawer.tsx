@@ -27,7 +27,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
-import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -301,22 +301,29 @@ export function OrderDrawer({
     if (r.status === "link_enviado") setInvMsg({ ok: true, text: lang === "es" ? "El cliente todavía no se factura." : "The customer hasn't invoiced yet." });
     run(() => Promise.resolve());
   };
-  const openInvModal = async () => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const open = detail.invoices.some((i) => i.status === "link_enviado" && (!i.link_expires || i.link_expires >= todayStr));
-    if (open) {
-      const yes = await ask({
-        icon: "file",
-        title: lang === "es" ? "Hay un link abierto" : "There's an open link",
-        message: lang === "es"
-          ? "El cliente todavía puede facturarse con el link que le mandaste. Si emites la factura aquí y después usa el link, quedarían dos facturas del mismo pedido.\n\nEmítela aquí solo si el cliente no va a usar el link."
-          : "The customer can still invoice with the link you sent. If you issue the invoice here and they later use the link, the order would end up with two invoices.\n\nOnly issue it here if the customer won't use the link.",
-        confirmLabel: lang === "es" ? "Emitir de todos modos" : "Issue anyway",
-      });
-      if (!yes) return;
-    }
-    setInvMsg(null);
-    setInvOpen(true);
+  // Emitir con un link abierto ya no necesita advertencia: la factura se timbra ligada al link y
+  // Facturación lo da por facturado, así que el cliente no puede usarlo después.
+  const openInvModal = () => { setInvMsg(null); setInvOpen(true); };
+  const closeInvLink = async (invoiceId: string, code: string) => {
+    const yes = await ask({
+      icon: "ban",
+      title: lang === "es" ? "¿Cerrar el link?" : "Close the link?",
+      message: lang === "es"
+        ? `El cliente ya no podrá facturarse con el link ${code} y esta venta no entrará a tu factura global.\n\nNo se puede reabrir. Si después hace falta, mandas uno nuevo.`
+        : `The customer will no longer be able to invoice with link ${code}, and this sale won't go into your global invoice.\n\nIt can't be reopened. If needed later, you send a new one.`,
+      confirmLabel: lang === "es" ? "Cerrar link" : "Close link",
+      danger: true,
+    });
+    if (!yes) return;
+    setInvBusy(true); setInvMsg(null);
+    const r = await closeInvoiceLink(invoiceId);
+    setInvBusy(false);
+    if (!r.ok) { setInvMsg({ ok: false, text: invErr(undefined, r.error) }); return; }
+    // Al intentar cerrarlo puede resultar que el cliente ya se había facturado: entonces no se
+    // cierra nada y la factura aparece en el pedido.
+    if (r.status === "issued") setInvMsg({ ok: true, text: lang === "es" ? "El cliente ya se había facturado con ese link: aquí está su factura." : "The customer had already invoiced with that link: here's the invoice." });
+    else if (r.status === "global") setInvMsg({ ok: true, text: lang === "es" ? "Esa venta ya había entrado a la factura global." : "That sale had already gone into the global invoice." });
+    run(() => Promise.resolve());
   };
 
   const confirmMarkPaid = async () => {
@@ -752,7 +759,7 @@ export function OrderDrawer({
             const cancelled = detail.invoices.filter((i) => i.status === "cancelada");
             const openLink = detail.invoices.find(isOpen);
             // El link más reciente que ya no sirve, solo si no hay nada mejor que mostrar.
-            const deadLink = !openLink && !issued.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
+            const deadLink = !openLink && !issued.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || i.status === "cerrado" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
             const unconfirmed = !issued.length && detail.invoices.some((i) => i.status === "pending");
             const day = (d: string) => new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
             return (
@@ -794,7 +801,7 @@ export function OrderDrawer({
                       <span className="grow" />
                       {openLink.total != null && <span className="mono t-sm">${formatMoney(openLink.total)}</span>}
                     </div>
-                    <div className="t-xs muted">{lang === "es" ? "Cuando el cliente capture sus datos, la factura aparece aquí." : "Once the customer enters their details, the invoice shows up here."}</div>
+                    <div className="t-xs muted">{lang === "es" ? "Cuando el cliente capture sus datos, la factura aparece aquí. Si la emites tú, el link se da por usado." : "Once the customer enters their details, the invoice shows up here. If you issue it yourself, the link counts as used."}</div>
                     <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {detail.conversation_id && (
                         <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={() => sendInvLink()}>
@@ -808,6 +815,7 @@ export function OrderDrawer({
                       )}
                       <span className="grow" />
                       <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Revisar si el cliente ya se facturó" : "Check whether the customer already invoiced"} onClick={() => checkInvLink(openLink.id)}><Icon name="refresh" size={14} /></button>
+                      <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Cerrar link: la venta no se va a facturar por aquí" : "Close link: this sale won't be invoiced through it"} onClick={() => closeInvLink(openLink.id, openLink.link_code ?? "")}><Icon name="ban" size={14} /></button>
                     </div>
                   </div>
                 )}
@@ -816,6 +824,8 @@ export function OrderDrawer({
                   <div className="t-xs muted">
                     {deadLink.status === "global"
                       ? (lang === "es" ? `El link ${deadLink.link_code} ya no se puede usar: esta venta entró a la factura global.` : `Link ${deadLink.link_code} can no longer be used: this sale went into the global invoice.`)
+                      : deadLink.status === "cerrado"
+                      ? (lang === "es" ? `El link ${deadLink.link_code} se cerró sin factura.` : `Link ${deadLink.link_code} was closed without an invoice.`)
                       : (lang === "es" ? `El link ${deadLink.link_code} venció${deadLink.link_expires ? ` el ${day(deadLink.link_expires)}` : ""}.` : `Link ${deadLink.link_code} expired${deadLink.link_expires ? ` on ${day(deadLink.link_expires)}` : ""}.`)}
                   </div>
                 )}

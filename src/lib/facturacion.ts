@@ -55,10 +55,16 @@ export interface FxCfdi {
   id: string; uuid: string | null; serie: string | null; folio: number | null; total: number; estatus: string;
   xml: string | null; pdf: string | null; liga_publica: string | null; simulado: boolean; sandbox: boolean;
   reutilizado?: boolean; folios_restantes?: number;
+  /** Viene cuando se timbró con `link`: el link quedó facturado con este CFDI. */
+  link?: { codigo: string; estatus: string };
 }
 export interface FxReceiver { rfc: string; nombre?: string; regimen?: string; cp?: string; uso?: string; correo?: string }
 
-export const createCfdi = (k: string, idempotencyKey: string, body: { emisor: string; receptor: FxReceiver; conceptos: FxConcept[]; forma_pago: string; metodo_pago?: string; marca?: string }) =>
+/** Timbra una factura. Con `link` (el código de un link de autofactura de la misma venta) el link
+ *  queda `facturado` con este CFDI: el cliente ya no puede facturarse otra vez con él ni la venta
+ *  entra a la factura global del negocio. Con `link`, `emisor`, `conceptos` y `marca` son
+ *  opcionales: lo que no se mande se toma del link. */
+export const createCfdi = (k: string, idempotencyKey: string, body: { emisor?: string; receptor: FxReceiver; conceptos?: FxConcept[]; forma_pago: string; metodo_pago?: string; marca?: string; link?: string }) =>
   call<FxCfdi>(k, "POST", "/cfdis", { metodo_pago: "PUE", ...body }, { "Idempotency-Key": idempotencyKey });
 
 export const sendCfdi = (k: string, id: string, correo?: string) =>
@@ -76,12 +82,17 @@ export async function fetchCfdiPdf(apiKey: string, id: string): Promise<Uint8Arr
 /* ---------- links de autofactura ---------- */
 export interface FxLink {
   codigo: string; url: string; emisor: string; referencia: string; descripcion: string; total: number;
-  vence: string; estatus: "abierto" | "facturado" | "vencido" | "global" | string; cfdi_id: string | null; creado: string;
-  cfdi?: FxCfdi;
+  /** `cerrado`: el negocio lo cerró sin factura; no se puede autofacturar ni entra a la global. */
+  vence: string; estatus: "abierto" | "facturado" | "vencido" | "global" | "cerrado" | string; cfdi_id: string | null; creado: string;
+  cfdi?: FxCfdi | null;
 }
-export const createLink = (k: string, body: { emisor: string; referencia: string; conceptos: FxConcept[]; descripcion?: string; vence?: string; marca?: string }) =>
+/** Crea un link de autofactura con `conceptos` (desglosado) o con `total` (un solo concepto por
+ *  ese monto con IVA incluido, que timbra exacto). */
+export const createLink = (k: string, body: { emisor: string; referencia: string; conceptos?: FxConcept[]; total?: number; descripcion?: string; vence?: string; marca?: string }) =>
   call<FxLink>(k, "POST", "/links", body);
 export const getLink = (k: string, codigo: string) => call<FxLink>(k, "GET", `/links/${encodeURIComponent(codigo)}`);
+/** Cierra un link sin factura. Idempotente; 409 si ya se facturó o entró a la factura global. */
+export const closeLink = (k: string, codigo: string) => call<FxLink>(k, "DELETE", `/links/${encodeURIComponent(codigo)}`);
 
 /* ---------- clientes ---------- */
 export const upsertClient = (k: string, c: { rfc: string; nombre: string; regimen: string; cp: string; uso?: string; correo?: string }) =>

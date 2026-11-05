@@ -14,6 +14,7 @@ import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { resolveConfirmPaymentStageId } from "@/lib/confirmPaymentStage";
 import { payLinkExpiry, payLinkExpired } from "@/lib/payments";
 import { computeOrderTotal } from "@/lib/orderTotal";
+import { closeOrderLinks } from "@/lib/facturacionOps";
 
 /** Add an internal note to an order. Pass `itemId` to attach it to a specific subtask (line item);
  *  null/undefined makes it an order-level note. Both live in the order's notes timeline. */
@@ -701,6 +702,8 @@ export async function deleteOrderItem(itemId: string): Promise<void> {
 export async function setOrderDeleted(orderId: string, deleted: boolean): Promise<{ ok: boolean }> {
   const supabase = await createClient();
   const { error } = await supabase.from("orders").update({ deleted_at: deleted ? new Date().toISOString() : null }).eq("id", orderId);
+  // Un pedido borrado ya no es una venta: su link para facturarse se cierra (ver closeOrderLinks).
+  if (!error && deleted) await closeOrderLinks(supabase, orderId, (await getSessionUser())?.id ?? null).catch(() => {});
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
   return { ok: !error };
 }
@@ -747,6 +750,9 @@ export async function cancelOrder(
     actor_id: user?.id ?? null, kind: "cancelled",
     text: refund > 0 ? `Cancelado · reembolso $${refund}` : "Cancelado",
   });
+  // Un pedido cancelado ya no es una venta: si tenía un link para facturarse abierto, se cierra
+  // para que el cliente no lo use y la venta no entre a la factura global del negocio.
+  await closeOrderLinks(supabase, orderId, user?.id ?? null).catch(() => {});
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); revalidatePath("/reports");
   return { ok: true };
 }
