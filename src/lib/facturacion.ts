@@ -14,7 +14,26 @@ export const PLUGIN_ID = "hiraticket_facturacion";
 export const FACTURACION_SITE = (process.env.FACTURACION_API_BASE || "https://facturacion.hiraticket.com").replace(/\/+$/, "");
 const BASE = `${FACTURACION_SITE}/api/v1`;
 
+/** A dónde apunta este servidor, para decirlo en un mensaje de error (es un dominio público). */
+export const FACTURACION_HOST = (() => { try { return new URL(FACTURACION_SITE).host; } catch { return FACTURACION_SITE; } })();
+
 export interface FxResult<T> { ok: boolean; status: number; data?: T; error?: string; code?: string }
+
+/** Por qué una petición no llegó a tener respuesta:
+ *  `token`   el token tiene caracteres que no caben en una cabecera HTTP (comillas tipográficas,
+ *            puntos suspensivos, un salto de línea): la variable de entorno está mal pegada.
+ *  `url`     la dirección base no es una URL válida (falta https://, por ejemplo).
+ *  `timeout` no contestó en 20 s.   `red:<código>` falló la conexión (ECONNREFUSED, ENOTFOUND…).  */
+function failureKind(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string } } | null;
+  if (err?.name === "AbortError" || err?.name === "TimeoutError") return "timeout";
+  const msg = err?.message ?? "";
+  if (err?.cause?.code === "ERR_INVALID_URL" || /parse URL|Invalid URL/i.test(msg)) return "url";
+  if (/ByteString|invalid header value/i.test(msg)) return "token";
+  return err?.cause?.code ? `red:${err.cause.code}` : "red";
+}
+/** La ruta sin la cadena de consulta (ahí viaja el `estado` de una vinculación). */
+const safePath = (url: string) => { try { return new URL(url).pathname; } catch { return "(dirección inválida)"; } };
 
 /** Una petición a Facturación con un token de portador: la llave de API del negocio para la API
  *  v1, o el secreto de integrador para la vinculación. */
@@ -34,8 +53,12 @@ async function request<T>(url: string, token: string, method: string, body?: unk
     // estatus de un código de vinculación vencido, por ejemplo).
     if (!res.ok) return { ok: false, status: res.status, error: j?.error || `HTTP ${res.status}`, code: j?.code, data: (j ?? undefined) as T | undefined };
     return { ok: true, status: res.status, data: (j ?? ({} as T)) as T };
-  } catch {
-    return { ok: false, status: 0, error: "network", code: "red" };
+  } catch (e) {
+    // Sin respuesta HTTP. No es lo mismo que Facturación esté caída a que este servidor esté mal
+    // configurado, y desde la pantalla se veían igual. `code` dice cuál fue; nunca lleva el token.
+    const why = failureKind(e);
+    console.error(`[facturacion] sin respuesta de ${FACTURACION_HOST} (${method} ${safePath(url)}): ${why}`);
+    return { ok: false, status: 0, error: "network", code: why };
   } finally {
     clearTimeout(timer);
   }

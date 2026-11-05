@@ -333,15 +333,15 @@ function FacturacionLink({ businessId, businessName, lang, initialCode, onLinked
   if (!state || !state.canLink) return null; // sin secreto de integrador solo queda la llave manual
 
   const start = async () => {
-    // La pestaña se abre en el mismo clic (después de esperar al servidor, el navegador la
-    // bloquearía como ventana emergente) y se le pone la dirección cuando llega el código.
-    const tab = window.open("", "_blank");
     setBusy(true); setErr(null);
     const r = await startFacturacionLink(businessId);
     setBusy(false);
-    if (r.status !== "pending" || !r.code || !r.url) { tab?.close(); setErr(r.error ?? (es ? "No se pudo pedir el código." : "Couldn't request the code.")); return; }
-    if (tab) { tab.opener = null; tab.location.href = r.url; }
+    if (r.status !== "pending" || !r.code || !r.url) { setErr(r.error ?? (es ? "No se pudo pedir el código." : "Couldn't request the code.")); return; }
     setPending({ code: r.code, url: r.url });
+    // La pestaña se abre solo cuando YA hay a dónde ir. Antes se abría en blanco al hacer clic y,
+    // si pedir el código fallaba, se quedaba ahí vacía. El navegador suele permitir abrirla tras
+    // una espera corta; si la bloquea, el botón «Abrir Facturación» queda a la vista y hace lo mismo.
+    try { const tab = window.open(r.url, "_blank"); if (tab) tab.opener = null; } catch { /* bloqueada: queda el botón */ }
   };
   const redeem = async () => {
     setBusy(true); setErr(null);
@@ -357,9 +357,9 @@ function FacturacionLink({ businessId, businessName, lang, initialCode, onLinked
       <div className="col gap-2" style={box}>
         <div className="t-sm" style={{ fontWeight: 700 }}>{es ? "Autoriza la conexión en Facturación" : "Authorize the connection in Facturación"}</div>
         <div className="mono" style={{ fontSize: 26, fontWeight: 800, letterSpacing: 2 }}>{pending.code}</div>
-        <div className="t-xs muted">{es ? "Se abrió Hiraticket Facturación en otra pestaña. Entra, comprueba que allá aparece este mismo código y autoriza. Esta ventana se actualiza sola." : "Hiraticket Facturación opened in another tab. Sign in, check the same code is shown there and authorize. This window updates on its own."}</div>
+        <div className="t-xs muted">{es ? "Abre Hiraticket Facturación (si no se abrió sola en otra pestaña), entra, comprueba que allá aparece este mismo código y autoriza. Esta ventana se actualiza sola." : "Open Hiraticket Facturación (if it didn't open by itself in another tab), sign in, check the same code is shown there and authorize. This window updates on its own."}</div>
         <div className="row gap-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
-          <a className="btn btn-sm btn-outline" href={pending.url} target="_blank" rel="noreferrer"><Icon name="external" size={13} />{es ? "Abrir Facturación" : "Open Facturación"}</a>
+          <a className="btn btn-sm btn-primary" href={pending.url} target="_blank" rel="noreferrer"><Icon name="external" size={13} />{es ? "Abrir Facturación" : "Open Facturación"}</a>
           <span className="t-xs muted grow">{es ? "Esperando autorización…" : "Waiting for authorization…"}</span>
           <button className="btn btn-sm btn-ghost" onClick={() => { setPending(null); void cancelFacturacionLink(businessId); }}>{es ? "Cancelar" : "Cancel"}</button>
         </div>

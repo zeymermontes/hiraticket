@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/auth";
 import { encryptSecret, decryptSecret } from "@/lib/secrets";
-import { PLUGIN_ID as FX, integratorConfigured, linkRequest, linkPoll, linkRedeem, type FxLinkResult } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_HOST, integratorConfigured, linkRequest, linkPoll, linkRedeem, type FxLinkResult, type FxResult } from "@/lib/facturacion";
 import { syncProducts, fxWebhookUrl, eventsTag } from "@/lib/facturacionOps";
 
 // Conectar el plugin con la cuenta de Hiraticket Facturación del negocio SIN copiar la llave a mano.
@@ -31,6 +31,25 @@ import { syncProducts, fxWebhookUrl, eventsTag } from "@/lib/facturacionOps";
 
 type SB = Awaited<ReturnType<typeof createClient>>;
 type Cfg = Record<string, unknown>;
+
+/**
+ * Por qué no se pudo hablar con Facturación, dicho de forma que se pueda arreglar. "No se pudo
+ * conectar, intenta de nuevo" servía igual para una caída pasajera que para una variable de entorno
+ * mal pegada, y lo segundo no se arregla reintentando. Ningún mensaje lleva el secreto.
+ */
+function linkFailure(r: FxResult<unknown>, fallback: string): string {
+  if (r.status === 0) {
+    if (r.code === "token") return "El secreto de integrador de este servidor está mal escrito: trae comillas, puntos suspensivos o un salto de línea. Hay que corregir la variable FACTURACION_INTEGRATOR_SECRET en Render (solo el valor, sin comillas) y volver a desplegar.";
+    if (r.code === "url") return `La dirección de Facturación configurada en este servidor no es válida (${FACTURACION_HOST}). La variable FACTURACION_API_BASE debe empezar con https:// o no existir.`;
+    if (r.code === "timeout") return `Hiraticket Facturación (${FACTURACION_HOST}) tardó demasiado en responder. Intenta de nuevo en un momento.`;
+    const net = r.code?.startsWith("red:") ? ` · ${r.code.slice(4)}` : "";
+    return `No se pudo conectar con Hiraticket Facturación (${FACTURACION_HOST}${net}). Intenta de nuevo; si sigue igual, revisa que esa dirección sea la correcta.`;
+  }
+  // Con secreto de integrador, un 401 solo puede ser que los dos servidores no tienen el mismo.
+  if (r.status === 401) return "Facturación no reconoció a este servidor: el secreto de integrador no es el mismo en los dos servicios (o trae espacios). Tiene que ser idéntico en FACTURACION_INTEGRATOR_SECRET y en la variable de Facturación.";
+  if (r.status === 429) return "Demasiados intentos seguidos. Espera un minuto y vuelve a intentar.";
+  return r.error || fallback;
+}
 
 export interface LinkStatus {
   /** `linked`: quedó conectado. `pending`: falta que autoricen en Facturación. `none`: no hay nada en curso. */
@@ -134,7 +153,7 @@ export async function startFacturacionLink(businessId: string): Promise<LinkStat
   const estado = randomBytes(16).toString("hex");
   const who = await requester(supabase, businessId);
   const r = await linkRequest({ negocio: who.negocio, negocio_id: businessId, solicitante: who.solicitante, webhook_url: hookUrl(businessId), estado });
-  if (!r.ok || !r.data?.codigo) return { status: "error", error: r.status === 0 ? "No se pudo conectar con Hiraticket Facturación. Intenta de nuevo." : (r.error || "No se pudo pedir el código.") };
+  if (!r.ok || !r.data?.codigo) return { status: "error", error: linkFailure(r, "No se pudo pedir el código.") };
   const { error } = await saveCfg(supabase, businessId, {
     ...a.cfg, _link_code: r.data.codigo, _link_state: encryptSecret(estado), _link_url: r.data.url, _link_expires: r.data.vence,
   });
@@ -185,7 +204,6 @@ export async function redeemFacturacionCode(businessId: string, codeRaw: string)
     status: "error",
     error: r.status === 404 ? "Ese código no existe. Revisa que esté bien escrito."
       : r.status === 410 ? "Ese código venció o ya se usó. Genera uno nuevo en Facturación."
-      : r.status === 0 ? "No se pudo conectar con Hiraticket Facturación. Intenta de nuevo."
-      : (r.error || "No se pudo canjear el código."),
+      : linkFailure(r, "No se pudo canjear el código."),
   };
 }
