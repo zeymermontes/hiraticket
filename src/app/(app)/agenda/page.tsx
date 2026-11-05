@@ -1,5 +1,5 @@
 import { getMyBusiness } from "@/lib/queries";
-import { getAppointments, getDueOrders, getProducts } from "@/lib/extras";
+import { getAppointments, getDueOrders, getActiveProducts } from "@/lib/extras";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents, getConversationDetail } from "@/lib/chat";
 import { getSessions, isConnected } from "@/lib/whatsapp";
@@ -31,7 +31,7 @@ export default async function AgendaPage({
         const [areas, agents, products, sessions, integrations, convDetail] = await Promise.all([
           getAreas(business.id),
           getAgents(business.id),
-          getProducts(business.id),
+          getActiveProducts(business.id),
           getSessions(business.id),
           getActiveIntegrations(business.id),
           openOrder.conversation_id ? getConversationDetail(openOrder.conversation_id) : Promise.resolve(null),

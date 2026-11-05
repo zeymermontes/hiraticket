@@ -2,7 +2,7 @@ import { getMyBusiness, getOrdersPage } from "@/lib/queries";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents, getConversationDetail } from "@/lib/chat";
 import { getSessions, isConnected } from "@/lib/whatsapp";
-import { getProducts } from "@/lib/extras";
+import { getActiveProducts } from "@/lib/extras";
 import { getOrderDetail } from "@/lib/orders";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveIntegrations } from "@/lib/plugins";
@@ -26,7 +26,7 @@ export default async function OrdersPage({
     getAreas(business.id),
     getStages(business.id),
     getAgents(business.id),
-    getProducts(business.id),
+    getActiveProducts(business.id),
     supabase.from("contacts").select("id, name").eq("business_id", business.id).order("name"),
   ]);
   const openOrder = sp.order ? await getOrderDetail(sp.order) : null;

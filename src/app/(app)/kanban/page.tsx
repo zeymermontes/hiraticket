@@ -2,7 +2,7 @@ import { getMyBusiness } from "@/lib/queries";
 import { getKanbanBoard } from "@/lib/kanban";
 import { getAreas, getStages } from "@/lib/business";
 import { getAgents } from "@/lib/chat";
-import { getProducts } from "@/lib/extras";
+import { getActiveProducts } from "@/lib/extras";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { getActiveIntegrations } from "@/lib/plugins";
 import { KanbanBoard } from "@/components/KanbanBoard";
@@ -18,7 +18,7 @@ export default async function KanbanPage() {
     getAreas(business.id),
     getAgents(business.id),
     getSessions(business.id),
-    getProducts(business.id),
+    getActiveProducts(business.id),
     getActiveIntegrations(business.id),
   ]);
 

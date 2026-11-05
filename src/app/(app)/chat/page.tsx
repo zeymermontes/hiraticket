@@ -2,7 +2,7 @@ import { getMyBusiness } from "@/lib/queries";
 import { getSessionUser } from "@/lib/auth";
 import { getConversationListPage, getConversationDetail, getAgents, getChatListCounts } from "@/lib/chat";
 import { getAreas, getStages } from "@/lib/business";
-import { getProducts } from "@/lib/extras";
+import { getActiveProducts } from "@/lib/extras";
 import { getSessions, isConnected } from "@/lib/whatsapp";
 import { cookies, headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
@@ -35,7 +35,7 @@ export default async function ChatPage({
     getAreas(business.id),
     getStages(business.id),
     getSessions(business.id),
-    getProducts(business.id),
+    getActiveProducts(business.id),
     getActiveIntegrations(business.id),
     sp.c ? getConversationDetail(sp.c) : Promise.resolve(null),
   ]);

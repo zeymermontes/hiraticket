@@ -66,6 +66,13 @@ async function _getProducts(businessId: string): Promise<Product[]> {
  *  NO es caché entre peticiones: cada request vuelve a leer datos frescos. */
 export const getProducts = cache(_getProducts);
 
+/** Los productos que se pueden vender hoy: lo que ven los selectores al armar un pedido. Un
+ *  producto inactivo (lo desactiva la sincronización con Facturación cuando se borra allá, o se
+ *  apaga a mano en el catálogo) sigue existiendo para los reportes y el historial, pero ya no se
+ *  ofrece. El catálogo usa `getProducts`, que los trae todos. */
+export const getActiveProducts = cache(async (businessId: string): Promise<Product[]> =>
+  (await getProducts(businessId)).filter((p) => p.active !== false));
+
 export interface Appointment {
   id: string; title: string; starts_at: string; status: string;
   contact: { name: string } | null;

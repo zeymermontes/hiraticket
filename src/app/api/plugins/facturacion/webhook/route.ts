@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PLUGIN_ID } from "@/lib/facturacion";
-import { loadFxConfig, settleLinkInvoice } from "@/lib/facturacionOps";
-import type { FxCfdi } from "@/lib/facturacion";
+import { loadFxConfig, settleLinkInvoice, onRemoteProductSaved, onRemoteProductDeleted, syncProducts } from "@/lib/facturacionOps";
+import type { FxCfdi, FxProduct } from "@/lib/facturacion";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -92,6 +92,17 @@ export async function POST(req: NextRequest) {
           });
         }
       }
+    }
+    else if (evt.event === "producto.creado" || evt.event === "producto.actualizado") {
+      // El catálogo de Facturación cambió (panel, importación o API): se refleja aquí en el momento.
+      // Quien decide si aplica es la fecha `actualizado`, no el origen: ver facturacionOps.
+      await onRemoteProductSaved(biz, cfg, (evt.data ?? {}) as FxProduct);
+    } else if (evt.event === "producto.eliminado") {
+      await onRemoteProductDeleted(biz, cfg, (evt.data ?? {}) as { id?: string; sku?: string | null; eliminado?: string });
+    } else if (evt.event === "productos.importados") {
+      // Una sola operación tocó más de 100 productos: en vez de 100 avisos llega este, y se traen
+      // por lista. Va después de responder: puede tardar más que el tiempo de espera del aviso.
+      if (cfg.sync === "pull" || cfg.sync === "ambos") after(() => syncProducts(admin, biz, false).then(() => undefined, () => undefined));
     }
     // `cfdi.timbrado` y `prueba`: nada que hacer. Lo que se timbra desde aquí se registra en el
     // momento, y adivinar a qué pedido pertenece una factura hecha en otro lado es arriesgado.

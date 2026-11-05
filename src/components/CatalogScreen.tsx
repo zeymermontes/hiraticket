@@ -7,7 +7,8 @@ import { useApp } from "@/components/AppContext";
 import type { Product } from "@/lib/extras";
 import type { PriceTier } from "@/lib/types";
 import type { CatalogFiscal } from "@/lib/facturacionOps";
-import { createProduct, updateProduct, deleteProduct, syncCatalog } from "@/app/(app)/features-actions";
+import type { SatKey } from "@/lib/facturacion";
+import { createProduct, updateProduct, deleteProduct, syncCatalog, searchSatKeys } from "@/app/(app)/features-actions";
 
 const HOUR = 3600_000;
 
@@ -58,6 +59,10 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
   const [q, setQ] = useState("");
   const [tiersFor, setTiersFor] = useState<string | null>(null);
   const [fiscalFor, setFiscalFor] = useState<string | null>(null); // producto con los datos fiscales abiertos
+  // Alta: claves SAT opcionales desde el principio, para no tener que volver a abrir el producto.
+  const [newFiscal, setNewFiscal] = useState(false);
+  const [newSat, setNewSat] = useState("");
+  const [newUnit, setNewUnit] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const view = products.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -93,9 +98,11 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
               <tbody>
                 {view.map((p) => (
                   <React.Fragment key={p.id}>
-                  <tr>
+                  <tr style={p.active === false ? { opacity: 0.55 } : undefined}>
                     <td><input key={p.name} className="inp-inline grow" defaultValue={p.name} style={{ width: "100%" }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
-                    {!personal && <td><Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill></td>}
+                    {!personal && <td>{p.active === false
+                      ? <span title={lang === "es" ? "No se ofrece al armar pedidos. Se desactiva solo cuando el producto se borra en Facturación." : "Not offered when building orders. It's turned off automatically when the product is deleted in the invoicing account."}><Pill color="slate">{lang === "es" ? "Inactivo" : "Inactive"}</Pill></span>
+                      : <Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill>}</td>}
                     {!personal && <td><input key={p.price} className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>}
                     {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} placeholder="—" defaultValue={p.cost == null ? "" : String(p.cost)} onBlur={(e) => { const raw = e.target.value.trim(); const v = raw === "" ? null : Number(raw); if (raw !== "" && Number.isNaN(v)) return; if (v !== p.cost) run(() => updateProduct(p.id, { cost: v })); }} /></td>}
                     <td className="row gap-1">
@@ -105,6 +112,7 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                       {fx && <button className={"iconbtn sm" + (fiscalFor === p.id ? " active" : "")} title={lang === "es" ? "Datos para facturar: clave SAT, unidad e IVA" : "Invoicing data: SAT key, unit and tax"} onClick={() => setFiscalFor(fiscalFor === p.id ? null : p.id)}>
                         <Icon name="file" size={15} />{fx.byId[p.id]?.sat_code && fx.byId[p.id]!.sat_code !== "01010101" && <span className="badge badge-soft" style={{ marginLeft: 2 }}>SAT</span>}
                       </button>}
+                      {p.active === false && <button className="iconbtn sm" title={lang === "es" ? "Reactivar: vuelve a ofrecerse al armar pedidos" : "Reactivate: offer it again when building orders"} onClick={() => run(() => updateProduct(p.id, { active: true }))}><Icon name="refresh" size={15} /></button>}
                       <a className="iconbtn sm" href="/orders?new=1" title={personal ? (lang === "es" ? "A tarea" : "To task") : (lang === "es" ? "A pedido" : "To order")}><Icon name="orders" size={15} /></a>
                       <button className="iconbtn sm" onClick={() => run(() => deleteProduct(p.id))}><Icon name="trash" size={15} /></button>
                     </td>
@@ -119,16 +127,18 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                     return (
                       <tr><td colSpan={5} style={{ background: "var(--surface-2)" }}>
                         <div className="col gap-2" style={{ padding: "10px 4px" }}>
-                          <div className="row gap-3" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
-                            <div className="col gap-1">
+                          <div className="row gap-3" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+                            <div className="col gap-1" style={{ flex: "1 1 260px", minWidth: 0 }}>
                               <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Clave SAT (8 dígitos)" : "SAT key (8 digits)"}</label>
                               <input key={f.sat_code ?? ""} className="inp-inline mono" style={{ width: 120 }} placeholder="01010101" maxLength={8} inputMode="numeric" defaultValue={f.sat_code ?? ""}
                                 onBlur={(e) => { const v = e.target.value.trim(); if (v !== (f.sat_code ?? "")) { if (v && !/^\d{8}$/.test(v)) { e.target.value = f.sat_code ?? ""; return; } run(() => updateProduct(p.id, { sat_code: v || null })); } }} />
+                              <SatSearch businessId={businessId} kind="productos" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_code: k.clave }))} />
                             </div>
-                            <div className="col gap-1">
+                            <div className="col gap-1" style={{ flex: "1 1 220px", minWidth: 0 }}>
                               <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Unidad SAT" : "SAT unit"}</label>
-                              <input key={f.sat_unit ?? ""} className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={4} defaultValue={f.sat_unit ?? ""}
-                                onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== (f.sat_unit ?? "")) run(() => updateProduct(p.id, { sat_unit: v || null })); }} />
+                              <input key={f.sat_unit ?? ""} className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={3} defaultValue={f.sat_unit ?? ""}
+                                onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== (f.sat_unit ?? "")) { if (v && !/^[A-Z0-9]{1,3}$/.test(v)) { e.target.value = f.sat_unit ?? ""; return; } run(() => updateProduct(p.id, { sat_unit: v || null })); } }} />
+                              <SatSearch businessId={businessId} kind="unidades" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_unit: k.clave }))} />
                             </div>
                             <div className="col gap-1">
                               <label className="lbl" style={{ margin: 0 }}>IVA</label>
@@ -137,8 +147,8 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                                 <option value="">{lang === "es" ? "El del negocio" : "Business rate"}</option>
                                 <option value="0.16">16%</option><option value="0.08">8%</option><option value="0">0%</option>
                               </select>
+                              {f.linked && <span className="t-xs" style={{ color: "var(--green)", fontWeight: 600 }}>✓ {lang === "es" ? "Vinculado con Facturación" : "Linked to the invoicing account"}</span>}
                             </div>
-                            {f.linked && <span className="t-xs" style={{ color: "var(--green)", fontWeight: 600, paddingBottom: 8 }}>✓ {lang === "es" ? "Vinculado con Facturación" : "Linked to the invoicing account"}</span>}
                           </div>
                           <div className="t-xs muted">
                             {lang === "es"
@@ -171,14 +181,85 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                 <input className="inp-inline mono" style={{ width: 100 }} placeholder={lang === "es" ? "$ costo" : "$ cost"} title={lang === "es" ? "Lo que te cuesta (opcional) — se usa para la ganancia en reportes" : "What it costs you (optional) — used for profit in reports"} value={cost} onChange={(e) => setCost(e.target.value)} />
               </div>
             )}
-            <button className="btn btn-primary btn-block" disabled={pending || !name.trim()}
-              onClick={() => { run(() => createProduct(businessId, { name, kind, price: Number(price) || 0, cost: cost.trim() === "" ? null : Number(cost) || 0 })); setName(""); setPrice(""); setCost(""); }}>
+            {fx && (
+              <div className="col gap-2">
+                <button type="button" className="btn btn-sm btn-ghost" style={{ alignSelf: "flex-start", color: "var(--text-muted)" }} onClick={() => setNewFiscal((v) => !v)}>
+                  <Icon name="file" size={13} />{lang === "es" ? "Datos para facturar (opcional)" : "Invoicing data (optional)"}{(newSat || newUnit) ? ` · ${[newSat, newUnit].filter(Boolean).join(" / ")}` : ""}
+                </button>
+                {newFiscal && (
+                  <div className="col gap-2" style={{ padding: 10, borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                    <div className="col gap-1">
+                      <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Clave SAT (8 dígitos)" : "SAT key (8 digits)"}</label>
+                      <input className="inp-inline mono" style={{ width: 120 }} placeholder="01010101" maxLength={8} inputMode="numeric" value={newSat} onChange={(e) => setNewSat(e.target.value.replace(/\D/g, ""))} />
+                      <SatSearch businessId={businessId} kind="productos" lang={lang} onPick={(k) => setNewSat(k.clave)} />
+                    </div>
+                    <div className="col gap-1">
+                      <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Unidad SAT" : "SAT unit"}</label>
+                      <input className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={3} value={newUnit} onChange={(e) => setNewUnit(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} />
+                      <SatSearch businessId={businessId} kind="unidades" lang={lang} onPick={(k) => setNewUnit(k.clave)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <button className="btn btn-primary btn-block" disabled={pending || !name.trim() || (!!fx && newSat.length > 0 && newSat.length !== 8)}
+              onClick={() => {
+                const fiscalNew = fx ? { sat_code: newSat.length === 8 ? newSat : null, sat_unit: newUnit || null } : {};
+                run(() => createProduct(businessId, { name, kind, price: Number(price) || 0, cost: cost.trim() === "" ? null : Number(cost) || 0, ...fiscalNew }));
+                setName(""); setPrice(""); setCost(""); setNewSat(""); setNewUnit(""); setNewFiscal(false);
+              }}>
               <Icon name="plus" size={15} />{lang === "es" ? "Agregar" : "Add"}
             </button>
           </div>
         </section>
        </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Buscador de claves del SAT por nombre ("playera", "pieza"). El SAT publica miles de claves y nadie
+ * se las sabe: se escribe lo que se vende y se elige de la lista. La consulta sale del servidor
+ * (la llave de Facturación nunca llega al navegador), con una pausa para no preguntar en cada
+ * tecla. La lista va en línea, debajo del campo, así no hay nada flotante que se salga o se tape.
+ */
+function SatSearch({ businessId, kind, lang, onPick }: { businessId: string; kind: "productos" | "unidades"; lang: "es" | "en"; onPick: (k: SatKey) => void }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<SatKey[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const seq = useRef(0);
+  useEffect(() => {
+    const text = q.trim();
+    const id = ++seq.current; // una respuesta vieja no pisa a la de lo último que se escribió
+    if (text.length < 3) { setHits(null); setBusy(false); return; }
+    setBusy(true);
+    const t = setTimeout(async () => {
+      const r = await searchSatKeys(businessId, kind, text).catch(() => [] as SatKey[]);
+      if (seq.current === id) { setHits(r); setBusy(false); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q, businessId, kind]);
+  const es = lang === "es";
+  return (
+    <div className="col gap-1" style={{ maxWidth: 360 }}>
+      <div className="field field-sm"><Icon name="search" />
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder={kind === "productos" ? (es ? "Buscar clave por nombre: playera, lona…" : "Search key by name…") : (es ? "Buscar unidad: pieza, hora, metro…" : "Search unit: piece, hour…")} />
+      </div>
+      {q.trim().length >= 3 && (
+        <div className="col scroll" style={{ maxHeight: 190, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)" }}>
+          {busy && !hits ? <span className="t-xs muted" style={{ padding: "8px 10px" }}>{es ? "Buscando…" : "Searching…"}</span>
+            : !hits || hits.length === 0 ? <span className="t-xs muted" style={{ padding: "8px 10px" }}>{es ? "Sin resultados. Prueba con otra palabra." : "No results. Try another word."}</span>
+            : hits.map((h) => (
+              <button key={h.clave} type="button" className="row gap-2" onClick={() => { onPick(h); setQ(""); setHits(null); }}
+                style={{ padding: "7px 10px", background: "none", border: "none", borderBottom: "1px solid var(--border)", textAlign: "left", cursor: "pointer", alignItems: "baseline", color: "var(--text)" }}>
+                <span className="mono t-xs" style={{ fontWeight: 700, flex: "none" }}>{h.clave}</span>
+                <span className="t-xs" style={{ minWidth: 0 }}>{h.nombre}</span>
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

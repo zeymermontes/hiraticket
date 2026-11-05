@@ -6,11 +6,8 @@ import { addonMrr, type PluginConfigField, type PluginPricing } from "@/lib/plug
 import { after } from "next/server";
 import { encryptSecret, decryptSecret, MASK } from "@/lib/secrets";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { appBaseUrl } from "@/lib/url";
 import { PLUGIN_ID as FX, listIssuers, getFolios, getWebhook, setWebhook, deleteWebhook } from "@/lib/facturacion";
-import { syncProducts } from "@/lib/facturacionOps";
-
-const fxWebhookUrl = (businessId: string) => `${appBaseUrl()}/api/plugins/facturacion/webhook?biz=${businessId}`;
+import { syncProducts, fxWebhookUrl, eventsTag, hasProductEvents } from "@/lib/facturacionOps";
 
 /** Load a plugin's pricing + config schema from the catalogue. */
 async function getPluginMeta(supabase: Awaited<ReturnType<typeof createClient>>, pluginId: string) {
@@ -109,7 +106,8 @@ async function prepareFacturacion(
   // secreto, o cuando el usuario aceptó reemplazar el que había. Registrarlo en cada guardado
   // cambiaría el secreto sin necesidad.
   const url = fxWebhookUrl(businessId);
-  const needsHook = replaceWebhook || next.api_key !== prev.api_key || !prev._webhook_secret;
+  // ...o cuando el registrado no incluye los avisos del catálogo (se hizo antes de que existieran).
+  const needsHook = replaceWebhook || next.api_key !== prev.api_key || !prev._webhook_secret || !hasProductEvents(String(prev._webhook_events ?? ""));
   let hookNote = "";
   if (!url.startsWith("https://")) hookNote = " El aviso automático no se registró porque esta instalación no tiene una dirección https.";
   else if (needsHook) {
@@ -123,6 +121,8 @@ async function prepareFacturacion(
     }
     if (!w.ok || !w.data?.secreto) return { ok: false, error: w.error || "No se pudo registrar el aviso de facturas." };
     patch._webhook_secret = encryptSecret(w.data.secreto);
+    patch._webhook_events = eventsTag(w.data.webhook?.eventos);
+    patch._webhook_checked_at = new Date().toISOString();
   }
 
   const fol = await getFolios(apiKey);

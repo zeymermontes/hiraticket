@@ -2,12 +2,15 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
+import { encryptSecret } from "@/lib/secrets";
+import { appBaseUrl } from "@/lib/url";
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
 import { planInvoice, productKey, toNetPrice, fromNetPrice, type InvoicePlan, type InvoiceLine } from "@/lib/invoiceLines";
 import {
   PLUGIN_ID, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
+  setWebhook, WEBHOOK_EVENTS_PRODUCTS,
   type FxCfdi, type FxConcept, type FxProduct, type FxProductInput,
 } from "@/lib/facturacion";
 
@@ -39,6 +42,42 @@ export async function loadFxConfig(businessId: string): Promise<FxConfig | null>
     linkDays: days >= 1 && days <= 365 ? days : 30, sync,
     autoWhatsapp: c.auto_whatsapp === "true", webhookSecret: c._webhook_secret || "",
   };
+}
+
+/* ---------- webhook ---------- */
+
+/** A dónde nos avisa Facturación de lo que pasa en la cuenta de este negocio. */
+export const fxWebhookUrl = (businessId: string) => `${appBaseUrl()}/api/plugins/facturacion/webhook?biz=${businessId}`;
+/** Lo que se guarda junto al secreto para saber qué eventos quedaron registrados. */
+export const eventsTag = (eventos: string[] | undefined) => [...(eventos ?? [])].sort().join(",");
+export const hasProductEvents = (tag: string | undefined) => WEBHOOK_EVENTS_PRODUCTS.every((e) => (tag ?? "").split(",").includes(e));
+
+/**
+ * Un webhook registrado antes de que existieran los avisos del catálogo no los recibe: Facturación
+ * no los activa sola. Aquí se vuelve a registrar (misma dirección) para pedirlos. Se intenta como
+ * mucho una vez al día por negocio, porque cada registro cambia el secreto y no hay prisa: mientras
+ * tanto la sincronización por lista sigue trayendo los cambios.
+ *
+ * No toca nada si la cuenta ya manda sus avisos a otro sistema (409): eso lo decide el usuario al
+ * guardar la configuración del plugin.
+ */
+export async function ensureProductEvents(businessId: string): Promise<void> {
+  const raw = await getPluginRuntimeConfig(businessId, PLUGIN_ID);
+  const apiKey = raw?.api_key?.trim();
+  if (!raw || !apiKey || !raw._webhook_secret || hasProductEvents(raw._webhook_events)) return;
+  const last = Date.parse(raw._webhook_checked_at || "");
+  if (!Number.isNaN(last) && Date.now() - last < 24 * 3600_000) return;
+  const url = fxWebhookUrl(businessId);
+  if (!url.startsWith("https://")) return;
+  const admin = createAdminClient();
+  const save = async (patch: Record<string, string>) => {
+    const { data } = await admin.from("business_plugins").select("config").eq("business_id", businessId).eq("plugin_id", PLUGIN_ID).maybeSingle();
+    if (data) await admin.from("business_plugins").update({ config: { ...((data.config as Record<string, unknown>) ?? {}), ...patch } }).eq("business_id", businessId).eq("plugin_id", PLUGIN_ID);
+  };
+  const w = await setWebhook(apiKey, url, false);
+  const checked = { _webhook_checked_at: new Date().toISOString() };
+  if (!w.ok || !w.data?.secreto) { await save(checked); return; }
+  await save({ ...checked, _webhook_secret: encryptSecret(w.data.secreto), _webhook_events: eventsTag(w.data.webhook?.eventos) });
 }
 
 /* ---------- pedido → conceptos ---------- */
@@ -223,8 +262,22 @@ export async function sendInvoiceToChat(db: DB, orderId: string, invoiceId: stri
 
 /* ---------- productos ---------- */
 
+// El catálogo se mantiene igual en los dos sistemas de tres formas que se complementan:
+//
+//   · Hiraticket → Facturación: al crear, editar o borrar aquí se llama a su API en ese momento.
+//   · Facturación → Hiraticket: su webhook avisa de cada cambio (`producto.creado`,
+//     `producto.actualizado`, `producto.eliminado`; `productos.importados` cuando una sola operación
+//     tocó más de 100 y hay que traerlos por lista).
+//   · «Sincronizar ahora» y la sincronización al abrir el catálogo, por si un aviso no llegó.
+//
+// Para que un cambio no rebote ni un aviso viejo pise uno nuevo, cada producto guarda en
+// `synced_at` la fecha `actualizado` de la versión de Facturación que ya tiene. Todo lo que llegue
+// con una fecha igual o anterior se ignora: eso cubre el eco de nuestro propio envío (Facturación
+// lo anuncia con la misma fecha que nos devolvió) y los avisos que llegan desordenados por
+// reintentos. Lo que entra de allá se escribe directo en la base y no dispara un envío de vuelta.
+
 const IVAS = [0, 0.08, 0.16];
-interface LocalProduct { id: string; name: string; price: number; sat_code: string | null; sat_unit: string | null; iva: number | null; facturacion_id: string | null; active?: boolean }
+interface LocalProduct { id: string; name: string; price: number; sat_code: string | null; sat_unit: string | null; iva: number | null; facturacion_id: string | null; synced_at?: string | null; active?: boolean }
 type Biz = { invoice_add_tax: boolean; invoice_tax_rate: number };
 
 async function bizTax(db: DB, businessId: string): Promise<Biz> {
@@ -248,7 +301,19 @@ function toRemote(p: LocalProduct, biz: Biz): FxProductInput {
   };
 }
 
-const PRODUCT_COLS = "id, name, price, sat_code, sat_unit, iva, facturacion_id";
+const PRODUCT_COLS = "id, name, price, sat_code, sat_unit, iva, facturacion_id, synced_at";
+const pushes = (m: SyncMode) => m === "push" || m === "ambos";
+const pulls = (m: SyncMode) => m === "pull" || m === "ambos";
+/** Fecha ISO a microsegundos. `Date.parse` se queda en milisegundos y las fechas de la base traen
+ *  seis decimales: dos escrituras dentro del mismo milisegundo parecerían la misma versión. */
+function micros(iso: string): number {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return NaN;
+  const frac = /\.(\d+)/.exec(iso)?.[1] ?? "";
+  return Math.floor(ms / 1000) * 1e6 + Number((frac + "000000").slice(0, 6));
+}
+/** ¿`a` es posterior a `b`? Sin `b` (nunca sincronizado) cualquier fecha lo es. */
+const newer = (a: string | null | undefined, b: string | null | undefined) => !b || (!!a && micros(a) > micros(b));
 
 /** Hiraticket → Facturación, un producto. Se llama después de crear o editar, sin frenar la
  *  respuesta. No hace nada si el plugin no está activo o la sincronización no va en ese sentido. */
@@ -256,21 +321,22 @@ export async function pushProduct(productId: string): Promise<void> {
   const db = createAdminClient();
   const { data: p } = await db.from("products").select(`business_id, ${PRODUCT_COLS}`).eq("id", productId).maybeSingle();
   if (!p) return;
-  const businessId = (p as { business_id: string }).business_id;
+  const businessId = (p as unknown as { business_id: string }).business_id;
   const cfg = await loadFxConfig(businessId);
-  if (!cfg || (cfg.sync !== "push" && cfg.sync !== "ambos")) return;
+  if (!cfg || !pushes(cfg.sync)) return;
   const local = p as unknown as LocalProduct;
-  let r = await upsertProduct(cfg.apiKey, toRemote(local, await bizTax(db, businessId)));
+  const biz = await bizTax(db, businessId);
+  let r = await upsertProduct(cfg.apiKey, toRemote(local, biz));
   // El id guardado ya no existe allá (lo borraron en el panel): se vuelve a casar por sku o nombre.
-  if (!r.ok && r.status === 404 && local.facturacion_id) r = await upsertProduct(cfg.apiKey, toRemote({ ...local, facturacion_id: null }, await bizTax(db, businessId)));
-  if (r.ok && r.data?.id) await db.from("products").update({ facturacion_id: r.data.id, synced_at: new Date().toISOString() }).eq("id", productId);
+  if (!r.ok && r.status === 404 && local.facturacion_id) r = await upsertProduct(cfg.apiKey, toRemote({ ...local, facturacion_id: null }, biz));
+  if (r.ok && r.data?.id) await db.from("products").update({ facturacion_id: r.data.id, synced_at: r.data.actualizado || new Date().toISOString() }).eq("id", productId);
 }
 
 /** Borra allá el producto que se acaba de borrar aquí. Los datos se leen ANTES de borrar la fila. */
 export async function removeRemoteProduct(businessId: string, facturacionId: string | null): Promise<void> {
   if (!facturacionId) return;
   const cfg = await loadFxConfig(businessId);
-  if (!cfg || (cfg.sync !== "push" && cfg.sync !== "ambos")) return;
+  if (!cfg || !pushes(cfg.sync)) return;
   await deleteRemoteProduct(cfg.apiKey, facturacionId); // un 404 es que ya no estaba: da igual
 }
 
@@ -283,6 +349,53 @@ async function saveSyncState(businessId: string, patch: Record<string, string>):
   await admin.from("business_plugins").update({ config: { ...((data.config as Record<string, unknown>) ?? {}), ...patch } }).eq("business_id", businessId).eq("plugin_id", PLUGIN_ID);
 }
 
+/** Índices del catálogo local para casar un producto de Facturación: por su id de allá, por sku
+ *  (= id de aquí) y por nombre, en ese orden. */
+function indexLocals(locals: LocalProduct[]) {
+  return {
+    byRemoteId: new Map(locals.filter((p) => p.facturacion_id).map((p) => [p.facturacion_id as string, p])),
+    byId: new Map(locals.map((p) => [p.id, p])),
+    byName: new Map(locals.map((p) => [productKey(p.name), p])),
+  };
+}
+type LocalIndex = ReturnType<typeof indexLocals>;
+
+/** Deja un producto de Facturación reflejado aquí: lo crea si no existe o le pone lo que cambió.
+ *  Lo usan el pull y el webhook. Una versión que ya tenemos (o más vieja) no hace nada. */
+async function applyRemoteProduct(db: DB, businessId: string, biz: Biz, idx: LocalIndex, rp: FxProduct): Promise<{ result: "created" | "updated" | "linked" | "skipped"; error?: string }> {
+  const stamp = rp.actualizado || new Date().toISOString();
+  const iva = rp.exento ? 0 : IVAS.includes(Number(rp.iva)) ? Number(rp.iva) : null;
+  const price = fromNetPrice(Number(rp.precio) || 0, biz, iva);
+  const local = idx.byRemoteId.get(rp.id) ?? (rp.sku ? idx.byId.get(rp.sku) : undefined) ?? idx.byName.get(productKey(rp.nombre));
+  if (!local) {
+    const { data: ins, error } = await db.from("products").insert({
+      business_id: businessId, name: rp.nombre, kind: "product", price,
+      sat_code: rp.clave || null, sat_unit: rp.unidad || null, iva, facturacion_id: rp.id, synced_at: stamp,
+    }).select("id").maybeSingle();
+    if (error) return { result: "skipped", error: error.message };
+    if (ins) {
+      const np: LocalProduct = { id: ins.id as string, name: rp.nombre, price, sat_code: rp.clave, sat_unit: rp.unidad, iva, facturacion_id: rp.id, synced_at: stamp };
+      idx.byRemoteId.set(rp.id, np); idx.byId.set(np.id, np); idx.byName.set(productKey(rp.nombre), np);
+    }
+    return { result: "created" };
+  }
+  if (local.facturacion_id === rp.id && !newer(rp.actualizado, local.synced_at)) return { result: "skipped" };
+  const patch: Record<string, unknown> = {};
+  if (local.name !== rp.nombre) patch.name = rp.nombre;
+  // El precio va y viene con una división entre 1.16: solo cuenta como cambio si mueve un centavo.
+  if (Math.abs((Number(local.price) || 0) - price) >= 0.01) patch.price = price;
+  if ((local.sat_code || null) !== (rp.clave || null)) patch.sat_code = rp.clave || null;
+  if ((local.sat_unit || null) !== (rp.unidad || null)) patch.sat_unit = rp.unidad || null;
+  if ((local.iva == null ? null : Number(local.iva)) !== iva) patch.iva = iva;
+  const changed = Object.keys(patch).length > 0;
+  if (local.facturacion_id !== rp.id) patch.facturacion_id = rp.id;
+  const { error } = await db.from("products").update({ ...patch, synced_at: stamp }).eq("id", local.id);
+  if (error) return { result: "skipped", error: error.message };
+  Object.assign(local, patch, { synced_at: stamp });
+  idx.byRemoteId.set(rp.id, local);
+  return { result: changed ? "updated" : "linked" };
+}
+
 /**
  * Sincroniza el catálogo según el modo configurado.
  *
@@ -291,9 +404,6 @@ async function saveSyncState(businessId: string, patch: Record<string, string>):
  *   · pull / ambos: trae lo que cambió allá desde la última vez (`actualizado_desde`) y lo casa
  *     por id de Facturación, luego por sku (= id de aquí) y al final por nombre; lo que no existe
  *     se crea. La completa lista todo y desactiva aquí lo que ya no exista allá. No borra.
- *
- * Lo que entra por el pull se escribe directo en la base y no dispara el push, así que en modo
- * `ambos` un cambio no rebota entre los dos sistemas.
  *
  * `db` es el cliente de quien pidió sincronizar: con el del usuario, RLS decide si puede escribir
  * productos.
@@ -309,7 +419,7 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
   const locals = (localRows ?? []) as unknown as LocalProduct[];
   const now = new Date().toISOString();
 
-  if (cfg.sync === "push" || cfg.sync === "ambos") {
+  if (pushes(cfg.sync)) {
     // Solo-push: la completa manda todo, porque aquí está la verdad. En los dos sentidos se manda
     // únicamente lo que nunca se ha enlazado: un producto enlazado que ya no existe allá fue
     // borrado allá, y volver a mandarlo lo resucitaría en vez de desactivarlo aquí (abajo).
@@ -324,16 +434,17 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
       for (let j = 0; j < chunk.length; j++) {
         const rid = remote[j]?.id;
         if (!rid) continue;
-        chunk[j].facturacion_id = rid;
-        await db.from("products").update({ facturacion_id: rid, synced_at: now }).eq("id", chunk[j].id);
+        const stamp = remote[j].actualizado || now;
+        chunk[j].facturacion_id = rid; chunk[j].synced_at = stamp;
+        await db.from("products").update({ facturacion_id: rid, synced_at: stamp }).eq("id", chunk[j].id);
         res.pushed++;
       }
     }
   }
 
-  if (cfg.sync === "pull" || cfg.sync === "ambos") {
+  if (pulls(cfg.sync)) {
     // Se pide desde un minuto antes de lo último visto: un cambio que se confirmó tarde del otro
-    // lado puede traer una fecha anterior a la del cursor. Lo repetido no hace daño (no cambia nada).
+    // lado puede traer una fecha anterior a la del cursor. Lo repetido se ignora por su fecha.
     const seen = full ? "" : raw?._products_cursor || "";
     const seenMs = seen ? Date.parse(seen) : NaN;
     const cursor = Number.isNaN(seenMs) ? seen : new Date(seenMs - 60_000).toISOString();
@@ -348,42 +459,19 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
       return out;
     };
     let remote = await fetchAll(cursor);
-    // La consulta incremental puede no estar disponible todavía del otro lado: se lista todo.
+    // La consulta incremental puede no estar disponible del otro lado: se lista todo.
     let listedAll = !cursor;
     if (!remote && cursor) { remote = await fetchAll(""); listedAll = true; }
     if (!remote) return { ...res, ok: false, error: "list" };
 
-    const byRemoteId = new Map(locals.filter((p) => p.facturacion_id).map((p) => [p.facturacion_id as string, p]));
-    const byId = new Map(locals.map((p) => [p.id, p]));
-    const byName = new Map(locals.map((p) => [productKey(p.name), p]));
+    const idx = indexLocals(locals);
     let maxSeen = seen;
     for (const rp of remote) {
-      if (rp.actualizado && rp.actualizado > maxSeen) maxSeen = rp.actualizado;
-      const iva = rp.exento ? 0 : IVAS.includes(Number(rp.iva)) ? Number(rp.iva) : null;
-      const price = fromNetPrice(Number(rp.precio) || 0, biz, iva);
-      const local = byRemoteId.get(rp.id) ?? (rp.sku ? byId.get(rp.sku) : undefined) ?? byName.get(productKey(rp.nombre));
-      if (!local) {
-        const { data: ins, error } = await db.from("products").insert({
-          business_id: businessId, name: rp.nombre, kind: "product", price,
-          sat_code: rp.clave || null, sat_unit: rp.unidad || null, iva, facturacion_id: rp.id, synced_at: now,
-        }).select("id").maybeSingle();
-        if (error) return { ...res, ok: false, error: error.message };
-        if (ins) { res.created++; const np = { id: ins.id as string, name: rp.nombre, price, sat_code: rp.clave, sat_unit: rp.unidad, iva, facturacion_id: rp.id }; byRemoteId.set(rp.id, np); byName.set(productKey(rp.nombre), np); }
-        continue;
-      }
-      const patch: Record<string, unknown> = {};
-      if (local.name !== rp.nombre) patch.name = rp.nombre;
-      // El precio va y viene con una división entre 1.16: solo cuenta como cambio si mueve un centavo.
-      if (Math.abs((Number(local.price) || 0) - price) >= 0.01) patch.price = price;
-      if ((local.sat_code || null) !== (rp.clave || null)) patch.sat_code = rp.clave || null;
-      if ((local.sat_unit || null) !== (rp.unidad || null)) patch.sat_unit = rp.unidad || null;
-      if ((local.iva == null ? null : Number(local.iva)) !== iva) patch.iva = iva;
-      if (local.facturacion_id !== rp.id) patch.facturacion_id = rp.id;
-      const changed = Object.keys(patch).some((k) => k !== "facturacion_id");
-      const { error } = await db.from("products").update({ ...patch, synced_at: now }).eq("id", local.id);
-      if (error) return { ...res, ok: false, error: error.message };
-      if (changed) res.updated++;
-      local.facturacion_id = rp.id;
+      if (rp.actualizado && newer(rp.actualizado, maxSeen)) maxSeen = rp.actualizado;
+      const a = await applyRemoteProduct(db, businessId, biz, idx, rp);
+      if (a.error) return { ...res, ok: false, error: a.error };
+      if (a.result === "created") res.created++;
+      else if (a.result === "updated") res.updated++;
     }
     if (full && listedAll) {
       const alive = new Set(remote.map((r) => r.id));
@@ -399,6 +487,31 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
 
   await saveSyncState(businessId, { _products_synced_at: now });
   return res;
+}
+
+/* ---------- productos: avisos de Facturación (webhook) ---------- */
+
+/** `producto.creado` / `producto.actualizado`: se refleja aquí en el momento. Solo si la
+ *  sincronización del negocio trae cambios de allá (`pull` o `ambos`). */
+export async function onRemoteProductSaved(businessId: string, cfg: FxConfig, rp: FxProduct): Promise<void> {
+  if (!pulls(cfg.sync) || !rp?.id || !rp.nombre) return;
+  const db = createAdminClient();
+  const { data, error } = await db.from("products").select(`${PRODUCT_COLS}, active`).eq("business_id", businessId);
+  if (error) return;
+  await applyRemoteProduct(db, businessId, await bizTax(db, businessId), indexLocals((data ?? []) as unknown as LocalProduct[]), rp);
+}
+
+/** `producto.eliminado`: aquí NO se borra, se desactiva (igual que en la sincronización completa)
+ *  y se suelta el enlace. Un borrado más viejo que la versión que tenemos se ignora: el producto
+ *  se volvió a crear después. */
+export async function onRemoteProductDeleted(businessId: string, cfg: FxConfig, d: { id?: string; sku?: string | null; eliminado?: string }): Promise<void> {
+  if (!pulls(cfg.sync) || !d?.id) return;
+  const db = createAdminClient();
+  const { data } = await db.from("products").select("id, synced_at").eq("business_id", businessId).eq("facturacion_id", d.id).maybeSingle();
+  if (!data) return;
+  const when = d.eliminado || new Date().toISOString();
+  if (!newer(when, data.synced_at as string | null)) return;
+  await db.from("products").update({ active: false, facturacion_id: null, synced_at: when }).eq("id", data.id);
 }
 
 /* ---------- catálogo: lo que la pantalla necesita ---------- */

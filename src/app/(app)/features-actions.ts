@@ -2,7 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { after } from "next/server";
-import { pushProduct, removeRemoteProduct, syncProducts, type SyncResult } from "@/lib/facturacionOps";
+import { pushProduct, removeRemoteProduct, syncProducts, ensureProductEvents, loadFxConfig, type SyncResult } from "@/lib/facturacionOps";
+import { searchSatCatalog, type SatKey } from "@/lib/facturacion";
 
 /* ---------- automations ---------- */
 export async function toggleAutomation(id: string, enabled: boolean) {
@@ -65,10 +66,15 @@ export async function updateAutomation(id: string, input: AutomationInput) {
 // o baja se refleja en el catálogo de Facturación. Va en `after()`: la respuesta al usuario no
 // espera a otro servicio, y si ese servicio falla el producto de aquí queda guardado igual (la
 // siguiente sincronización lo empareja).
-export async function createProduct(businessId: string, input: { name: string; kind: string; price: number; cost?: number | null }) {
+export async function createProduct(businessId: string, input: { name: string; kind: string; price: number; cost?: number | null; sat_code?: string | null; sat_unit?: string | null }) {
   const supabase = await createClient();
   const base = { business_id: businessId, name: input.name.trim() || "Producto", kind: input.kind, price: input.price };
-  let { data, error } = await supabase.from("products").insert({ ...base, cost: input.cost ?? null }).select("id").maybeSingle();
+  // Las claves SAT solo viajan si vienen: sus columnas son de 0096 y el alta normal no depende de ella.
+  const fiscal = {
+    ...(input.sat_code && /^\d{8}$/.test(input.sat_code) ? { sat_code: input.sat_code } : {}),
+    ...(input.sat_unit && /^[A-Za-z0-9]{1,3}$/.test(input.sat_unit) ? { sat_unit: input.sat_unit.toUpperCase() } : {}),
+  };
+  let { data, error } = await supabase.from("products").insert({ ...base, ...fiscal, cost: input.cost ?? null }).select("id").maybeSingle();
   // cost (0057) may not be applied yet — retry without it.
   if (error) ({ data, error } = await supabase.from("products").insert(base).select("id").maybeSingle());
   const id = (data as { id?: string } | null)?.id;
@@ -85,7 +91,8 @@ const SYNCED_FIELDS = ["name", "price", "sat_code", "sat_unit", "iva"] as const;
 export async function updateProduct(id: string, patch: ProductPatch) {
   const supabase = await createClient();
   const { error } = await supabase.from("products").update(patch).eq("id", id);
-  if (!error && SYNCED_FIELDS.some((k) => k in patch)) after(() => pushProduct(id).catch(() => {}));
+  // Reactivar también viaja: un producto que se desactivó porque se borró allá vuelve a crearse allá.
+  if (!error && (SYNCED_FIELDS.some((k) => k in patch) || patch.active === true)) after(() => pushProduct(id).catch(() => {}));
   revalidatePath("/catalog");
 }
 export async function deleteProduct(id: string) {
@@ -104,8 +111,26 @@ export async function deleteProduct(id: string) {
 export async function syncCatalog(businessId: string, full: boolean): Promise<SyncResult> {
   const supabase = await createClient();
   const r = await syncProducts(supabase, businessId, full);
+  // De paso, si el aviso registrado en Facturación es de antes de los eventos del catálogo, se pide
+  // de nuevo (como mucho una vez al día) para que los cambios de allá lleguen solos.
+  if (r.ok) after(() => ensureProductEvents(businessId).catch(() => {}));
   if (r.ok) revalidatePath("/catalog");
   return r;
+}
+
+/** Buscador de claves del SAT (producto/servicio o unidad) por nombre, para el catálogo. La llave de
+ *  Facturación nunca sale del servidor: el navegador llama aquí y aquí se consulta. Solo responde a
+ *  quien pertenece al negocio (RLS decide si puede leerlo). */
+export async function searchSatKeys(businessId: string, kind: "productos" | "unidades", q: string): Promise<SatKey[]> {
+  const text = q.trim().slice(0, 60);
+  if (text.length < 3) return [];
+  const supabase = await createClient();
+  const { data: mine } = await supabase.from("businesses").select("id").eq("id", businessId).maybeSingle();
+  if (!mine) return [];
+  const cfg = await loadFxConfig(businessId);
+  if (!cfg) return [];
+  const r = await searchSatCatalog(cfg.apiKey, kind, text);
+  return r.ok ? (r.data?.datos ?? []).slice(0, 50).map((d) => ({ clave: String(d.clave), nombre: String(d.nombre) })) : [];
 }
 
 /* ---------- appointments ---------- */

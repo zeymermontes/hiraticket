@@ -117,9 +117,27 @@ export const upsertProducts = (k: string, productos: FxProductInput[]) =>
 export const deleteRemoteProduct = (k: string, id: string) => call<unknown>(k, "DELETE", `/productos/${encodeURIComponent(id)}`);
 
 /* ---------- webhooks ---------- */
-export const WEBHOOK_EVENTS = ["link.facturado", "cfdi.timbrado", "cfdi.cancelado"];
+/** Los avisos de siempre: facturas y links. */
+export const WEBHOOK_EVENTS_BASE = ["link.facturado", "cfdi.timbrado", "cfdi.cancelado"];
+/** Avisos del catálogo, para reflejar aquí al momento lo que cambia allá. */
+export const WEBHOOK_EVENTS_PRODUCTS = ["producto.creado", "producto.actualizado", "producto.eliminado", "productos.importados"];
+export const WEBHOOK_EVENTS = [...WEBHOOK_EVENTS_BASE, ...WEBHOOK_EVENTS_PRODUCTS];
 export interface FxWebhook { url: string; eventos: string[]; ultimo_envio: string | null; ultimo_estatus: number | null; ultimo_error: string | null }
 export const getWebhook = (k: string) => call<{ webhook: FxWebhook | null }>(k, "GET", "/webhooks");
-export const setWebhook = (k: string, url: string, reemplazar: boolean) =>
-  call<{ webhook: FxWebhook; secreto: string }>(k, "PUT", "/webhooks", { url, eventos: WEBHOOK_EVENTS, reemplazar });
+/** Registra (o cambia) el webhook de la cuenta. Devuelve el secreto, que solo se entrega aquí.
+ *  Se pide la lista completa de eventos; un servidor que todavía no conozca los del catálogo
+ *  responde 422 y se reintenta con los de siempre. `webhook.eventos` dice cuáles quedaron. */
+export async function setWebhook(k: string, url: string, reemplazar: boolean) {
+  type R = { webhook: FxWebhook; secreto: string };
+  const full = await call<R>(k, "PUT", "/webhooks", { url, eventos: WEBHOOK_EVENTS, reemplazar });
+  if (full.ok || full.status !== 422) return full;
+  return call<R>(k, "PUT", "/webhooks", { url, eventos: WEBHOOK_EVENTS_BASE, reemplazar });
+}
 export const deleteWebhook = (k: string) => call<unknown>(k, "DELETE", "/webhooks");
+
+/* ---------- catálogos del SAT ---------- */
+export interface SatKey { clave: string; nombre: string }
+/** Busca por nombre en el catálogo de claves de producto/servicio o de unidades del SAT (máx. 50).
+ *  Con menos de 3 letras responde vacío. */
+export const searchSatCatalog = (k: string, kind: "productos" | "unidades", q: string) =>
+  call<{ datos: SatKey[] }>(k, "GET", `/catalogos/${kind}?q=${encodeURIComponent(q)}`);
