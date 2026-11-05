@@ -261,6 +261,7 @@ export function OrderDrawer({
   const invErr = (code?: string, error?: string): string => {
     const es = lang === "es";
     if (code === "already-issued") return es ? "Este pedido ya tiene factura." : "This order already has an invoice.";
+    if (code === "disconnected") return es ? "Se perdió la conexión con Facturación. Un administrador debe volver a conectar el plugin en Plugins." : "The connection to the invoicing account was lost. An admin must reconnect the plugin in Plugins.";
     if (error === "not-configured") return es ? "Falta terminar de configurar el plugin de Facturación (llave y RFC)." : "Finish setting up the invoicing plugin (key and RFC).";
     if (error === "no-items") return es ? "El pedido no tiene artículos con precio." : "The order has no priced items.";
     if (error === "non-positive") return es ? "No hay nada que facturar: el total del pedido es cero o negativo." : "Nothing to invoice: the order total is zero or negative.";

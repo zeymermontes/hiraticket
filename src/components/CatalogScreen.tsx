@@ -31,7 +31,10 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
     setSyncing(false);
     const es = lang === "es";
     if (!r.ok) {
-      if (!quiet) setSyncMsg({ ok: false, text: r.error && !["off", "list", "migration"].includes(r.error) ? r.error : (es ? "No se pudo sincronizar con Facturación. Intenta de nuevo." : "Couldn't sync with the invoicing account. Try again.") });
+      // La conexión perdida se dice siempre, también en la sincronización silenciosa al abrir: si
+      // no, el catálogo dejaría de sincronizarse sin que nadie se entere.
+      if (r.error === "disconnected") setSyncMsg({ ok: false, text: es ? "Se perdió la conexión con Facturación. Vuelve a conectar el plugin en Plugins." : "The connection to the invoicing account was lost. Reconnect the plugin in Plugins." });
+      else if (!quiet) setSyncMsg({ ok: false, text: r.error && !["off", "list", "migration"].includes(r.error) ? r.error : (es ? "No se pudo sincronizar con Facturación. Intenta de nuevo." : "Couldn't sync with the invoicing account. Try again.") });
       return;
     }
     const parts = [

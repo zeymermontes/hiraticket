@@ -16,19 +16,23 @@ const BASE = `${FACTURACION_SITE}/api/v1`;
 
 export interface FxResult<T> { ok: boolean; status: number; data?: T; error?: string; code?: string }
 
-async function call<T>(apiKey: string, method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<FxResult<T>> {
+/** Una petición a Facturación con un token de portador: la llave de API del negocio para la API
+ *  v1, o el secreto de integrador para la vinculación. */
+async function request<T>(url: string, token: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<FxResult<T>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20_000);
   try {
-    const res = await fetch(`${BASE}${path}`, {
+    const res = await fetch(url, {
       method,
-      headers: { Authorization: `Bearer ${apiKey}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
+      headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
       cache: "no-store",
     });
     const j = (await res.json().catch(() => null)) as (T & { error?: string; code?: string }) | null;
-    if (!res.ok) return { ok: false, status: res.status, error: j?.error || `HTTP ${res.status}`, code: j?.code };
+    // En un error se conserva el cuerpo: algunas respuestas traen datos además del mensaje (el
+    // estatus de un código de vinculación vencido, por ejemplo).
+    if (!res.ok) return { ok: false, status: res.status, error: j?.error || `HTTP ${res.status}`, code: j?.code, data: (j ?? undefined) as T | undefined };
     return { ok: true, status: res.status, data: (j ?? ({} as T)) as T };
   } catch {
     return { ok: false, status: 0, error: "network", code: "red" };
@@ -36,6 +40,9 @@ async function call<T>(apiKey: string, method: string, path: string, body?: unkn
     clearTimeout(timer);
   }
 }
+
+const call = <T>(apiKey: string, method: string, path: string, body?: unknown, headers?: Record<string, string>) =>
+  request<T>(`${BASE}${path}`, apiKey, method, body, headers);
 
 /* ---------- cuenta ---------- */
 export interface FxIssuer { id: string; rfc: string; nombre: string; regimen: string; cp: string; csd_vence: string | null; prueba: boolean }
@@ -141,3 +148,35 @@ export interface SatKey { clave: string; nombre: string }
  *  Con menos de 3 letras responde vacío. */
 export const searchSatCatalog = (k: string, kind: "productos" | "unidades", q: string) =>
   call<{ datos: SatKey[] }>(k, "GET", `/catalogos/${kind}?q=${encodeURIComponent(q)}`);
+
+/* ---------- vinculación por código ---------- */
+// Conectar la cuenta del negocio sin copiar la llave a mano. Estas llamadas no llevan llave de
+// negocio (todavía no existe): las autentica un secreto compartido entre los dos servidores.
+
+const integratorSecret = () => (process.env.FACTURACION_INTEGRATOR_SECRET || "").trim();
+/** ¿Este servidor puede vincular por código? Sin el secreto, solo queda la llave manual. */
+export const integratorConfigured = () => integratorSecret().length > 0;
+const LINK = `${FACTURACION_SITE}/api/vincular`;
+
+/** Lo que Facturación entrega UNA sola vez al autorizar: la llave ya creada y el webhook ya registrado. */
+export interface FxLinkResult {
+  llave: string; secreto_webhook: string;
+  cuenta: { id: string; nombre: string };
+  emisor: { rfc: string; nombre: string };
+  marca: { id: string; nombre: string } | null;
+  eventos: string[];
+  folios?: { disponibles?: number; ambiente?: string; plan?: { restantes_este_mes?: number } | null };
+}
+interface LinkParty { negocio: string; negocio_id: string; solicitante: { nombre: string; correo?: string }; webhook_url: string }
+
+/** Vía A: pide un código para que el dueño lo autorice en Facturación. */
+export const linkRequest = (b: LinkParty & { estado: string }) =>
+  request<{ codigo: string; url: string; vence: string }>(`${LINK}/solicitar`, integratorSecret(), "POST", { integrador: "hiraticket", eventos: WEBHOOK_EVENTS, ...b });
+/** Vía A: ¿ya autorizaron? 202 pendiente · 200 resultado (una vez) · 410 vencido, cancelado o entregado. */
+export const linkPoll = (codigo: string, estado: string) =>
+  request<FxLinkResult & { estatus?: string }>(`${LINK}/${encodeURIComponent(codigo)}?estado=${encodeURIComponent(estado)}`, integratorSecret(), "GET");
+/** Vía B: canjea un código generado en el panel de Facturación. */
+export const linkRedeem = (b: LinkParty & { codigo: string }) =>
+  request<FxLinkResult>(`${LINK}/canjear`, integratorSecret(), "POST", { integrador: "hiraticket", eventos: WEBHOOK_EVENTS, ...b });
+/** Desconectar: revoca la llave vinculada y quita su webhook. 409 si la llave se pegó a mano. */
+export const unlinkKey = (k: string) => call<unknown>(k, "DELETE", "/vinculo");

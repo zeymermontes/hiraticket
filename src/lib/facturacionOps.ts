@@ -429,7 +429,7 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
       let r = await upsertProducts(cfg.apiKey, chunk.map((p) => toRemote(p, biz)));
       // Un id de allá que ya no existe tumba el lote entero: se reintenta casando por sku o nombre.
       if (!r.ok && r.status === 404) r = await upsertProducts(cfg.apiKey, chunk.map((p) => toRemote({ ...p, facturacion_id: null }, biz)));
-      if (!r.ok) return { ...res, ok: false, error: r.error };
+      if (!r.ok) return { ...res, ok: false, error: r.status === 401 ? "disconnected" : r.error };
       const remote = r.data?.datos ?? [];
       for (let j = 0; j < chunk.length; j++) {
         const rid = remote[j]?.id;
@@ -448,10 +448,12 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
     const seen = full ? "" : raw?._products_cursor || "";
     const seenMs = seen ? Date.parse(seen) : NaN;
     const cursor = Number.isNaN(seenMs) ? seen : new Date(seenMs - 60_000).toISOString();
+    let lost = false; // 401: la llave ya no vale
     const fetchAll = async (desde: string): Promise<FxProduct[] | null> => {
       const out: FxProduct[] = [];
       for (let page = 1; page <= 100; page++) {
         const r = await listProducts(cfg.apiKey, { desde: desde || undefined, pagina: page });
+        if (r.status === 401) lost = true;
         if (!r.ok || !r.data) return null;
         out.push(...r.data.datos);
         if (out.length >= r.data.total || r.data.datos.length === 0) break;
@@ -461,8 +463,8 @@ export async function syncProducts(db: DB, businessId: string, full: boolean): P
     let remote = await fetchAll(cursor);
     // La consulta incremental puede no estar disponible del otro lado: se lista todo.
     let listedAll = !cursor;
-    if (!remote && cursor) { remote = await fetchAll(""); listedAll = true; }
-    if (!remote) return { ...res, ok: false, error: "list" };
+    if (!remote && cursor && !lost) { remote = await fetchAll(""); listedAll = true; }
+    if (!remote) return { ...res, ok: false, error: lost ? "disconnected" : "list" };
 
     const idx = indexLocals(locals);
     let maxSeen = seen;

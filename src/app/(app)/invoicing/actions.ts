@@ -80,7 +80,7 @@ const liveLinks = (rows: InvRow[]) => rows.filter((r) => r.provider === FX && r.
  *  total exacto cuando el plan lo pide (`plan.single`). */
 async function newLinkRow(
   supabase: SB, cfg: FxConfig, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null,
-): Promise<{ row?: InvRow; error?: string }> {
+): Promise<{ row?: InvRow; error?: string; code?: string }> {
   const vence = new Date(Date.now() + cfg.linkDays * 864e5).toISOString().slice(0, 10);
   const r = await createLink(cfg.apiKey, {
     emisor: cfg.emisor, referencia: order.code, vence, ...(cfg.marca ? { marca: cfg.marca } : {}),
@@ -88,7 +88,8 @@ async function newLinkRow(
       ? { total: plan.single.total, descripcion: plan.single.description }
       : { conceptos: toConcepts(plan.lines), descripcion: `Pedido ${order.code}` }),
   });
-  if (!r.ok || !r.data) return { error: r.status === 0 ? undefined : r.error };
+  // 401: la llave ya no vale (la revocaron en Facturación). No es un error del pedido.
+  if (!r.ok || !r.data) return { error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
   const { data: ins, error } = await supabase.from("invoices").insert({
     business_id: order.business_id, order_id: order.id, provider: FX, status: "link_enviado",
     link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, total: r.data.total, created_by: userId,
@@ -105,7 +106,8 @@ export interface IssueResult {
   ok: boolean; error?: string;
   /** `confirm-tax`: la factura sale por más que el pedido (se suma IVA); se vuelve a llamar con `confirmTax`.
    *  `sin-folios`: la cuenta de Facturación no tiene folios. `retry`: no se supo si timbró; reintentar no duplica.
-   *  `link-changed`: el link del pedido cambió de estado del otro lado; ya se puso al día, basta reintentar. */
+   *  `link-changed`: el link del pedido cambió de estado del otro lado; ya se puso al día, basta reintentar.
+   *  `disconnected`: Facturación ya no acepta la llave (la revocaron): hay que volver a conectar el plugin. */
   code?: string;
   invoiceId?: string; uuid?: string; pdfUrl?: string | null; publicUrl?: string | null;
   total?: number; orderTotal?: number; simulated?: boolean;
@@ -172,7 +174,7 @@ export async function issueInvoice(
       }
       if (!target) {
         const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null);
-        if (!made.row) return { ok: false, error: made.error };
+        if (!made.row) return { ok: false, error: made.error, code: made.code };
         target = made.row; ownLink = true;
       }
     }
@@ -215,7 +217,7 @@ export async function issueInvoice(
         else if (!target) await supabase.from("invoices").delete().eq("id", row.id).eq("status", "pending");
       }
       return {
-        ok: false, error: r.status === 0 ? undefined : r.error, code: r.status === 402 ? "sin-folios" : unknown ? "retry" : undefined,
+        ok: false, error: r.status === 0 ? undefined : r.error, code: r.status === 402 ? "sin-folios" : r.status === 401 ? "disconnected" : unknown ? "retry" : undefined,
         ...(r.status === 402 ? { foliosUrl: `${FACTURACION_SITE}/dashboard/folios` } : {}),
       };
     }
@@ -283,7 +285,8 @@ export async function notifyInvoice(orderId: string, invoiceId: string): Promise
 
 export interface LinkResult {
   ok: boolean; error?: string;
-  /** `confirm-tax`: igual que al emitir. `already-issued`: el pedido ya tiene factura. */
+  /** `confirm-tax`: igual que al emitir. `already-issued`: el pedido ya tiene factura.
+   *  `disconnected`: hay que volver a conectar el plugin. */
   code?: string;
   url?: string; sent?: boolean; reused?: boolean; expires?: string;
   total?: number; orderTotal?: number;
@@ -326,7 +329,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   }
   if (!link) {
     const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null);
-    if (!made.row) return { ok: false, error: made.error };
+    if (!made.row) return { ok: false, error: made.error, code: made.code };
     link = made.row;
   }
 

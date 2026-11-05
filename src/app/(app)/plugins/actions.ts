@@ -6,7 +6,7 @@ import { addonMrr, type PluginConfigField, type PluginPricing } from "@/lib/plug
 import { after } from "next/server";
 import { encryptSecret, decryptSecret, MASK } from "@/lib/secrets";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { PLUGIN_ID as FX, listIssuers, getFolios, getWebhook, setWebhook, deleteWebhook } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, listIssuers, getFolios, getWebhook, setWebhook, deleteWebhook, unlinkKey } from "@/lib/facturacion";
 import { syncProducts, fxWebhookUrl, eventsTag, hasProductEvents } from "@/lib/facturacionOps";
 
 /** Load a plugin's pricing + config schema from the catalogue. */
@@ -51,17 +51,23 @@ export async function uninstallPlugin(businessId: string, pluginId: string): Pro
   // Facturación: antes de perder la llave, se quita el aviso (webhook) que registramos allá, para
   // que su cuenta no siga llamando a una integración que ya no existe. Solo si sigue siendo el
   // nuestro: uno que el negocio haya puesto después a mano no se toca.
-  let fxKey = "";
+  let fxKey = ""; let fxLinked = false;
   if (pluginId === FX) {
     const { data } = await supabase.from("business_plugins").select("config").eq("business_id", businessId).eq("plugin_id", pluginId).maybeSingle();
-    const k = (data?.config as Record<string, unknown> | undefined)?.api_key;
-    fxKey = typeof k === "string" ? decryptSecret(k) : "";
+    const c = (data?.config as Record<string, unknown> | undefined) ?? {};
+    fxKey = typeof c.api_key === "string" ? decryptSecret(c.api_key) : "";
+    fxLinked = c._linked === "1";
   }
   const { error, count } = await supabase.from("business_plugins").delete({ count: "exact" }).eq("business_id", businessId).eq("plugin_id", pluginId);
   if (error) return { ok: false, error: error.message };
   if (fxKey && count) {
-    const w = await getWebhook(fxKey);
-    if (w.ok && w.data?.webhook?.url === fxWebhookUrl(businessId)) await deleteWebhook(fxKey);
+    // Una llave que nació de la vinculación por código se revoca allá junto con su webhook: no debe
+    // quedar viva una llave que ya nadie usa. Una pegada a mano es del negocio y no se toca.
+    const gone = fxLinked ? await unlinkKey(fxKey) : null;
+    if (!gone?.ok) {
+      const w = await getWebhook(fxKey);
+      if (w.ok && w.data?.webhook?.url?.replace(/^https?:/, "") === fxWebhookUrl(businessId).replace(/^https?:/, "")) await deleteWebhook(fxKey);
+    }
   }
   revalidatePath("/plugins"); revalidatePath("/platform");
   return { ok: true };
@@ -155,6 +161,8 @@ export async function savePluginConfig(
   }
 
   let info: string | undefined;
+  // Si la llave se cambió a mano, ya no es la que entregó la vinculación por código.
+  if (pluginId === FX && next.api_key !== prev.api_key) { next._linked = ""; next._link_account = ""; }
   if (pluginId === FX) {
     // Antes de tocar nada del otro lado se comprueba que este usuario PUEDE guardar (RLS: solo
     // administradores). Si no, registraríamos allá un aviso cuyo secreto nunca llegó a guardarse.
