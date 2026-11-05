@@ -99,6 +99,38 @@ export async function forwardInternalMessage(messageId: string, toChannel: strin
   await supabase.from("internal_reads").upsert({ business_id: businessId, user_id: userId, channel: toChannel, last_read_at: new Date().toISOString() });
 }
 
+/**
+ * Reenvía un mensaje del chat de un CLIENTE al chat interno: al canal del equipo o al mensaje
+ * directo con un compañero. El texto y el archivo se copian tal cual (los dos chats cifran con la
+ * misma llave del negocio y guardan los archivos en el mismo sitio), así que no hay que descargar
+ * y volver a subir nada.
+ *
+ * Solo se reenvía a canales de quien llama (el del equipo y sus propios mensajes directos) y solo
+ * un mensaje de su mismo negocio: RLS ya impide leer el de otro, y aquí se comprueba además.
+ */
+export async function forwardToInternal(messageId: string, channels: string[]): Promise<{ ok: boolean; sent: number }> {
+  const { supabase, userId, businessId } = await ctx();
+  if (!userId || !businessId || !Array.isArray(channels) || !channels.length) return { ok: false, sent: 0 };
+  const { data: m } = await supabase.from("messages")
+    .select("business_id, type, body, media_url, media_mime, media_name, deleted").eq("id", messageId).maybeSingle();
+  if (!m || m.business_id !== businessId || m.deleted) return { ok: false, sent: 0 };
+  const { threads } = await getInternalThreads(businessId, userId);
+  const mine = new Set(threads.map((t) => t.key));
+  const targets = [...new Set(channels)].filter((c) => mine.has(c));
+  if (!targets.length) return { ok: false, sent: 0 };
+  // Lo que no trae archivo viaja como texto (una ubicación o un contacto se reenvían por su texto).
+  const type = m.media_url ? ((m.type as string) || "document") : "text";
+  const { error } = await supabase.from("internal_messages").insert(targets.map((channel) => ({
+    business_id: businessId, channel, author_id: userId, forwarded: true,
+    body: (m.body as string | null) ?? "", type,
+    media_url: m.media_url ?? null, media_mime: m.media_mime ?? null, media_name: m.media_name ?? null,
+  })));
+  if (error) return { ok: false, sent: 0 };
+  const now = new Date().toISOString();
+  await supabase.from("internal_reads").upsert(targets.map((channel) => ({ business_id: businessId, user_id: userId, channel, last_read_at: now })));
+  return { ok: true, sent: targets.length };
+}
+
 /** Edit your own internal message. */
 export async function editInternalMessage(id: string, body: string): Promise<void> {
   const text = body.trim();

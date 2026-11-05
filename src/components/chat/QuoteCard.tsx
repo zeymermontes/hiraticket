@@ -1,5 +1,6 @@
 "use client";
 import { Icon } from "@/components/Icon";
+import { plainWa } from "@/lib/waFormat";
 
 /**
  * La cita de un mensaje —- el bloque "en respuesta a" que va arriba de la burbuja y la vista
@@ -45,7 +46,7 @@ const isMedia = (t: string) => t === "image" || t === "video" || t === "sticker"
 export function quoteText(m: QuoteSource, lang: "es" | "en"): string {
   const es = lang === "es";
   if (m.deleted) return es ? "Mensaje eliminado" : "Message deleted";
-  if (m.body && m.body.trim()) return m.body;
+  if (m.body && m.body.trim()) return plainWa(m.body);
   switch (m.type) {
     case "image": return es ? "📷 Foto" : "📷 Photo";
     case "video": return es ? "🎥 Video" : "🎥 Video";

@@ -58,6 +58,9 @@ import { mediaTypeOf } from "@/lib/mediaUpload";
 import { uploadMedia } from "@/lib/uploadMedia";
 import { CachedImg } from "@/components/chat/CachedImg";
 import { dragOutProps, copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
+import type { InternalThread } from "@/lib/internal";
+import { loadInternalThreads, forwardToInternal } from "@/app/(app)/internal/actions";
+import { formatWa, plainWa, WaFormatPreview } from "@/lib/waFormat";
 import { contactCardsOf, contactCardText } from "@/lib/contactCard";
 import type { StickerItem } from "@/lib/chat";
 import { MSG_PAGE } from "@/lib/types";
@@ -602,7 +605,7 @@ export function MediaBlock({ m, onImage }: { m: ChatMessage; onImage?: (id: stri
 /** Conversation-list preview: caption/body, else a label for the media type (or "deleted"). */
 function msgPreview(c: ConvListItem, lang: "es" | "en"): string {
   if (c.lastDeleted) return lang === "es" ? "🚫 Mensaje eliminado" : "🚫 Message deleted";
-  if (c.preview) return c.preview;
+  if (c.preview) return plainWa(c.preview);
   const L = (es: string, en: string) => (lang === "es" ? es : en);
   switch (c.lastType) {
     case "image": return L("📷 Foto", "📷 Photo");
@@ -2480,7 +2483,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
                         {(m.media_url || m.type === "call" || m.media_purged_at || m.media_pending || m.media_fetch_error) && <MediaBlock m={m} onImage={openLightbox} />}
                         {templateCardOf(m)
                           ? <WaTemplatePreview compact header={templateCardOf(m)!.header} body={m.body ?? ""} footer={templateCardOf(m)!.footer} buttons={templateCardOf(m)!.buttons} />
-                          : m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{detail.is_group ? renderRichText(m.body, (num) => nameForNum(m, num)) : linkify(m.body)}</div>}
+                          : m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{formatWa(m.body, (s, k) => <React.Fragment key={k}>{detail.is_group ? renderRichText(s, (num) => nameForNum(m, num)) : linkify(s)}</React.Fragment>)}</div>}
                         {m.body && firstUrl(m.body) && <LinkPreview url={firstUrl(m.body)!} onReady={pinBottom} />}
                       </>
                     )}
@@ -2599,6 +2602,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
             <button className="iconbtn sm" onClick={() => setPendingTpl(null)}><Icon name="x" size={14} /></button>
           </div>
         )}
+        {!waBlocked && <WaFormatPreview text={text} lang={lang} />}
         {!waBlocked && (
         <div className="composer-box">
           <div className="composer-input">
@@ -2807,23 +2811,37 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   );
 }
 
-/** Pick one or more conversations to forward message(s) into. */
+/** Pick where to forward message(s): the team channel, a teammate (internal chat), and/or other
+ *  customer conversations. Lo interno va primero: es a donde más se reenvía ("mira lo que mandó
+ *  este cliente") y antes no se podía, había que descargar el archivo y volver a subirlo. */
 function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: string; messages: ChatMessage[]; onClose: () => void; onDone: (n: number) => void }) {
-  const { lang } = useApp();
+  const { lang, personal } = useApp();
   const [convs, setConvs] = useState<ConvListItem[]>([]);
+  const [threads, setThreads] = useState<InternalThread[]>([]);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [intSel, setIntSel] = useState<Set<string>>(new Set()); // canales del chat interno
   const [sending, setSending] = useState(false);
   useEffect(() => { liveListPage(businessId, { scope: "all", limit: 200 }).then((p) => setConvs(p.rows)).catch(() => {}); }, [businessId]);
-  const view = convs.filter((c) => { const s = q.trim().toLowerCase(); return !s || (c.contact?.name ?? "").toLowerCase().includes(s) || (c.contact?.phone ?? "").includes(s); });
+  useEffect(() => { loadInternalThreads().then((r) => setThreads(r?.threads ?? [])).catch(() => {}); }, []);
+  const needle = q.trim().toLowerCase();
+  const teamLabel = lang === "es" ? "Equipo" : "Team";
+  const threadName = (t: InternalThread) => (t.kind === "team" ? teamLabel : t.title);
+  const view = convs.filter((c) => !needle || (c.contact?.name ?? "").toLowerCase().includes(needle) || (c.contact?.phone ?? "").includes(needle));
+  const threadView = threads.filter((t) => !needle || threadName(t).toLowerCase().includes(needle));
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleInt = (key: string) => setIntSel((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  const total = sel.size + intSel.size;
   const doForward = async () => {
-    if (!sel.size) return;
+    if (!total) return;
     setSending(true);
-    try { for (const convId of sel) for (const m of messages) await forwardMessage(m.id, convId); onDone(sel.size); }
-    finally { setSending(false); }
+    try {
+      if (intSel.size) for (const m of messages) await forwardToInternal(m.id, [...intSel]);
+      for (const convId of sel) for (const m of messages) await forwardMessage(m.id, convId);
+      onDone(total);
+    } finally { setSending(false); }
   };
-  const preview = messages.length > 1 ? (lang === "es" ? `${messages.length} fotos` : `${messages.length} photos`) : (messages[0]?.body || (messages[0] && messages[0].type !== "text" ? "📎 " + messages[0].type : ""));
+  const preview = messages.length > 1 ? (lang === "es" ? `${messages.length} fotos` : `${messages.length} photos`) : (plainWa(messages[0]?.body) || (messages[0] && messages[0].type !== "text" ? "📎 " + messages[0].type : ""));
   return (
     <div className="modal-wrap">
       <div className="scrim" onClick={onClose} />
@@ -2831,9 +2849,20 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
         <div className="modal-head"><h3 className="grow">{lang === "es" ? "Reenviar a…" : "Forward to…"}</h3><button className="iconbtn" onClick={onClose}><Icon name="x" /></button></div>
         <div style={{ padding: "0 16px 10px" }}>
           {preview && <div className="t-xs muted truncate" style={{ marginBottom: 8, padding: "6px 10px", background: "var(--surface-2)", borderRadius: 8 }}>{preview}</div>}
-          <div className="field field-filled"><Icon name="search" size={15} /><input placeholder={lang === "es" ? "Buscar chat…" : "Search chat…"} value={q} onChange={(e) => setQ(e.target.value)} autoFocus /></div>
+          <div className="field field-filled"><Icon name="search" size={15} /><input placeholder={lang === "es" ? "Buscar compañero o chat…" : "Search teammate or chat…"} value={q} onChange={(e) => setQ(e.target.value)} autoFocus /></div>
         </div>
         <div className="scroll" style={{ flex: 1, padding: "0 8px", minHeight: 0, overflowY: "auto" }}>
+          {threadView.length > 0 && <div className="menu-label">{lang === "es" ? "Equipo (chat interno)" : "Team (internal chat)"}</div>}
+          {threadView.map((t) => (
+            <button key={t.key} className={"menu-item" + (intSel.has(t.key) ? " on" : "")} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", height: "auto", padding: "8px 10px" }} onClick={() => toggleInt(t.key)}>
+              <input type="checkbox" checked={intSel.has(t.key)} readOnly style={{ pointerEvents: "none" }} />
+              {t.kind === "team"
+                ? <span style={{ width: 30, height: 30, borderRadius: "50%", background: t.color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="agents" size={15} /></span>
+                : <Avatar name={t.title} initials={deriveInitials(t.title || "?")} color={t.color} size={30} />}
+              <span className="grow truncate">{threadName(t)}</span>
+            </button>
+          ))}
+          {threadView.length > 0 && view.length > 0 && <div className="menu-label">{personal ? (lang === "es" ? "Contactos" : "Contacts") : (lang === "es" ? "Clientes" : "Customers")}</div>}
           {view.map((c) => (
             <button key={c.id} className={"menu-item" + (sel.has(c.id) ? " on" : "")} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", height: "auto", padding: "8px 10px" }} onClick={() => toggle(c.id)}>
               <input type="checkbox" checked={sel.has(c.id)} readOnly style={{ pointerEvents: "none" }} />
@@ -2841,11 +2870,11 @@ function ForwardPicker({ businessId, messages, onClose, onDone }: { businessId: 
               <span className="grow truncate">{c.contact?.name ?? c.contact?.phone ?? "—"}</span>
             </button>
           ))}
-          {view.length === 0 && <div className="muted t-sm" style={{ padding: 14, textAlign: "center" }}>{lang === "es" ? "Sin chats." : "No chats."}</div>}
+          {view.length === 0 && threadView.length === 0 && <div className="muted t-sm" style={{ padding: 14, textAlign: "center" }}>{lang === "es" ? "Sin chats." : "No chats."}</div>}
         </div>
         <div className="modal-foot"><span className="grow" />
-          <button className="btn btn-primary" disabled={sending || sel.size === 0} onClick={doForward}>
-            {sending ? <Spinner size={14} /> : <Icon name="forward" size={15} />}{lang === "es" ? "Reenviar" : "Forward"}{sel.size ? ` (${sel.size})` : ""}
+          <button className="btn btn-primary" disabled={sending || total === 0} onClick={doForward}>
+            {sending ? <Spinner size={14} /> : <Icon name="forward" size={15} />}{lang === "es" ? "Reenviar" : "Forward"}{total ? ` (${total})` : ""}
           </button>
         </div>
       </div>

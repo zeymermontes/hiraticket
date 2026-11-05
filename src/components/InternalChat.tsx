@@ -33,6 +33,7 @@ import { ExportChatModal } from "@/components/chat/ExportChatModal";
 import { exportFileBase, type ExportMsg } from "@/lib/chatExport";
 import type { StickerItem } from "@/lib/chat";
 import { useComposerFocus, focusComposer, enterSends } from "@/lib/composerFocus";
+import { formatWa, plainWa, WaFormatPreview } from "@/lib/waFormat";
 
 /** Merge message lists by id (incoming wins, so edits/reactions/deletes apply), sorted by time. */
 function mergeInternal(a: InternalMsg[], b: InternalMsg[]): InternalMsg[] {
@@ -446,7 +447,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
           ) : (
             <>
               {m.media_url && <MediaBlock m={m as unknown as ChatMessage} onImage={openLightbox} />}
-              {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderBody(m.body, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</div>}
+              {m.body && <div style={{ marginTop: m.media_url ? 4 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{formatWa(m.body, (s, k) => <Fragment key={k}>{renderBody(s, (m.mentions ?? []).map((id) => agentMap.get(id)?.name).filter((n): n is string => !!n))}</Fragment>)}</div>}
               {url && <LinkPreview url={url} />}
             </>
           )}
@@ -486,7 +487,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
                   <span className="conv-name truncate">{title(t)}</span>
                   {t.lastAt && <span className="conv-time">{clock(t.lastAt, lang)}</span>}
                 </div>
-                <div className="conv-prev truncate">{t.lastBody ? (t.lastAuthorId === meId ? (lang === "es" ? "Tú: " : "You: ") : "") + t.lastBody : <span className="muted">{lang === "es" ? "Sin mensajes" : "No messages"}</span>}</div>
+                <div className="conv-prev truncate">{t.lastBody ? (t.lastAuthorId === meId ? (lang === "es" ? "Tú: " : "You: ") : "") + plainWa(t.lastBody) : <span className="muted">{lang === "es" ? "Sin mensajes" : "No messages"}</span>}</div>
               </div>
               {t.unread > 0 && <span className="badge badge-red">{t.unread}</span>}
             </button>
@@ -571,6 +572,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
               <button className="iconbtn sm" onClick={() => { setEditing(null); setReply(null); if (editing) setText(""); }}><Icon name="x" size={14} /></button>
             </div>
           )}
+          <WaFormatPreview text={text} lang={lang} />
           <div className="composer-box">
             <div className="composer-input">
               <textarea ref={taRef} className="bare" rows={1} style={{ resize: "none" }} placeholder={lang === "es" ? "Mensaje interno… usa @ para mencionar" : "Internal message… use @ to mention"} value={text}
