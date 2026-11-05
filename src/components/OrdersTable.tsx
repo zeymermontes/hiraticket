@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { InvoicingProvider } from "@/lib/plugins";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { CardList, Card, CardTop, CardMeta } from "@/components/MobileCards";
@@ -50,7 +51,7 @@ export function OrdersTable({
   doneFromStageId?: string | null;
   manualMarginPct?: number;
   shipping?: string | null; // active shipping plugin id (gates all shipping UI)
-  invoicing?: boolean; // Facturapi active (gates the CFDI block)
+  invoicing?: InvoicingProvider | null; // Facturapi active (gates the CFDI block)
 }) {
   const { t, lang, personal } = useApp();
   const router = useRouter();

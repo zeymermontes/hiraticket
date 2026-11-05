@@ -1,5 +1,6 @@
 "use client";
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { InvoicingProvider } from "@/lib/plugins";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -831,7 +832,7 @@ export function ChatScreen({
   connected: boolean;
   invoice?: { add: boolean; rate: number };
   shipping?: string | null;
-  invoicing?: boolean;
+  invoicing?: InvoicingProvider | null;
 }) {
   const { lang } = useApp();
   const router = useRouter();
@@ -2939,7 +2940,7 @@ function TransferControl({ detail, agents, areas, meId, onAssignedToMe }: { deta
 }
 
 /* ---------- Workspace (center column) ---------- */
-function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: boolean; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
+function Workspace({ detail, agents, areas, stages, products, meId, businessId, connected, invoice, shipping, invoicing, onResizeStart, onOpen360, onAssignedToMe, doneFromStageId = null, manualMarginPct = 50 }: { detail: ConvDetail; agents: Agent[]; areas: Area[]; stages: Stage[]; products: Product[]; meId: string; businessId: string; connected: boolean; invoice?: { add: boolean; rate: number }; shipping?: string | null; invoicing?: InvoicingProvider | null; onResizeStart: (e: React.PointerEvent) => void; onOpen360: () => void; onAssignedToMe?: (convId: string) => void; doneFromStageId?: string | null; manualMarginPct?: number }) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const refresh = useChatRefresh();

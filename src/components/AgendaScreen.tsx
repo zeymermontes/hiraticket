@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useTransition } from "react";
+import type { InvoicingProvider } from "@/lib/plugins";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useConfirm } from "@/components/Confirm";
@@ -30,7 +31,7 @@ function dayBucket(iso: string, lang: "es" | "en"): string {
 /** Los datos de apoyo del OrderDrawer — solo llegan cuando hay un ?order= abierto. */
 export interface AgendaDrawerData {
   areas: Area[]; agents: Agent[]; products: Product[]; connected: boolean;
-  shipping: string | null; invoicing: boolean; convDetail: ConvDetail | null;
+  shipping: string | null; invoicing: InvoicingProvider | null; convDetail: ConvDetail | null;
 }
 
 export function AgendaScreen({ businessId, appointments, dueOrders = [], stages = [], openOrder = null, drawer = null, doneFromStageId = null, manualMarginPct = 50 }: {

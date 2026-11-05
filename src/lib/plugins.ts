@@ -17,6 +17,10 @@ export interface PluginConfigField {
   label: string;
   type: "text" | "secret" | "toggle" | "select";
   options?: string[];
+  /** Texto a mostrar por cada opción de un select (la opción cruda es lo que se guarda). */
+  labels?: Record<string, string>;
+  /** Ayuda corta bajo el campo. */
+  help?: string;
   required?: boolean;
 }
 export interface PluginGuideStep { title: string; body: string; url?: string }
@@ -30,7 +34,8 @@ export interface Plugin {
   pricing: PluginPricing;
   config_schema: PluginConfigField[];
   guide: PluginGuideStep[]; // setup instructions shown in the card's info popup
-  status: "available" | "coming_soon";
+  /** `legacy`: ya no se ofrece a negocios nuevos; lo sigue viendo y usando quien lo tiene instalado. */
+  status: "available" | "coming_soon" | "legacy";
   popular: boolean;
   position: number;
 }
@@ -50,14 +55,17 @@ export function addonMrr(pricing: PluginPricing): number {
   return Number(pricing?.addon_monthly ?? 0);
 }
 
-/** Replace secret field values with a mask sentinel so the browser never receives credentials. */
+/** Lo que el navegador puede ver de la configuración de un plugin: SOLO los campos de su esquema,
+ *  con los secretos sustituidos por la máscara. Todo lo demás que viva en `config` (el secreto del
+ *  webhook, cursores de sincronización: llaves internas con prefijo `_`) se queda en el servidor.
+ *  Antes se copiaba el objeto entero y solo se enmascaraban los secretos declarados, así que
+ *  cualquier valor interno viajaba al cliente tal cual. */
 function maskConfig(schema: PluginConfigField[], config: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...config };
+  const out: Record<string, unknown> = {};
   for (const f of schema) {
-    if (f.type === "secret") {
-      const v = config[f.key];
-      out[f.key] = typeof v === "string" && (v.length > 0 || isEncrypted(v)) ? MASK : "";
-    }
+    const v = config[f.key];
+    if (f.type === "secret") out[f.key] = typeof v === "string" && (v.length > 0 || isEncrypted(v)) ? MASK : "";
+    else if (v !== undefined) out[f.key] = v;
   }
   return out;
 }
@@ -89,17 +97,23 @@ export async function getPluginRuntimeConfig(businessId: string, pluginId: strin
   return out;
 }
 
+/** El plugin de CFDI activo. Con los dos instalados manda Hiraticket Facturación. */
+export type InvoicingProvider = "hiraticket_facturacion" | "facturapi";
+export function pickInvoicing(ids: Set<string>): InvoicingProvider | null {
+  return ids.has("hiraticket_facturacion") ? "hiraticket_facturacion" : ids.has("facturapi") ? "facturapi" : null;
+}
+
 /** Which integration surfaces are live for this business (drives UI visibility — one query).
  *  shipping: the active shipping plugin id (skydropx | enviosperros) or null.
- *  invoicing: whether Facturapi is active. */
-async function _getActiveIntegrations(businessId: string): Promise<{ shipping: string | null; invoicing: boolean }> {
+ *  invoicing: the active CFDI plugin id, or null. */
+async function _getActiveIntegrations(businessId: string): Promise<{ shipping: string | null; invoicing: InvoicingProvider | null }> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("business_plugins").select("plugin_id")
-    .eq("business_id", businessId).eq("status", "active").in("plugin_id", ["skydropx", "enviosperros", "facturapi"]);
-  if (error) return { shipping: null, invoicing: false };
+    .eq("business_id", businessId).eq("status", "active").in("plugin_id", ["skydropx", "enviosperros", "facturapi", "hiraticket_facturacion"]);
+  if (error) return { shipping: null, invoicing: null };
   const ids = new Set((data ?? []).map((r) => r.plugin_id as string));
-  return { shipping: ids.has("skydropx") ? "skydropx" : ids.has("enviosperros") ? "enviosperros" : null, invoicing: ids.has("facturapi") };
+  return { shipping: ids.has("skydropx") ? "skydropx" : ids.has("enviosperros") ? "enviosperros" : null, invoicing: pickInvoicing(ids) };
 }
 
 /** Envuelto en React cache(): dentro de UNA petición, varias llamadas con los mismos argumentos
@@ -120,7 +134,8 @@ export async function getBusinessCatalog(businessId: string): Promise<CatalogEnt
   const byId = new Map<string, InstalledPlugin & { plugin_id: string }>(
     error ? [] : (installs ?? []).map((r) => [r.plugin_id as string, r as unknown as InstalledPlugin & { plugin_id: string }]),
   );
-  return catalog.map((p) => {
+  // Un plugin `legacy` solo aparece para quien ya lo tiene instalado.
+  return catalog.filter((p) => p.status !== "legacy" || byId.has(p.id)).map((p) => {
     const inst = byId.get(p.id);
     return {
       ...p,

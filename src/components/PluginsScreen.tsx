@@ -128,7 +128,8 @@ export function PluginsScreen({ businessId, entries, isAdmin }: { businessId: st
         </div>
       </div>
 
-      {configEntry && <ConfigModal key={configEntry.id} businessId={businessId} entry={configEntry} lang={lang} onClose={() => setConfigId(null)} onSaved={() => { setConfigId(null); router.refresh(); }} />}
+      {configEntry && <ConfigModal key={configEntry.id} businessId={businessId} entry={configEntry} lang={lang} onClose={() => setConfigId(null)}
+        onSaved={(info) => { setConfigId(null); if (info) push({ kind: "info", title: lang === "es" ? "Guardado" : "Saved", message: info }); router.refresh(); }} />}
       {(() => {
         const g = entries.find((e) => e.id === guideId);
         return g ? <GuideModal entry={g} lang={lang} onClose={() => setGuideId(null)} onConfigure={g.installed && isAdmin ? () => { setGuideId(null); setConfigId(g.id); } : undefined} /> : null;
@@ -169,13 +170,15 @@ function GuideModal({ entry, lang, onClose, onConfigure }: { entry: CatalogEntry
   );
 }
 
-function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId: string; entry: CatalogEntry; lang: "es" | "en"; onClose: () => void; onSaved: () => void }) {
+function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId: string; entry: CatalogEntry; lang: "es" | "en"; onClose: () => void; onSaved: (info?: string) => void }) {
   const [values, setValues] = useState<Record<string, unknown>>(() => ({ ...(entry.installed?.config ?? {}) }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // La cuenta del otro lado ya manda avisos a otro sistema: se pregunta antes de reemplazarlo.
+  const [conflict, setConflict] = useState<string | null>(null);
   const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }));
 
-  const save = async () => {
+  const save = async (replaceWebhook = false) => {
     // Required fields: allow the mask sentinel (means "already set") to satisfy a required secret.
     for (const f of entry.config_schema) {
       if (f.required && f.type !== "toggle") {
@@ -183,10 +186,12 @@ function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId
         if (!v || (typeof v === "string" && !v.trim())) { setErr((lang === "es" ? "Falta: " : "Missing: ") + f.label); return; }
       }
     }
-    setBusy(true); setErr(null);
-    const r = await savePluginConfig(businessId, entry.id, values);
+    setBusy(true); setErr(null); setConflict(null);
+    const r = await savePluginConfig(businessId, entry.id, values, { replaceWebhook });
     setBusy(false);
-    if (r.ok) onSaved(); else setErr(lang === "es" ? "No se pudo guardar." : "Couldn't save.");
+    if (r.ok) { onSaved(r.info); return; }
+    if (r.code === "webhook-conflict") { setConflict(r.error ?? ""); return; }
+    setErr(r.error && r.error !== "not-installed" ? r.error : (lang === "es" ? "No se pudo guardar." : "Couldn't save."));
   };
 
   return (
@@ -206,7 +211,7 @@ function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId
               ) : f.type === "select" ? (
                 <select className="select" value={String(values[f.key] ?? "")} onChange={(e) => set(f.key, e.target.value)}>
                   <option value="">—</option>
-                  {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                  {(f.options ?? []).map((o) => <option key={o} value={o}>{f.labels?.[o] ?? o}</option>)}
                 </select>
               ) : (
                 <input className="inp-inline" type={f.type === "secret" ? "password" : "text"} value={String(values[f.key] ?? "")}
@@ -215,15 +220,24 @@ function ConfigModal({ businessId, entry, lang, onClose, onSaved }: { businessId
                   onChange={(e) => set(f.key, e.target.value)} />
               )}
               {f.type === "secret" && <span className="t-xs muted">{lang === "es" ? "Se guarda cifrado. Déjalo como está para no cambiarlo." : "Stored encrypted. Leave as-is to keep it."}</span>}
+              {f.help && <span className="t-xs muted">{f.help}</span>}
             </div>
           ))}
+          {conflict !== null && (
+            <div className="col gap-2" style={{ padding: "10px 12px", borderRadius: 10, background: "var(--amber-bg)", border: "1px solid var(--amber-bd)" }}>
+              <div className="t-sm" style={{ fontWeight: 700 }}>{lang === "es" ? "Tu cuenta ya manda avisos a otro sistema" : "Your account already notifies another system"}</div>
+              <div className="t-xs">{conflict}</div>
+              <div className="t-xs muted">{lang === "es" ? "Solo puede haber un destino por cuenta. Si lo reemplazas, ese otro sistema deja de recibir los avisos de facturas." : "There can be only one destination per account. If you replace it, that other system stops receiving invoice notifications."}</div>
+              <button className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => save(true)}>{lang === "es" ? "Reemplazar y guardar" : "Replace and save"}</button>
+            </div>
+          )}
           {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" style={{ color: "var(--red)", marginRight: "auto" }} disabled={busy}
             onClick={async () => { setBusy(true); await uninstallPlugin(businessId, entry.id); onSaved(); }}><Icon name="trash" size={14} />{lang === "es" ? "Quitar" : "Remove"}</button>
           <button className="btn btn-outline" onClick={onClose}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={busy} onClick={save}><Icon name="check" size={14} />{busy ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => save()}><Icon name="check" size={14} />{busy ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}</button>
         </div>
       </div>
     </div>

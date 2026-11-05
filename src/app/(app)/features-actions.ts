@@ -1,6 +1,8 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { after } from "next/server";
+import { pushProduct, removeRemoteProduct, syncProducts, type SyncResult } from "@/lib/facturacionOps";
 
 /* ---------- automations ---------- */
 export async function toggleAutomation(id: string, enabled: boolean) {
@@ -59,23 +61,51 @@ export async function updateAutomation(id: string, input: AutomationInput) {
 }
 
 /* ---------- products ---------- */
+// Con el plugin Hiraticket Facturación y la sincronización hacia allá encendida, cada alta, cambio
+// o baja se refleja en el catálogo de Facturación. Va en `after()`: la respuesta al usuario no
+// espera a otro servicio, y si ese servicio falla el producto de aquí queda guardado igual (la
+// siguiente sincronización lo empareja).
 export async function createProduct(businessId: string, input: { name: string; kind: string; price: number; cost?: number | null }) {
   const supabase = await createClient();
   const base = { business_id: businessId, name: input.name.trim() || "Producto", kind: input.kind, price: input.price };
-  const { error } = await supabase.from("products").insert({ ...base, cost: input.cost ?? null });
+  let { data, error } = await supabase.from("products").insert({ ...base, cost: input.cost ?? null }).select("id").maybeSingle();
   // cost (0057) may not be applied yet — retry without it.
-  if (error) await supabase.from("products").insert(base);
+  if (error) ({ data, error } = await supabase.from("products").insert(base).select("id").maybeSingle());
+  const id = (data as { id?: string } | null)?.id;
+  if (id) after(() => pushProduct(id).catch(() => {}));
   revalidatePath("/catalog");
 }
-export async function updateProduct(id: string, patch: { name?: string; price?: number; cost?: number | null; active?: boolean; price_tiers?: { min: number; price: number }[] }) {
+export interface ProductPatch {
+  name?: string; price?: number; cost?: number | null; active?: boolean; price_tiers?: { min: number; price: number }[];
+  /** Datos fiscales (0096): clave SAT de producto, clave SAT de unidad e IVA propio (null = el del negocio). */
+  sat_code?: string | null; sat_unit?: string | null; iva?: number | null;
+}
+// Lo que existe también del otro lado. Un cambio que solo toca costo, tramos o activo no viaja.
+const SYNCED_FIELDS = ["name", "price", "sat_code", "sat_unit", "iva"] as const;
+export async function updateProduct(id: string, patch: ProductPatch) {
   const supabase = await createClient();
-  await supabase.from("products").update(patch).eq("id", id);
+  const { error } = await supabase.from("products").update(patch).eq("id", id);
+  if (!error && SYNCED_FIELDS.some((k) => k in patch)) after(() => pushProduct(id).catch(() => {}));
   revalidatePath("/catalog");
 }
 export async function deleteProduct(id: string) {
   const supabase = await createClient();
-  await supabase.from("products").delete().eq("id", id);
+  // El enlace con Facturación se lee ANTES de borrar: después ya no hay de dónde sacarlo. Sin 0096
+  // la columna no existe y la consulta falla: no había nada que borrar allá.
+  const { data: link } = await supabase.from("products").select("business_id, facturacion_id").eq("id", id).maybeSingle();
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  const l = link as { business_id?: string; facturacion_id?: string | null } | null;
+  if (!error && l?.business_id && l.facturacion_id) after(() => removeRemoteProduct(l.business_id!, l.facturacion_id!).catch(() => {}));
   revalidatePath("/catalog");
+}
+
+/** «Sincronizar ahora» / «Sincronización completa» del catálogo con Hiraticket Facturación. Corre
+ *  con el cliente del usuario: RLS decide si puede escribir productos. */
+export async function syncCatalog(businessId: string, full: boolean): Promise<SyncResult> {
+  const supabase = await createClient();
+  const r = await syncProducts(supabase, businessId, full);
+  if (r.ok) revalidatePath("/catalog");
+  return r;
 }
 
 /* ---------- appointments ---------- */

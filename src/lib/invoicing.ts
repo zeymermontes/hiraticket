@@ -15,7 +15,8 @@ export interface FiscalData {
   email?: string;
   cfdi_use: string; // uso CFDI (G03…)
 }
-export interface InvoiceItem { description: string; quantity: number; priceWithTax: number }
+/** `taxRate` (fracción) y `productKey` por renglón: cada producto puede traer su IVA y su clave SAT. */
+export interface InvoiceItem { description: string; quantity: number; priceWithTax: number; taxRate?: number; productKey?: string; unitKey?: string }
 export interface IssuedInvoice { id: string; uuid: string; total: number; verificationUrl: string | null }
 
 export async function facturapiCreateInvoice(
@@ -37,9 +38,10 @@ export async function facturapiCreateInvoice(
           quantity: it.quantity,
           product: {
             description: it.description,
-            product_key: opts.productKey,
+            product_key: it.productKey || opts.productKey,
+            ...(it.unitKey ? { unit_key: it.unitKey } : {}),
             price: it.priceWithTax, // tax_included defaults to true
-            taxes: [{ type: "IVA", rate: opts.taxRate }],
+            taxes: [{ type: "IVA", rate: it.taxRate ?? opts.taxRate }],
           },
         })),
         use: fiscal.cfdi_use,

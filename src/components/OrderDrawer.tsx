@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect, useTransition } from "react";
+import type { InvoicingProvider } from "@/lib/plugins";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { menuStyle } from "@/lib/popover";
@@ -11,7 +12,7 @@ import { useConfirm } from "@/components/Confirm";
 import { type PillColor, priorityColor, formatMoney, tagColor, isOverdue, payStatusColor, payStatusLabel } from "@/lib/types";
 import { TagPicker } from "@/components/TagPicker";
 import { CatalogAutocomplete } from "@/components/CatalogAutocomplete";
-import type { OrderDetail } from "@/lib/orders";
+import type { OrderDetail, OrderInvoice } from "@/lib/orders";
 import { chargeTitle, chargeKindLabel, chargesGap, isLive, CHARGE_KINDS, suggestKind, type Charge } from "@/lib/charges";
 import type { Area, Stage } from "@/lib/business";
 import type { Agent } from "@/lib/chat";
@@ -26,7 +27,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
-import { notifyInvoice } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -60,7 +61,7 @@ export function OrderDrawer({
   onChanged?: () => void;
   businessId: string; convDetail: ConvDetail | null; connected: boolean; products?: Product[];
   shipping?: string | null; // active shipping plugin id — gates the Envío block entirely
-  invoicing?: boolean; // Facturapi active — gates the Factura (CFDI) block entirely
+  invoicing?: InvoicingProvider | null; // Facturapi active — gates the Factura (CFDI) block entirely
   doneFromStageId?: string | null; // default del negocio (0072) — solo para NOMBRARLO en el dropdown
   manualMarginPct?: number; // % de margen (Ajustes) — para estimar el costo de mermas de catálogo sin costo propio
 }) {
@@ -160,6 +161,9 @@ export function OrderDrawer({
   const [trackSent, setTrackSent] = useState<string | null>(null); // shipment id whose tracking was just WhatsApped
   const [invOpen, setInvOpen] = useState(false);
   const [invSent, setInvSent] = useState<string | null>(null); // invoice id just WhatsApped
+  const [invBusy, setInvBusy] = useState(false);
+  const [invCopied, setInvCopied] = useState(false);
+  const [invMsg, setInvMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [wasteItem, setWasteItem] = useState(""); // "" → merma del pedido completo
   const [wasteProductId, setWasteProductId] = useState<string | null>(null); // del catálogo → costo tomado de ahí; null = genérico
   const [wasteName, setWasteName] = useState("");
@@ -253,6 +257,68 @@ export function OrderDrawer({
   // 0075: llegó a la etapa de "confirmar pago" y ningún flujo ya decidió el pago por su cuenta —
   // pregunta al que acaba de mover el pedido, sin importar por cuál de las dos rutas (con o sin
   // sincronizar subtareas) haya llegado ahí.
+  /* ---- Factura: link para que el cliente se facture (Hiraticket Facturación) ---- */
+  const invErr = (code?: string, error?: string): string => {
+    const es = lang === "es";
+    if (code === "already-issued") return es ? "Este pedido ya tiene factura." : "This order already has an invoice.";
+    if (error === "not-configured") return es ? "Falta terminar de configurar el plugin de Facturación (llave y RFC)." : "Finish setting up the invoicing plugin (key and RFC).";
+    if (error === "no-items") return es ? "El pedido no tiene artículos con precio." : "The order has no priced items.";
+    if (error === "non-positive") return es ? "No hay nada que facturar: el total del pedido es cero o negativo." : "Nothing to invoice: the order total is zero or negative.";
+    return error ? (es ? `No se pudo: ${error}` : `Couldn't do it: ${error}`) : (es ? "No se pudo conectar con Facturación. Intenta de nuevo." : "Couldn't reach the invoicing service. Try again.");
+  };
+  const copyInvLink = async (url: string) => { try { await navigator.clipboard.writeText(url); setInvCopied(true); setTimeout(() => setInvCopied(false), 1500); } catch {} };
+  const sendInvLink = async (confirmTax = false): Promise<void> => {
+    setInvBusy(true); setInvMsg(null);
+    const r = await sendInvoiceLink(detail.id, { confirmTax });
+    setInvBusy(false);
+    if (r.code === "confirm-tax") {
+      // El pedido se cobró sin IVA y el negocio lo suma al facturar: la factura sale por más.
+      const yes = await ask({
+        icon: "file",
+        title: lang === "es" ? "La factura lleva IVA" : "The invoice adds tax",
+        message: lang === "es"
+          ? `Este pedido se cobró sin IVA ($${formatMoney(r.orderTotal ?? 0)}). La factura saldrá por $${formatMoney(r.total ?? 0)}.\n\nSi quieres cobrarle la diferencia al cliente, cancela y marca «Requiere factura» en el pedido antes de mandar el link.`
+          : `This order was charged without tax ($${formatMoney(r.orderTotal ?? 0)}). The invoice will be for $${formatMoney(r.total ?? 0)}.\n\nTo charge the customer the difference, cancel and tick "Requires invoice" on the order before sending the link.`,
+        confirmLabel: lang === "es" ? `Facturar por $${formatMoney(r.total ?? 0)}` : `Invoice $${formatMoney(r.total ?? 0)}`,
+      });
+      if (yes) return sendInvLink(true);
+      return;
+    }
+    if (!r.ok) { setInvMsg({ ok: false, text: invErr(r.code, r.error) }); return; }
+    if (!r.sent && r.url) {
+      await copyInvLink(r.url);
+      setInvMsg({ ok: true, text: lang === "es" ? "Link creado y copiado. Este pedido no tiene chat: mándaselo tú al cliente." : "Link created and copied. This order has no chat: send it to the customer yourself." });
+    } else {
+      setInvMsg({ ok: true, text: r.reused ? (lang === "es" ? "Se reenvió el mismo link al chat." : "The same link was sent again.") : (lang === "es" ? "Link enviado al chat del cliente." : "Link sent to the customer's chat.") });
+    }
+    run(() => Promise.resolve());
+  };
+  const checkInvLink = async (invoiceId: string) => {
+    setInvBusy(true); setInvMsg(null);
+    const r = await refreshInvoiceLink(invoiceId);
+    setInvBusy(false);
+    if (!r.ok) { setInvMsg({ ok: false, text: invErr(undefined, r.error) }); return; }
+    if (r.status === "link_enviado") setInvMsg({ ok: true, text: lang === "es" ? "El cliente todavía no se factura." : "The customer hasn't invoiced yet." });
+    run(() => Promise.resolve());
+  };
+  const openInvModal = async () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const open = detail.invoices.some((i) => i.status === "link_enviado" && (!i.link_expires || i.link_expires >= todayStr));
+    if (open) {
+      const yes = await ask({
+        icon: "file",
+        title: lang === "es" ? "Hay un link abierto" : "There's an open link",
+        message: lang === "es"
+          ? "El cliente todavía puede facturarse con el link que le mandaste. Si emites la factura aquí y después usa el link, quedarían dos facturas del mismo pedido.\n\nEmítela aquí solo si el cliente no va a usar el link."
+          : "The customer can still invoice with the link you sent. If you issue the invoice here and they later use the link, the order would end up with two invoices.\n\nOnly issue it here if the customer won't use the link.",
+        confirmLabel: lang === "es" ? "Emitir de todos modos" : "Issue anyway",
+      });
+      if (!yes) return;
+    }
+    setInvMsg(null);
+    setInvOpen(true);
+  };
+
   const confirmMarkPaid = async () => {
     const yes = await ask({
       icon: "check",
@@ -676,42 +742,107 @@ export function OrderDrawer({
             </div>
           )}
 
-          {/* CFDI invoicing — only when Facturapi is active */}
-          {!personal && invoicing && (
+          {/* Factura (CFDI): con Facturapi solo se emite; con Hiraticket Facturación además se puede
+              mandar un link para que el cliente se facture solo. */}
+          {!personal && invoicing && (() => {
+            const fx = invoicing === "hiraticket_facturacion";
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const isOpen = (i: OrderInvoice) => i.status === "link_enviado" && (!i.link_expires || i.link_expires >= todayStr);
+            const issued = detail.invoices.filter((i) => i.status === "issued");
+            const cancelled = detail.invoices.filter((i) => i.status === "cancelada");
+            const openLink = detail.invoices.find(isOpen);
+            // El link más reciente que ya no sirve, solo si no hay nada mejor que mostrar.
+            const deadLink = !openLink && !issued.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
+            const unconfirmed = !issued.length && detail.invoices.some((i) => i.status === "pending");
+            const day = (d: string) => new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
+            return (
             <div className="ws-block">
               <div className="ws-block-head"><Icon name="file" size={16} /><h4 className="grow">{lang === "es" ? "Factura (CFDI)" : "Invoice (CFDI)"}</h4>
-                {detail.requires_invoice && detail.invoices.length === 0 && <Pill color="amber" dot>{lang === "es" ? "Pendiente" : "Pending"}</Pill>}
-                {detail.invoices.length > 0 && <Pill color="green" dot>{lang === "es" ? "Emitida" : "Issued"}</Pill>}
+                {issued.length > 0 ? <Pill color="green" dot>{lang === "es" ? "Emitida" : "Issued"}</Pill>
+                  : openLink ? <Pill color="blue" dot>{lang === "es" ? "Link enviado" : "Link sent"}</Pill>
+                  : detail.requires_invoice ? <Pill color="amber" dot>{lang === "es" ? "Pendiente" : "Pending"}</Pill> : null}
               </div>
               <div style={{ padding: "12px 14px" }} className="col gap-2">
-                {detail.invoices.map((inv) => (
-                  <div key={inv.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                {[...issued, ...cancelled].map((inv) => (
+                  <div key={inv.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", opacity: inv.status === "cancelada" ? 0.7 : 1 }}>
                     <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                       <span className="mono t-xs truncate" style={{ fontWeight: 700, maxWidth: 220 }} title={inv.uuid ?? undefined}>{inv.uuid ?? "—"}</span>
+                      {inv.status === "cancelada" && <Pill color="red">{lang === "es" ? "Cancelada" : "Cancelled"}</Pill>}
                       <span className="grow" />
                       {inv.total != null && <span className="mono t-sm">${formatMoney(inv.total)}</span>}
                     </div>
-                    <div className="row gap-2" style={{ marginTop: 2 }}>
+                    <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {inv.pdf_url && <a className="btn btn-sm btn-outline" href={inv.pdf_url} target="_blank" rel="noreferrer"><Icon name="download" size={13} />PDF</a>}
-                      {detail.conversation_id && (
+                      {inv.public_url && <a className="btn btn-sm btn-outline" href={inv.public_url} target="_blank" rel="noreferrer" title={lang === "es" ? "Página pública de la factura (PDF y XML)" : "Public invoice page (PDF and XML)"}><Icon name="external" size={13} />{lang === "es" ? "Ver factura" : "View invoice"}</a>}
+                      {detail.conversation_id && inv.status === "issued" && (
                         <button className="btn btn-sm btn-outline" disabled={pending || invSent === inv.id}
                           onClick={() => start(async () => { const r = await notifyInvoice(detail.id, inv.id); if (r.ok) setInvSent(inv.id); })}>
                           <Icon name="whatsapp" size={13} />{invSent === inv.id ? (lang === "es" ? "Enviada ✓" : "Sent ✓") : (lang === "es" ? "Enviar factura" : "Send invoice")}
                         </button>
                       )}
                       <span className="grow" />
-                      <span className="t-xs muted">{new Date(inv.created_at).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" })}</span>
+                      <span className="t-xs muted">{day(inv.created_at)}</span>
                     </div>
                   </div>
                 ))}
-                {detail.invoices.length === 0 && (
-                  <button className="btn btn-sm btn-outline" onClick={() => setInvOpen(true)}>
-                    <Icon name="plus" size={14} />{lang === "es" ? "Emitir factura" : "Issue invoice"}
-                  </button>
+
+                {openLink && issued.length === 0 && (
+                  <div className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
+                    <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                      <span className="mono t-xs" style={{ fontWeight: 700 }}>{openLink.link_code}</span>
+                      <span className="t-xs muted">{lang === "es" ? "Abierto" : "Open"}{openLink.link_expires ? ` · ${lang === "es" ? "vence" : "expires"} ${day(openLink.link_expires)}` : ""}</span>
+                      <span className="grow" />
+                      {openLink.total != null && <span className="mono t-sm">${formatMoney(openLink.total)}</span>}
+                    </div>
+                    <div className="t-xs muted">{lang === "es" ? "Cuando el cliente capture sus datos, la factura aparece aquí." : "Once the customer enters their details, the invoice shows up here."}</div>
+                    <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
+                      {detail.conversation_id && (
+                        <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={() => sendInvLink()}>
+                          <Icon name="whatsapp" size={13} />{lang === "es" ? "Reenviar" : "Resend"}
+                        </button>
+                      )}
+                      {openLink.link_url && (
+                        <button className="btn btn-sm btn-outline" onClick={() => copyInvLink(openLink.link_url!)}>
+                          <Icon name={invCopied ? "check" : "file"} size={13} />{invCopied ? (lang === "es" ? "Copiado" : "Copied") : (lang === "es" ? "Copiar link" : "Copy link")}
+                        </button>
+                      )}
+                      <span className="grow" />
+                      <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Revisar si el cliente ya se facturó" : "Check whether the customer already invoiced"} onClick={() => checkInvLink(openLink.id)}><Icon name="refresh" size={14} /></button>
+                    </div>
+                  </div>
                 )}
+
+                {deadLink && (
+                  <div className="t-xs muted">
+                    {deadLink.status === "global"
+                      ? (lang === "es" ? `El link ${deadLink.link_code} ya no se puede usar: esta venta entró a la factura global.` : `Link ${deadLink.link_code} can no longer be used: this sale went into the global invoice.`)
+                      : (lang === "es" ? `El link ${deadLink.link_code} venció${deadLink.link_expires ? ` el ${day(deadLink.link_expires)}` : ""}.` : `Link ${deadLink.link_code} expired${deadLink.link_expires ? ` on ${day(deadLink.link_expires)}` : ""}.`)}
+                  </div>
+                )}
+                {unconfirmed && (
+                  <div className="t-xs" style={{ color: "var(--amber)" }}>
+                    {lang === "es" ? "El último timbrado no se confirmó. Vuelve a emitir la factura: si ya se había timbrado, se recupera la misma y no se gasta otro folio." : "The last stamping wasn't confirmed. Issue the invoice again: if it had been stamped, the same one is recovered and no extra folio is used."}
+                  </div>
+                )}
+
+                {issued.length === 0 && (
+                  <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+                    {fx && !openLink && (
+                      <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => sendInvLink()}
+                        title={lang === "es" ? "El cliente captura sus datos fiscales y recibe su factura" : "The customer enters their tax details and gets the invoice"}>
+                        <Icon name={detail.conversation_id ? "send" : "file"} size={14} />{detail.conversation_id ? (lang === "es" ? "Enviar link para facturar" : "Send invoicing link") : (lang === "es" ? "Crear link para facturar" : "Create invoicing link")}
+                      </button>
+                    )}
+                    <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={openInvModal}>
+                      <Icon name="plus" size={14} />{lang === "es" ? "Emitir factura" : "Issue invoice"}
+                    </button>
+                  </div>
+                )}
+                {invMsg && <div className="t-xs" style={{ color: invMsg.ok ? "var(--text-muted)" : "var(--red)" }}>{invMsg.text}</div>}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* notes */}
           {(() => {
@@ -955,7 +1086,7 @@ export function OrderDrawer({
           onClose={() => setShipOpen(false)} onCreated={() => run(() => Promise.resolve())} />
       )}
       {invOpen && (
-        <InvoiceModal orderId={detail.id} contactId={detail.contact?.id ?? null} total={detail.total} lang={lang}
+        <InvoiceModal orderId={detail.id} contactId={detail.contact?.id ?? null} total={detail.total} lang={lang} provider={invoicing ?? null}
           onClose={() => setInvOpen(false)} onCreated={() => run(() => Promise.resolve())} />
       )}
       {tagRect && (

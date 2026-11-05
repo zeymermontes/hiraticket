@@ -6,6 +6,12 @@ export function configuredOrigin(): string {
   return env ? env.replace(/\/+$/, "") : "";
 }
 
+/** Origen público de la app para ligas que salen hacia afuera (links de pago, webhooks que
+ *  registramos en otros servicios). */
+export function appBaseUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "https://app.hiraticket.com").replace(/\/+$/, "");
+}
+
 /** Un destino de redirección seguro: solo rutas relativas del propio sitio. Un `next` con dominio,
  *  con `//` o con `/\` (que el navegador lee como otro host) se descarta y se va a `fallback`. */
 export function safeNext(next: string | null | undefined, fallback = "/chat"): string {

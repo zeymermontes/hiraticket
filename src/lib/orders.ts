@@ -8,7 +8,13 @@ export interface OrderEvent { id: string; kind: string; text: string | null; cre
 export interface OrderPayment { id: string; amount: number; method: string | null; note: string | null; created_by: string | null; created_at: string; charge_id: string | null }
 export interface PaymentProof { id: string; method: string; account_ref: string | null; image_url: string; image_mime: string | null; amount: number | null; payer_note: string | null; status: string; reviewed_by: string | null; created_at: string }
 export interface OrderShipment { id: string; provider: string; carrier: string | null; service: string | null; tracking_number: string | null; label_url: string | null; cost: number | null; status: string; created_at: string }
-export interface OrderInvoice { id: string; uuid: string | null; total: number | null; pdf_url: string | null; verification_url: string | null; status: string; created_at: string }
+/** Una factura del pedido, o el link para que el cliente se facture.
+ *  status: `issued` emitida · `pending` se mandó a timbrar y no se supo la respuesta ·
+ *  `link_enviado` link abierto · `vencido` / `global` / `reemplazado` link que ya no sirve · `cancelada`. */
+export interface OrderInvoice {
+  id: string; uuid: string | null; total: number | null; pdf_url: string | null; verification_url: string | null; status: string; created_at: string;
+  provider?: string | null; link_code?: string | null; link_url?: string | null; link_expires?: string | null; public_url?: string | null;
+}
 /** Merma interna (0074): reimpresión, error de producción o cancelación parcial. Nunca visible al
  *  cliente. `product_id` liga con el catálogo (costo tomado de ahí); null = merma genérica con
  *  `cost` a mano. `name` es una fotografía —- se guarda tal cual aunque el producto o la línea
@@ -83,7 +89,7 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     supabase.from("payments").select("id, amount, method, note, created_by, created_at, charge_id").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("payment_proofs").select("id, method, account_ref, image_url, image_mime, amount, payer_note, status, reviewed_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("shipments").select("id, provider, carrier, service, tracking_number, label_url, cost, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
-    supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
+    supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at, provider, link_code, link_url, link_expires, public_url").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("order_waste").select("id, order_item_id, product_id, name, qty, cost, reason, created_by, created_at").eq("order_id", orderId).order("created_at", { ascending: false }),
     supabase.from("charges").select("id, seq, kind, label, amount, due_at, status, pay_token, sent_at, created_at").eq("order_id", orderId).order("seq", { ascending: true }),
   ]);
@@ -133,7 +139,13 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
   // shipments table may not exist yet (0054 not applied).
   const shipments = (shipRes.error ? [] : (shipRes.data ?? [])) as unknown as OrderShipment[];
   // invoices table may not exist yet (0055 not applied).
-  const invoices = (invRes.error ? [] : (invRes.data ?? [])) as unknown as OrderInvoice[];
+  // Las columnas del link (0096) pueden no existir aún: se vuelve a leer con las de siempre.
+  let invRows = invRes.data as unknown as OrderInvoice[] | null;
+  if (invRes.error) {
+    const r = await supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false });
+    invRows = r.error ? [] : (r.data as unknown as OrderInvoice[]);
+  }
+  const invoices = (invRows ?? []) as OrderInvoice[];
   // Comprobantes, guías y facturas viven en el bucket privado: lo guardado es la ruta (o una URL
   // pública de antes) y aquí se vuelve enlace firmado. Una guía de Skydropx es externa y se deja.
   const [proofUrls, labelUrls, pdfUrls] = await Promise.all([

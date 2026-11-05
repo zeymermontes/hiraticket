@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { InvoicingProvider } from "@/lib/plugins";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { doneStageNames } from "@/lib/doneStage";
@@ -32,7 +33,7 @@ export function KanbanBoard({
   connected: boolean;
   productStages?: boolean;
   shipping?: string | null;
-  invoicing?: boolean;
+  invoicing?: InvoicingProvider | null;
   doneFromStageId?: string | null;
   manualMarginPct?: number;
 }) {

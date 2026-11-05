@@ -1,23 +1,63 @@
 "use client";
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import type { Product } from "@/lib/extras";
 import type { PriceTier } from "@/lib/types";
-import { createProduct, updateProduct, deleteProduct } from "@/app/(app)/features-actions";
+import type { CatalogFiscal } from "@/lib/facturacionOps";
+import { createProduct, updateProduct, deleteProduct, syncCatalog } from "@/app/(app)/features-actions";
 
-export function CatalogScreen({ businessId, products }: { businessId: string; products: Product[] }) {
+const HOUR = 3600_000;
+
+export function CatalogScreen({ businessId, products, fiscal = null }: {
+  businessId: string; products: Product[];
+  /** Con el plugin Hiraticket Facturación activo: claves SAT por producto y estado de la sincronización. */
+  fiscal?: CatalogFiscal | null;
+}) {
   const { lang, personal } = useApp();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Columnas fiscales y sincronización: solo en modo negocio y con el plugin activo.
+  const fx = !personal && fiscal ? fiscal : null;
+  const syncOn = !!fx && fx.mode !== "off";
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const doSync = async (full: boolean, quiet = false) => {
+    setSyncing(true); if (!quiet) setSyncMsg(null);
+    const r = await syncCatalog(businessId, full);
+    setSyncing(false);
+    const es = lang === "es";
+    if (!r.ok) {
+      if (!quiet) setSyncMsg({ ok: false, text: r.error && !["off", "list", "migration"].includes(r.error) ? r.error : (es ? "No se pudo sincronizar con Facturación. Intenta de nuevo." : "Couldn't sync with the invoicing account. Try again.") });
+      return;
+    }
+    const parts = [
+      r.pushed ? (es ? `${r.pushed} enviados` : `${r.pushed} sent`) : "",
+      r.created ? (es ? `${r.created} nuevos` : `${r.created} new`) : "",
+      r.updated ? (es ? `${r.updated} actualizados` : `${r.updated} updated`) : "",
+      r.deactivated ? (es ? `${r.deactivated} desactivados` : `${r.deactivated} deactivated`) : "",
+    ].filter(Boolean);
+    if (!quiet || parts.length) setSyncMsg({ ok: true, text: parts.length ? parts.join(" · ") : (es ? "Todo al día." : "Everything is up to date.") });
+    router.refresh();
+  };
+  // Al abrir el catálogo, si la última sincronización tiene más de una hora, se corre una en silencio.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!syncOn || autoRan.current) return;
+    autoRan.current = true;
+    const last = fx?.lastSync ? Date.parse(fx.lastSync) : 0;
+    if (!last || Date.now() - last > HOUR) void doSync(false, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncOn]);
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
   const [kind, setKind] = useState("product");
   const [q, setQ] = useState("");
   const [tiersFor, setTiersFor] = useState<string | null>(null);
+  const [fiscalFor, setFiscalFor] = useState<string | null>(null); // producto con los datos fiscales abiertos
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const view = products.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -30,6 +70,23 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
           <div className="ws-block-head"><Icon name="store" size={16} /><h4 className="grow">{personal ? (lang === "es" ? "Tareas repetitivas" : "Recurring tasks") : (lang === "es" ? "Productos y servicios" : "Products & services")}</h4>
             <div className="field field-sm" style={{ width: 180 }}><Icon name="search" /><input placeholder={lang === "es" ? "Buscar…" : "Search…"} value={q} onChange={(e) => setQ(e.target.value)} /></div>
           </div>
+          {syncOn && (
+            <div className="row gap-2" style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)", alignItems: "center", flexWrap: "wrap" }}>
+              <Icon name="refresh" size={14} />
+              <span className="t-xs muted grow" style={{ minWidth: 160 }}>
+                {lang === "es" ? "Sincronizado con Hiraticket Facturación" : "Synced with Hiraticket Facturación"}
+                {" · "}
+                {fx!.mode === "push" ? (lang === "es" ? "de aquí hacia allá" : "from here to there") : fx!.mode === "pull" ? (lang === "es" ? "de allá hacia aquí" : "from there to here") : (lang === "es" ? "en los dos sentidos" : "both ways")}
+                {fx!.lastSync ? ` · ${lang === "es" ? "última" : "last"} ${new Date(fx!.lastSync).toLocaleString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}
+                {syncMsg ? <span style={{ color: syncMsg.ok ? "var(--green)" : "var(--red)", fontWeight: 600 }}>{` · ${syncMsg.text}`}</span> : null}
+              </span>
+              <button className="btn btn-sm btn-outline" disabled={syncing} onClick={() => doSync(false)}>{syncing ? (lang === "es" ? "Sincronizando…" : "Syncing…") : (lang === "es" ? "Sincronizar ahora" : "Sync now")}</button>
+              <button className="btn btn-sm btn-ghost" disabled={syncing} onClick={() => doSync(true)}
+                title={lang === "es" ? "Compara los dos catálogos completos. Lo que ya no exista en Facturación se desactiva aquí (no se borra)." : "Compares both full catalogs. What no longer exists in the invoicing account is deactivated here (not deleted)."}>
+                {lang === "es" ? "Sincronización completa" : "Full sync"}
+              </button>
+            </div>
+          )}
           <div className="tablewrap keep-table scroll">
             <table className="tbl">
               <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}{!personal && <th title={lang === "es" ? "Lo que te cuesta — se usa para calcular la ganancia en reportes" : "What it costs you — used to compute profit in reports"}>{lang === "es" ? "Costo" : "Cost"}</th>}<th></th></tr></thead>
@@ -37,13 +94,16 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
                 {view.map((p) => (
                   <React.Fragment key={p.id}>
                   <tr>
-                    <td><input className="inp-inline grow" defaultValue={p.name} style={{ width: "100%" }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
+                    <td><input key={p.name} className="inp-inline grow" defaultValue={p.name} style={{ width: "100%" }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
                     {!personal && <td><Pill color={p.kind === "service" ? "violet" : "blue"}>{p.kind === "service" ? (lang === "es" ? "Servicio" : "Service") : (lang === "es" ? "Producto" : "Product")}</Pill></td>}
-                    {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>}
+                    {!personal && <td><input key={p.price} className="inp-inline mono" style={{ width: 90 }} defaultValue={String(p.price)} onBlur={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v) && v !== p.price) run(() => updateProduct(p.id, { price: v })); }} /></td>}
                     {!personal && <td><input className="inp-inline mono" style={{ width: 90 }} placeholder="—" defaultValue={p.cost == null ? "" : String(p.cost)} onBlur={(e) => { const raw = e.target.value.trim(); const v = raw === "" ? null : Number(raw); if (raw !== "" && Number.isNaN(v)) return; if (v !== p.cost) run(() => updateProduct(p.id, { cost: v })); }} /></td>}
                     <td className="row gap-1">
                       {!personal && <button className={"iconbtn sm" + (tiersFor === p.id ? " active" : "")} title={lang === "es" ? "Precios por cantidad" : "Quantity pricing"} onClick={() => setTiersFor(tiersFor === p.id ? null : p.id)}>
                         <Icon name="layers" size={15} />{p.price_tiers.length > 0 && <span className="badge badge-soft" style={{ marginLeft: 2 }}>{p.price_tiers.length}</span>}
+                      </button>}
+                      {fx && <button className={"iconbtn sm" + (fiscalFor === p.id ? " active" : "")} title={lang === "es" ? "Datos para facturar: clave SAT, unidad e IVA" : "Invoicing data: SAT key, unit and tax"} onClick={() => setFiscalFor(fiscalFor === p.id ? null : p.id)}>
+                        <Icon name="file" size={15} />{fx.byId[p.id]?.sat_code && fx.byId[p.id]!.sat_code !== "01010101" && <span className="badge badge-soft" style={{ marginLeft: 2 }}>SAT</span>}
                       </button>}
                       <a className="iconbtn sm" href="/orders?new=1" title={personal ? (lang === "es" ? "A tarea" : "To task") : (lang === "es" ? "A pedido" : "To order")}><Icon name="orders" size={15} /></a>
                       <button className="iconbtn sm" onClick={() => run(() => deleteProduct(p.id))}><Icon name="trash" size={15} /></button>
@@ -54,6 +114,41 @@ export function CatalogScreen({ businessId, products }: { businessId: string; pr
                       <TierEditor product={p} lang={lang} onSave={(tiers) => run(() => updateProduct(p.id, { price_tiers: tiers }))} />
                     </td></tr>
                   )}
+                  {fx && fiscalFor === p.id && (() => {
+                    const f = fx.byId[p.id] ?? { sat_code: null, sat_unit: null, iva: null, linked: false };
+                    return (
+                      <tr><td colSpan={5} style={{ background: "var(--surface-2)" }}>
+                        <div className="col gap-2" style={{ padding: "10px 4px" }}>
+                          <div className="row gap-3" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+                            <div className="col gap-1">
+                              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Clave SAT (8 dígitos)" : "SAT key (8 digits)"}</label>
+                              <input key={f.sat_code ?? ""} className="inp-inline mono" style={{ width: 120 }} placeholder="01010101" maxLength={8} inputMode="numeric" defaultValue={f.sat_code ?? ""}
+                                onBlur={(e) => { const v = e.target.value.trim(); if (v !== (f.sat_code ?? "")) { if (v && !/^\d{8}$/.test(v)) { e.target.value = f.sat_code ?? ""; return; } run(() => updateProduct(p.id, { sat_code: v || null })); } }} />
+                            </div>
+                            <div className="col gap-1">
+                              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Unidad SAT" : "SAT unit"}</label>
+                              <input key={f.sat_unit ?? ""} className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={4} defaultValue={f.sat_unit ?? ""}
+                                onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== (f.sat_unit ?? "")) run(() => updateProduct(p.id, { sat_unit: v || null })); }} />
+                            </div>
+                            <div className="col gap-1">
+                              <label className="lbl" style={{ margin: 0 }}>IVA</label>
+                              <select className="select" style={{ width: 170 }} value={f.iva == null ? "" : String(f.iva)}
+                                onChange={(e) => run(() => updateProduct(p.id, { iva: e.target.value === "" ? null : Number(e.target.value) }))}>
+                                <option value="">{lang === "es" ? "El del negocio" : "Business rate"}</option>
+                                <option value="0.16">16%</option><option value="0.08">8%</option><option value="0">0%</option>
+                              </select>
+                            </div>
+                            {f.linked && <span className="t-xs" style={{ color: "var(--green)", fontWeight: 600, paddingBottom: 8 }}>✓ {lang === "es" ? "Vinculado con Facturación" : "Linked to the invoicing account"}</span>}
+                          </div>
+                          <div className="t-xs muted">
+                            {lang === "es"
+                              ? "Con esto sale el concepto en la factura. Sin clave se usa 01010101 («No existe en el catálogo») y sin unidad E48 (servicio); H87 es pieza."
+                              : "This is how the line appears on the invoice. With no key 01010101 is used, and with no unit E48 (service); H87 is piece."}
+                          </div>
+                        </div>
+                      </td></tr>
+                    );
+                  })()}
                   </React.Fragment>
                 ))}
                 {view.length === 0 && <tr><td colSpan={personal ? 2 : 5} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
