@@ -100,11 +100,15 @@ export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrid
   if (!o) return null;
   const row = o as Record<string, unknown>;
   const businessId = row.business_id as string;
-  const [{ data: biz }, itemsRes, prodRes] = await Promise.all([
+  const [{ data: biz }, itemsFull, prodRes] = await Promise.all([
     db.from("businesses").select("invoice_add_tax, invoice_tax_rate").eq("id", businessId).maybeSingle(),
-    db.from("order_items").select("name, qty, unit_price, subtotal").eq("order_id", orderId),
+    db.from("order_items").select("name, qty, unit_price, subtotal, sat_code, sat_unit").eq("order_id", orderId),
     db.from("products").select("id, name, sat_code, sat_unit, iva").eq("business_id", businessId),
   ]);
+  // sat_code/sat_unit del renglón son de 0097: sin ellas se lee lo de siempre.
+  const itemsRes = itemsFull.error ? await db.from("order_items").select("name, qty, unit_price, subtotal").eq("order_id", orderId) : itemsFull;
+  type ItemRow = { name: string | null; qty: number | null; unit_price: number | null; subtotal: number | null; sat_code?: string | null; sat_unit?: string | null };
+  const itemRows = (itemsRes.data ?? []) as ItemRow[];
   const b = (biz ?? {}) as { invoice_add_tax?: boolean; invoice_tax_rate?: number };
   // Sin 0096 la consulta de productos falla: se factura con la clave genérica, como antes.
   const products = new Map<string, { id: string; sat_code: string | null; sat_unit: string | null; iva: number | null }>();
@@ -115,6 +119,14 @@ export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrid
     });
   }
   const catalog: CatalogSat = new Map([...products].map(([k, v]) => [k, { id: v.id, sat_code: v.sat_code, sat_unit: v.sat_unit }]));
+  // Lo capturado antes para un renglón de este pedido manda sobre el catálogo; lo que se captura
+  // ahora (`sat`) manda sobre los dos.
+  for (const it of itemRows) {
+    if (!it.sat_code && !it.sat_unit) continue;
+    const k = productKey(it.name);
+    const cur = products.get(k);
+    products.set(k, { id: cur?.id ?? "", sat_code: it.sat_code || cur?.sat_code || null, sat_unit: it.sat_unit || cur?.sat_unit || null, iva: cur?.iva ?? null });
+  }
   for (const [k, v] of Object.entries(cleanSat(sat))) {
     const cur = products.get(k);
     products.set(k, { id: cur?.id ?? "", sat_code: v.code || cur?.sat_code || null, sat_unit: v.unit || cur?.sat_unit || null, iva: cur?.iva ?? null });
@@ -122,7 +134,7 @@ export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrid
   const plan = planInvoice({
     order: { total: Number(row.total) || 0, tax_rate: row.tax_rate == null ? null : Number(row.tax_rate), discount: row.discount == null ? null : Number(row.discount) },
     business: { invoice_add_tax: b.invoice_add_tax ?? true, invoice_tax_rate: Number(b.invoice_tax_rate ?? 16) },
-    items: ((itemsRes.data ?? []) as { name: string | null; qty: number | null; unit_price: number | null; subtotal: number | null }[]),
+    items: itemRows,
     products,
   });
   return {
@@ -130,6 +142,26 @@ export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrid
     plan,
     catalog,
   };
+}
+
+/**
+ * Lo capturado al facturar se queda también en los renglones del pedido que no lo tenían. Así no
+ * se vuelve a pedir para un renglón escrito a mano (no hay producto del catálogo donde guardarlo)
+ * ni cuando quien factura no puede editar el catálogo. Sin 0097 no hay dónde: no pasa nada.
+ */
+export async function saveSatToOrder(db: DB, orderId: string, sat: SatOverrides | null | undefined): Promise<void> {
+  const clean = cleanSat(sat);
+  if (!Object.keys(clean).length) return;
+  const { data, error } = await db.from("order_items").select("id, name, sat_code, sat_unit").eq("order_id", orderId);
+  if (error) return;
+  for (const it of (data ?? []) as { id: string; name: string | null; sat_code: string | null; sat_unit: string | null }[]) {
+    const v = clean[productKey(it.name)];
+    if (!v) continue;
+    const patch: Record<string, string> = {};
+    if (v.code && !it.sat_code) patch.sat_code = v.code;
+    if (v.unit && !it.sat_unit) patch.sat_unit = v.unit;
+    if (Object.keys(patch).length) await db.from("order_items").update(patch).eq("id", it.id);
+  }
 }
 
 /** Datos del SAT que el catálogo tiene guardados, por nombre normalizado. */

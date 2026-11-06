@@ -8,8 +8,11 @@ import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/componen
 // impuestos y total) y, si a algún concepto le faltan la clave o la unidad del SAT, se piden aquí.
 // El link se crea con lo que se ve en esta ventana.
 
-export function InvoiceLinkModal({ orderId, hasChat, lang, errText, onClose, onDone }: {
+export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = null, onClose, onDone }: {
   orderId: string;
+  /** El pedido ya tiene un link abierto con este código: se reenvía, o se cambia por uno nuevo si
+   *  aquí se capturan datos o si ya no dice lo mismo que el pedido. */
+  openCode?: string | null;
   /** El pedido tiene chat: el link se manda por ahí. Sin chat solo se crea, para copiarlo. */
   hasChat: boolean;
   lang: "es" | "en";
@@ -22,6 +25,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, onClose, onD
   const { preview, missing, sat, patch } = useInvoicePreview(orderId);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const captured = Object.values(sat).some((v) => !!v.code || !!v.unit);
 
   const submit = async () => {
     setBusy(true); setErr(null);
@@ -46,6 +50,13 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, onClose, onD
               ? "El cliente abre el link, captura su RFC y recibe su factura. Esto es lo que dirá:"
               : "The customer opens the link, enters their tax ID and gets the invoice. This is what it will say:"}
           </div>
+          {openCode && (
+            <div className="t-xs muted" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              {es
+                ? `Este pedido ya tiene un link abierto (${openCode}). Si capturas datos aquí, ese link se cierra y se manda uno nuevo con ellos. Si no capturas nada, se reenvía el mismo, salvo que el pedido haya cambiado desde que se creó.`
+                : `This order already has an open link (${openCode}). If you enter data here, that link is closed and a new one is sent with it. If you enter nothing, the same one is sent again, unless the order changed since it was created.`}
+            </div>
+          )}
           {!preview ? <span className="t-sm muted">…</span>
             : preview.error === "order" ? <div className="t-xs" style={{ color: "var(--red)" }}>{es ? "No se pudo leer el pedido." : "Couldn't read the order."}</div>
             : <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search />}
@@ -55,7 +66,10 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, onClose, onD
           <button className="btn btn-outline" onClick={onClose}>{es ? "Cancelar" : "Cancel"}</button>
           <button className="btn btn-primary" disabled={busy || !preview?.ok || satIncomplete(sat)} onClick={submit}>
             <Icon name={hasChat ? "send" : "file"} size={14} />
-            {busy ? (es ? "Creando…" : "Creating…") : hasChat ? (es ? "Enviar link al cliente" : "Send link to customer") : (es ? "Crear link" : "Create link")}
+            {busy ? (es ? "Enviando…" : "Sending…")
+              : openCode && !captured ? (hasChat ? (es ? "Reenviar link" : "Resend link") : (es ? "Copiar link" : "Copy link"))
+              : openCode ? (hasChat ? (es ? "Enviar link nuevo" : "Send new link") : (es ? "Crear link nuevo" : "Create new link"))
+              : hasChat ? (es ? "Enviar link al cliente" : "Send link to customer") : (es ? "Crear link" : "Create link")}
           </button>
         </div>
       </div>

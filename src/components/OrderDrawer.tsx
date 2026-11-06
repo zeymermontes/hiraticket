@@ -28,7 +28,7 @@ import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
 import { InvoiceLinkModal } from "@/components/InvoiceLinkModal";
-import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, type LinkResult } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -163,7 +163,22 @@ export function OrderDrawer({
   const [invOpen, setInvOpen] = useState(false);
   const [invSent, setInvSent] = useState<string | null>(null); // invoice id just WhatsApped
   const [invBusy, setInvBusy] = useState(false);
-  const [invLinkOpen, setInvLinkOpen] = useState(false);
+  // Ventana del resumen antes de mandar el link; `code` es el del link que ya está abierto, si hay.
+  const [invLinkOpen, setInvLinkOpen] = useState<{ code: string | null } | null>(null);
+  // A cuántos conceptos del pedido les faltan la clave o la unidad del SAT. Se pregunta al abrir
+  // el pedido (y cuando cambian sus artículos o sus facturas) para decirlo en el bloque de
+  // Factura: sin esto el link salía con la clave genérica y nada lo avisaba.
+  const [invMissing, setInvMissing] = useState(0);
+  const invItemsKey = detailProp.items.map((i) => i.name).join("|");
+  const invIssued = detailProp.invoices.some((i) => i.status === "issued");
+  const invRows = detailProp.invoices.length;
+  useEffect(() => {
+    let alive = true;
+    setInvMissing(0);
+    if (invoicing !== "hiraticket_facturacion" || invIssued) return;
+    previewInvoice(detailProp.id).then((p) => { if (alive) setInvMissing(p.ok ? p.summary.missing.length : 0); }).catch(() => {});
+    return () => { alive = false; };
+  }, [detailProp.id, invItemsKey, invIssued, invRows, invoicing]);
   const [invCopied, setInvCopied] = useState(false);
   const [invMsg, setInvMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [wasteItem, setWasteItem] = useState(""); // "" → merma del pedido completo
@@ -296,7 +311,9 @@ export function OrderDrawer({
       await copyInvLink(r.url);
       setInvMsg({ ok: true, text: lang === "es" ? "Link creado y copiado. Este pedido no tiene chat: mándaselo tú al cliente." : "Link created and copied. This order has no chat: send it to the customer yourself." });
     } else {
-      setInvMsg({ ok: true, text: r.reused ? (lang === "es" ? "Se reenvió el mismo link al chat." : "The same link was sent again.") : (lang === "es" ? "Link enviado al chat del cliente." : "Link sent to the customer's chat.") });
+      setInvMsg({ ok: true, text: r.reused ? (lang === "es" ? "Se reenvió el mismo link al chat." : "The same link was sent again.")
+        : r.replaced ? (lang === "es" ? "El link anterior ya no decía lo mismo que el pedido: se cerró y se mandó uno nuevo al chat." : "The previous link no longer matched the order: it was closed and a new one was sent.")
+        : (lang === "es" ? "Link enviado al chat del cliente." : "Link sent to the customer's chat.") });
     }
     run(() => Promise.resolve());
   };
@@ -811,7 +828,8 @@ export function OrderDrawer({
                     <div className="t-xs muted">{lang === "es" ? "Cuando el cliente capture sus datos, la factura aparece aquí. Si la emites tú, el link se da por usado." : "Once the customer enters their details, the invoice shows up here. If you issue it yourself, the link counts as used."}</div>
                     <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {detail.conversation_id && (
-                        <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={() => sendInvLink()}>
+                        <button className="btn btn-sm btn-outline" disabled={invBusy}
+                          onClick={() => { if (invMissing > 0) { setInvMsg(null); setInvLinkOpen({ code: openLink.link_code ?? null }); } else void sendInvLink(); }}>
                           <Icon name="whatsapp" size={13} />{lang === "es" ? "Reenviar" : "Resend"}
                         </button>
                       )}
@@ -842,10 +860,27 @@ export function OrderDrawer({
                   </div>
                 )}
 
+                {fx && issued.length === 0 && invMissing > 0 && (
+                  <div className="row gap-2" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--amber-bg)", color: "var(--amber)", border: "1px solid var(--amber-bd)", alignItems: "center", flexWrap: "wrap" }}>
+                    <span className="t-xs grow" style={{ minWidth: 180 }}>
+                      {invMissing === 1
+                        ? (lang === "es" ? "A un concepto de este pedido le faltan la clave o la unidad del SAT." : "One line of this order is missing its SAT key or unit.")
+                        : (lang === "es" ? `A ${invMissing} conceptos de este pedido les faltan la clave o la unidad del SAT.` : `${invMissing} lines of this order are missing their SAT key or unit.`)}
+                      {" "}
+                      {openLink
+                        ? (lang === "es" ? "El link abierto los factura con la clave genérica. Captúralos y se manda un link nuevo." : "The open link invoices them with the generic key. Enter them and a new link is sent.")
+                        : (lang === "es" ? "Sin ellas la factura sale con la clave genérica." : "Without them the invoice uses the generic key.")}
+                    </span>
+                    <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={() => { setInvMsg(null); setInvLinkOpen({ code: openLink?.link_code ?? null }); }}>
+                      <Icon name="edit" size={13} />{lang === "es" ? "Capturar datos del SAT" : "Enter SAT data"}
+                    </button>
+                  </div>
+                )}
+
                 {issued.length === 0 && (
                   <div className="row gap-2" style={{ flexWrap: "wrap" }}>
                     {fx && !openLink && (
-                      <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => { setInvMsg(null); setInvLinkOpen(true); }}
+                      <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => { setInvMsg(null); setInvLinkOpen({ code: null }); }}
                         title={lang === "es" ? "El cliente captura sus datos fiscales y recibe su factura. Antes de mandarlo ves qué dirá la factura." : "The customer enters their tax details and gets the invoice. You see what it will say before sending."}>
                         <Icon name={detail.conversation_id ? "send" : "file"} size={14} />{detail.conversation_id ? (lang === "es" ? "Enviar link para facturar" : "Send invoicing link") : (lang === "es" ? "Crear link para facturar" : "Create invoicing link")}
                       </button>
@@ -1103,8 +1138,8 @@ export function OrderDrawer({
           onClose={() => setShipOpen(false)} onCreated={() => run(() => Promise.resolve())} />
       )}
       {invLinkOpen && (
-        <InvoiceLinkModal orderId={detail.id} hasChat={!!detail.conversation_id} lang={lang} errText={invErr}
-          onClose={() => setInvLinkOpen(false)} onDone={(r) => { setInvLinkOpen(false); void invLinkDone(r); }} />
+        <InvoiceLinkModal orderId={detail.id} hasChat={!!detail.conversation_id} lang={lang} errText={invErr} openCode={invLinkOpen.code}
+          onClose={() => setInvLinkOpen(null)} onDone={(r) => { setInvLinkOpen(null); void invLinkDone(r); }} />
       )}
       {invOpen && (
         <InvoiceModal orderId={detail.id} contactId={detail.contact?.id ?? null} total={detail.total} lang={lang} provider={invoicing ?? null}

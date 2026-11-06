@@ -1,4 +1,5 @@
 "use server";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
@@ -10,7 +11,7 @@ import { signMediaUrl } from "@/lib/mediaSign";
 import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, upsertClient, fxUrl } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
-  syncLinkRow, closeLinkRow, saveSatToCatalog, type FxConfig,
+  syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, type FxConfig,
 } from "@/lib/facturacionOps";
 import { summarize, cleanSat, type InvoicePlan, type InvoiceMode, type InvoiceSummary, type SatOverrides } from "@/lib/invoiceLines";
 
@@ -27,14 +28,28 @@ async function activeProvider(supabase: SB, businessId: string): Promise<Invoici
   return pickInvoicing(new Set((data ?? []).map((r) => r.plugin_id as string)));
 }
 
-/** Filas de factura del pedido. Las columnas del link son de 0096: sin ellas se lee lo de siempre. */
+/** Filas de factura del pedido. Las columnas del link son de 0096 y la huella de 0097: sin ellas
+ *  se lee lo que haya. `link_sig` queda `undefined` cuando la columna no existe (no se puede
+ *  comparar) y `null` cuando el link se creó antes de guardarla. */
 async function orderInvoices(supabase: SB, orderId: string) {
-  type Row = { id: string; provider: string; status: string; total: number | null; link_code: string | null; link_url: string | null; link_expires: string | null; external_id: string | null };
-  const full = await supabase.from("invoices").select("id, provider, status, total, link_code, link_url, link_expires, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
+  type Row = { id: string; provider: string; status: string; total: number | null; link_code: string | null; link_url: string | null; link_expires: string | null; external_id: string | null; link_sig?: string | null };
+  const cols = "id, provider, status, total, link_code, link_url, link_expires, external_id";
+  let full = await supabase.from("invoices").select(`${cols}, link_sig`).eq("order_id", orderId).order("created_at", { ascending: false });
+  if (full.error) full = await supabase.from("invoices").select(cols).eq("order_id", orderId).order("created_at", { ascending: false }) as never;
   // Un link guardado con una dirección interna de Facturación se reenvía con la pública.
-  if (!full.error) return ((full.data ?? []) as Row[]).map((r) => ({ ...r, link_url: fxUrl(r.link_url) }));
+  if (!full.error) return ((full.data ?? []) as unknown as Row[]).map((r) => ({ ...r, link_url: fxUrl(r.link_url) }));
   const base = await supabase.from("invoices").select("id, provider, status, total, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
   return ((base.data ?? []) as Partial<Row>[]).map((r) => ({ link_code: null, link_url: null, link_expires: null, ...r })) as Row[];
+}
+
+/** Huella de lo que diría la factura: conceptos con su clave, unidad, cantidad, precio, descuento
+ *  e IVA (o el total, cuando es un solo concepto exacto). Dos planes con la misma huella producen
+ *  el mismo link. */
+function planSig(plan: InvoicePlan): string {
+  const body = plan.single
+    ? { total: plan.single.total, d: plan.single.description }
+    : toConcepts(plan.lines).map((c) => [c.descripcion, c.cantidad, c.precio, c.iva, c.descuento ?? 0, c.clave ?? "", c.unidad ?? ""]);
+  return createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 32);
 }
 
 const planError = (plan: InvoicePlan) => (plan.error === "non-positive" ? "non-positive" : "no-items");
@@ -103,16 +118,20 @@ async function newLinkRow(
   });
   // 401: la llave ya no vale (la revocaron en Facturación). No es un error del pedido.
   if (!r.ok || !r.data) return { error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
-  const { data: ins, error } = await supabase.from("invoices").insert({
+  const fields = {
     business_id: order.business_id, order_id: order.id, provider: FX, status: "link_enviado",
     link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, total: r.data.total, created_by: userId,
-  }).select("id").single();
+  };
+  const sig = planSig(plan);
+  let { data: ins, error } = await supabase.from("invoices").insert({ ...fields, link_sig: sig }).select("id").single();
+  // Sin 0097 la columna de la huella no existe: se guarda sin ella.
+  if (error) ({ data: ins, error } = await supabase.from("invoices").insert(fields).select("id").single());
   if (error || !ins) {
     // Sin fila no habría forma de verlo ni de cerrarlo desde aquí: no se deja un link huérfano.
     await closeLink(cfg.apiKey, r.data.codigo);
     return { error: error?.message ?? "insert" };
   }
-  return { row: { id: ins.id as string, provider: FX, status: "link_enviado", total: r.data.total, link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, external_id: null } };
+  return { row: { id: ins.id as string, provider: FX, status: "link_enviado", total: r.data.total, link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, external_id: null, link_sig: sig } };
 }
 
 export interface IssueResult {
@@ -150,7 +169,7 @@ export async function issueInvoice(
   // abiertas (o dos asesores) pueden llegar aquí a la vez.
   if (rows.some((r) => r.status === "issued")) return { ok: false, error: "already-issued" };
   // La clave y la unidad que se capturaron para esta factura se le quedan al producto del catálogo.
-  if (!retried) await saveSatToCatalog(supabase, ctx.catalog, sat);
+  if (!retried) { await saveSatToCatalog(supabase, ctx.catalog, sat); await saveSatToOrder(supabase, orderId, sat); }
 
   if (saveProfile && order.contact_id) {
     const row = { business_id: businessId, contact_id: order.contact_id, legal_name: fiscal.legal_name, rfc: fiscal.rfc.toUpperCase(), tax_system: fiscal.tax_system, zip: fiscal.zip, email: fiscal.email || null, cfdi_use: fiscal.cfdi_use, updated_at: new Date().toISOString() };
@@ -305,6 +324,8 @@ export interface LinkResult {
    *  `disconnected`: hay que volver a conectar el plugin. */
   code?: string;
   url?: string; sent?: boolean; reused?: boolean; expires?: string;
+  /** Había un link abierto y se cambió por uno nuevo porque ya no decía lo mismo que el pedido. */
+  replaced?: boolean;
   total?: number; orderTotal?: number;
 }
 
@@ -313,10 +334,11 @@ export interface LinkResult {
  * su RFC y recibe su factura; cuando lo hace, el webhook `link.facturado` deja la factura en el
  * pedido.
  *
- * Un link abierto por el mismo monto se reutiliza: volver a pulsar el botón reenvía la misma liga
- * en vez de dejar dos abiertas. Si el monto del pedido cambió, el anterior se CIERRA en
- * Facturación y se crea otro: un link abierto de más no solo permitiría facturar dos veces, esa
- * venta entraría además a la factura global del negocio.
+ * Un link abierto que dice lo mismo que el pedido de hoy se reutiliza: volver a pulsar el botón
+ * reenvía la misma liga en vez de dejar dos abiertas. Si cambió el monto, o los conceptos (una
+ * clave SAT que se capturó después, un precio), el anterior se CIERRA en Facturación y se crea
+ * otro: un link abierto de más no solo permitiría facturar dos veces, esa venta entraría además a
+ * la factura global del negocio.
  */
 export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null } = {}): Promise<LinkResult> {
   const supabase = await createClient();
@@ -334,13 +356,19 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   if (plan.addsTax && !opts.confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
 
   await saveSatToCatalog(supabase, ctx.catalog, opts.sat);
+  await saveSatToOrder(supabase, orderId, opts.sat);
 
   const live = liveLinks(rows);
   // Con datos del SAT recién capturados no se reutiliza un link anterior aunque sea por el mismo
-  // monto: sus conceptos se crearon sin ellos. Se cierra y se crea otro.
+  // monto: sus conceptos se crearon sin ellos. Tampoco uno cuya huella ya no es la del pedido de
+  // hoy, ni uno sin huella (se creó antes de guardarla y no se sabe qué dice). Sin la columna de
+  // la huella (`undefined`) no hay con qué comparar y se reutiliza por monto, como antes.
   const fresh = Object.keys(cleanSat(opts.sat)).length > 0;
-  let link = fresh ? null : live.find((r) => !!r.link_url && (!r.link_expires || r.link_expires >= today()) && Math.abs((Number(r.total) || 0) - plan.total) < 0.005) ?? null;
+  const sig = planSig(plan);
+  const same = (r: InvRow) => r.link_sig === undefined || r.link_sig === sig;
+  let link = fresh ? null : live.find((r) => !!r.link_url && (!r.link_expires || r.link_expires >= today()) && Math.abs((Number(r.total) || 0) - plan.total) < 0.005 && same(r)) ?? null;
   const reused = !!link;
+  const replaced = !link && live.length > 0;
   // Los demás (otro monto, o ya vencidos aquí) se cierran antes de crear el nuevo. Si al cerrarlo
   // resulta que el cliente ya se había facturado con él, esa es la factura del pedido.
   for (const old of live.filter((r) => r !== link)) {
@@ -371,10 +399,10 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   }
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
-    kind: "file", text: `Link de facturación ${sent ? (reused ? "reenviado" : "enviado") : "creado"} · ${link.link_code}`,
+    kind: "file", text: `Link de facturación ${sent ? (reused ? "reenviado" : "enviado") : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
   });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
-  return { ok: true, url: link.link_url ?? undefined, sent, reused, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal };
+  return { ok: true, url: link.link_url ?? undefined, sent, reused, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal };
 }
 
 /** Pregunta a Facturación cómo va un link: si el cliente ya se facturó deja la factura en el
