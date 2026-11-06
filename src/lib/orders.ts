@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Charge } from "@/lib/charges";
 import { signMediaUrls } from "@/lib/mediaSign";
+import { fxUrl } from "@/lib/facturacion";
 
 export interface OrderItem { id: string; name: string; qty: number; unit_price: number; subtotal: number; stage_id: string | null; stage: { name: string; color: string } | null; note: string | null }
 export interface OrderNote { id: string; body: string; author_id: string | null; created_at: string; item_id: string | null }
@@ -145,7 +146,8 @@ export async function getOrderDetail(orderId: string): Promise<OrderDetail | nul
     const r = await supabase.from("invoices").select("id, uuid, total, pdf_url, verification_url, status, created_at").eq("order_id", orderId).order("created_at", { ascending: false });
     invRows = r.error ? [] : (r.data as unknown as OrderInvoice[]);
   }
-  const invoices = (invRows ?? []) as OrderInvoice[];
+  // Las ligas de Facturación guardadas con una dirección interna se enseñan con la pública.
+  const invoices = ((invRows ?? []) as OrderInvoice[]).map((i) => ({ ...i, link_url: fxUrl(i.link_url), public_url: fxUrl(i.public_url) }));
   // Comprobantes, guías y facturas viven en el bucket privado: lo guardado es la ruta (o una URL
   // pública de antes) y aquí se vuelve enlace firmado. Una guía de Skydropx es externa y se deja.
   const [proofUrls, labelUrls, pdfUrls] = await Promise.all([

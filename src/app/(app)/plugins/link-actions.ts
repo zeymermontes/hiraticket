@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/auth";
 import { encryptSecret, decryptSecret } from "@/lib/secrets";
-import { PLUGIN_ID as FX, FACTURACION_HOST, integratorConfigured, linkRequest, linkPoll, linkRedeem, type FxLinkResult, type FxResult } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_HOST, integratorConfigured, linkRequest, linkPoll, linkRedeem, fxUrl, type FxLinkResult, type FxResult } from "@/lib/facturacion";
 import { syncProducts, fxWebhookUrl, eventsTag, ensureProductEvents, type SyncResult } from "@/lib/facturacionOps";
 
 // Conectar el plugin con la cuenta de Hiraticket Facturación del negocio SIN copiar la llave a mano.
@@ -140,7 +140,7 @@ export async function getFacturacionState(businessId: string): Promise<Facturaci
     linked: cfg._linked === "1",
     account: (cfg._link_account as string) || null,
     emisor: (cfg.emisor as string) || null,
-    pending: live ? { code: cfg._link_code as string, url: (cfg._link_url as string) || "", expires: cfg._link_expires as string } : null,
+    pending: live ? { code: cfg._link_code as string, url: fxUrl((cfg._link_url as string) || ""), expires: cfg._link_expires as string } : null,
   };
 }
 

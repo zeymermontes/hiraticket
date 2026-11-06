@@ -14,6 +14,27 @@ export const PLUGIN_ID = "hiraticket_facturacion";
 export const FACTURACION_SITE = (process.env.FACTURACION_API_BASE || "https://facturacion.hiraticket.com").replace(/\/+$/, "");
 const BASE = `${FACTURACION_SITE}/api/v1`;
 
+// Facturación arma las ligas que devuelve (el link para que el cliente se facture, la página
+// pública de la factura, la pantalla para autorizar la conexión) con el origen de la petición que
+// recibe. Detrás del proxy de su servidor ese origen es interno, y a un cliente le llegó un link
+// «http://localhost:10000/f/…». Aquí toda liga interna se cambia por la dirección pública de
+// Facturación: al recibirla (respuestas y avisos) y al leer las que ya se guardaron así.
+// En una instalación local la dirección de Facturación también es localhost: no se toca nada.
+const LOOPBACK = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?=[/?#]|$)/i;
+const SITE_IS_LOCAL = LOOPBACK.test(FACTURACION_SITE);
+/** Una liga de Facturación con su dirección pública. Lo que no es una liga interna pasa igual. */
+export function fxUrl<T extends string | null | undefined>(u: T): T {
+  return (typeof u === "string" && !SITE_IS_LOCAL ? u.replace(LOOPBACK, FACTURACION_SITE) : u) as T;
+}
+/** Lo mismo para todo lo que traiga una respuesta o un aviso, a cualquier profundidad. */
+export function fixFxUrls<T>(v: T): T {
+  if (SITE_IS_LOCAL || v == null) return v;
+  if (typeof v === "string") return fxUrl(v) as T;
+  if (Array.isArray(v)) return v.map((x) => fixFxUrls(x)) as T;
+  if (typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, fixFxUrls(x)])) as T;
+  return v;
+}
+
 /** A dónde apunta este servidor, para decirlo en un mensaje de error (es un dominio público). */
 export const FACTURACION_HOST = (() => { try { return new URL(FACTURACION_SITE).host; } catch { return FACTURACION_SITE; } })();
 
@@ -48,7 +69,7 @@ async function request<T>(url: string, token: string, method: string, body?: unk
       signal: ctrl.signal,
       cache: "no-store",
     });
-    const j = (await res.json().catch(() => null)) as (T & { error?: string; code?: string }) | null;
+    const j = fixFxUrls((await res.json().catch(() => null)) as (T & { error?: string; code?: string }) | null);
     // En un error se conserva el cuerpo: algunas respuestas traen datos además del mensaje (el
     // estatus de un código de vinculación vencido, por ejemplo).
     if (!res.ok) return { ok: false, status: res.status, error: j?.error || `HTTP ${res.status}`, code: j?.code, data: (j ?? undefined) as T | undefined };

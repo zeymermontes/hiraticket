@@ -10,7 +10,7 @@ import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
 import { planInvoice, productKey, toNetPrice, fromNetPrice, cleanSat, type InvoicePlan, type InvoiceLine, type SatOverrides } from "@/lib/invoiceLines";
 import {
-  PLUGIN_ID, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
+  PLUGIN_ID, fxUrl, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
   setWebhook, WEBHOOK_EVENTS_PRODUCTS,
   type FxCfdi, type FxConcept, type FxProduct, type FxProductInput,
 } from "@/lib/facturacion";
@@ -281,7 +281,7 @@ export async function sendInvoiceToChat(db: DB, orderId: string, invoiceId: stri
   // lo mandan como documento igual que cualquier archivo. Sin PDF propio va la liga pública de la
   // factura (no caduca y trae PDF y XML); sin ninguna, solo el texto.
   const pdfPath = mediaPath(inv.pdf_url);
-  const link = !pdfPath && inv.public_url ? ` Descárgala aquí: ${inv.public_url}` : "";
+  const link = !pdfPath && inv.public_url ? ` Descárgala aquí: ${fxUrl(inv.public_url)}` : "";
   const body = `¡Hola ${first}! 🧾 Aquí está tu factura del pedido ${order.code}.${inv.uuid ? ` Folio fiscal: ${inv.uuid}.` : ""}${link}`;
   await db.from("messages").insert({
     business_id: businessId, conversation_id: order.conversation_id,

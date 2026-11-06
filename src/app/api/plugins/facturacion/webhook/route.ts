@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { PLUGIN_ID } from "@/lib/facturacion";
+import { PLUGIN_ID, fixFxUrls } from "@/lib/facturacion";
 import { loadFxConfig, settleLinkInvoice, onRemoteProductSaved, onRemoteProductDeleted, syncProducts } from "@/lib/facturacionOps";
 import type { FxCfdi, FxProduct } from "@/lib/facturacion";
 
@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
   }
 
   let evt: { id?: string; event?: string; data?: unknown };
-  try { evt = JSON.parse(raw); } catch { return NextResponse.json({ ok: true }); }
+  // La firma ya se comprobó sobre el cuerpo tal cual llegó; las ligas internas se corrigen después.
+  try { evt = fixFxUrls(JSON.parse(raw)); } catch { return NextResponse.json({ ok: true }); }
   if (!evt?.id || !evt.event) return NextResponse.json({ ok: true });
   const admin = createAdminClient();
   const evtId = String(evt.id).slice(0, 80);

@@ -7,7 +7,7 @@ import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type Fis
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { signMediaUrl } from "@/lib/mediaSign";
-import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, upsertClient } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, upsertClient, fxUrl } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
   syncLinkRow, closeLinkRow, saveSatToCatalog, type FxConfig,
@@ -31,7 +31,8 @@ async function activeProvider(supabase: SB, businessId: string): Promise<Invoici
 async function orderInvoices(supabase: SB, orderId: string) {
   type Row = { id: string; provider: string; status: string; total: number | null; link_code: string | null; link_url: string | null; link_expires: string | null; external_id: string | null };
   const full = await supabase.from("invoices").select("id, provider, status, total, link_code, link_url, link_expires, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
-  if (!full.error) return (full.data ?? []) as Row[];
+  // Un link guardado con una dirección interna de Facturación se reenvía con la pública.
+  if (!full.error) return ((full.data ?? []) as Row[]).map((r) => ({ ...r, link_url: fxUrl(r.link_url) }));
   const base = await supabase.from("invoices").select("id, provider, status, total, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
   return ((base.data ?? []) as Partial<Row>[]).map((r) => ({ link_code: null, link_url: null, link_expires: null, ...r })) as Row[];
 }
