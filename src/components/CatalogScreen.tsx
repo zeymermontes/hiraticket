@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
+import { useIsMobile } from "@/lib/useIsMobile";
 import type { Product } from "@/lib/extras";
 import type { PriceTier } from "@/lib/types";
 import type { CatalogFiscal } from "@/lib/facturacionOps";
@@ -19,6 +20,7 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
   fiscal?: CatalogFiscal | null;
 }) {
   const { lang, personal } = useApp();
+  const isMobile = useIsMobile();
   const router = useRouter();
   const [pending, start] = useTransition();
   // Columnas fiscales y sincronización: solo en modo negocio y con el plugin activo.
@@ -71,6 +73,53 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
   const [newUnit, setNewUnit] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const view = products.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
+
+  // Clave SAT, unidad e IVA de un producto. En escritorio se despliega bajo su renglón; en teléfono
+  // la tabla se barre de lado y ahí adentro los campos quedaban cortados, así que va en una ventana.
+  const fiscalEditor = (p: Product, inModal: boolean) => {
+    const f = fx?.byId[p.id] ?? { sat_code: null, sat_unit: null, iva: null, linked: false };
+    return (
+      <div className="col gap-2" style={{ padding: inModal ? 0 : "10px 4px" }}>
+        <div className="row gap-3" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div className="col gap-1" style={{ flex: "1 1 260px", minWidth: 0 }}>
+            <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Clave SAT (8 dígitos)" : "SAT key (8 digits)"}</label>
+            <input key={f.sat_code ?? ""} className="inp-inline mono" style={{ width: 120 }} placeholder="01010101" maxLength={8} inputMode="numeric" defaultValue={f.sat_code ?? ""}
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (f.sat_code ?? "")) { if (v && !/^\d{8}$/.test(v)) { e.target.value = f.sat_code ?? ""; return; } run(() => updateProduct(p.id, { sat_code: v || null })); } }} />
+            <SatSearch businessId={businessId} kind="productos" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_code: k.clave }))} />
+          </div>
+          <div className="col gap-1" style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Unidad SAT" : "SAT unit"}</label>
+            <input key={f.sat_unit ?? ""} className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={3} defaultValue={f.sat_unit ?? ""}
+              onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== (f.sat_unit ?? "")) { if (v && !/^[A-Z0-9]{1,3}$/.test(v)) { e.target.value = f.sat_unit ?? ""; return; } run(() => updateProduct(p.id, { sat_unit: v || null })); } }} />
+            <SatSearch businessId={businessId} kind="unidades" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_unit: k.clave }))} />
+          </div>
+          <div className="col gap-1">
+            <label className="lbl" style={{ margin: 0 }}>IVA</label>
+            <select className="select" style={{ width: 170 }} value={f.iva == null ? "" : String(f.iva)}
+              onChange={(e) => run(() => updateProduct(p.id, { iva: e.target.value === "" ? null : Number(e.target.value) }))}>
+              <option value="">{lang === "es" ? "El del negocio" : "Business rate"}</option>
+              <option value="0.16">16%</option><option value="0.08">8%</option><option value="0">0%</option>
+            </select>
+            {f.linked && <span className="t-xs" style={{ color: "var(--green)", fontWeight: 600 }}>✓ {lang === "es" ? "Vinculado con Facturación" : "Linked to the invoicing account"}</span>}
+          </div>
+        </div>
+        <div className="t-xs muted">
+          {lang === "es"
+            ? "Con esto sale el concepto en la factura. Sin clave se usa 01010101 («No existe en el catálogo») y sin unidad E48 (servicio); H87 es pieza."
+            : "This is how the line appears on the invoice. With no key 01010101 is used, and with no unit E48 (service); H87 is piece."}
+        </div>
+      </div>
+    );
+  };
+  const fiscalProduct = fiscalFor ? products.find((x) => x.id === fiscalFor) ?? null : null;
+  // Los campos guardan al perder el foco. En un teléfono, tocar «Listo» no siempre se lo quita al
+  // campo (el teclado sigue abierto), y la ventana se cerraba sin guardar lo último escrito: aquí
+  // se le quita el foco a propósito antes de cerrar.
+  const closeFiscal = () => {
+    const el = document.activeElement;
+    if (el instanceof HTMLElement) el.blur();
+    setTimeout(() => setFiscalFor(null), 0);
+  };
 
   return (
     <div className="page">
@@ -175,43 +224,9 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                       <TierEditor product={p} lang={lang} onSave={(tiers) => run(() => updateProduct(p.id, { price_tiers: tiers }))} />
                     </td></tr>
                   )}
-                  {fx && fiscalFor === p.id && (() => {
-                    const f = fx.byId[p.id] ?? { sat_code: null, sat_unit: null, iva: null, linked: false };
-                    return (
-                      <tr><td colSpan={6} style={{ background: "var(--surface-2)" }}>
-                        <div className="col gap-2" style={{ padding: "10px 4px" }}>
-                          <div className="row gap-3" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
-                            <div className="col gap-1" style={{ flex: "1 1 260px", minWidth: 0 }}>
-                              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Clave SAT (8 dígitos)" : "SAT key (8 digits)"}</label>
-                              <input key={f.sat_code ?? ""} className="inp-inline mono" style={{ width: 120 }} placeholder="01010101" maxLength={8} inputMode="numeric" defaultValue={f.sat_code ?? ""}
-                                onBlur={(e) => { const v = e.target.value.trim(); if (v !== (f.sat_code ?? "")) { if (v && !/^\d{8}$/.test(v)) { e.target.value = f.sat_code ?? ""; return; } run(() => updateProduct(p.id, { sat_code: v || null })); } }} />
-                              <SatSearch businessId={businessId} kind="productos" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_code: k.clave }))} />
-                            </div>
-                            <div className="col gap-1" style={{ flex: "1 1 220px", minWidth: 0 }}>
-                              <label className="lbl" style={{ margin: 0 }}>{lang === "es" ? "Unidad SAT" : "SAT unit"}</label>
-                              <input key={f.sat_unit ?? ""} className="inp-inline mono" style={{ width: 80 }} placeholder="E48" maxLength={3} defaultValue={f.sat_unit ?? ""}
-                                onBlur={(e) => { const v = e.target.value.trim().toUpperCase(); if (v !== (f.sat_unit ?? "")) { if (v && !/^[A-Z0-9]{1,3}$/.test(v)) { e.target.value = f.sat_unit ?? ""; return; } run(() => updateProduct(p.id, { sat_unit: v || null })); } }} />
-                              <SatSearch businessId={businessId} kind="unidades" lang={lang} onPick={(k) => run(() => updateProduct(p.id, { sat_unit: k.clave }))} />
-                            </div>
-                            <div className="col gap-1">
-                              <label className="lbl" style={{ margin: 0 }}>IVA</label>
-                              <select className="select" style={{ width: 170 }} value={f.iva == null ? "" : String(f.iva)}
-                                onChange={(e) => run(() => updateProduct(p.id, { iva: e.target.value === "" ? null : Number(e.target.value) }))}>
-                                <option value="">{lang === "es" ? "El del negocio" : "Business rate"}</option>
-                                <option value="0.16">16%</option><option value="0.08">8%</option><option value="0">0%</option>
-                              </select>
-                              {f.linked && <span className="t-xs" style={{ color: "var(--green)", fontWeight: 600 }}>✓ {lang === "es" ? "Vinculado con Facturación" : "Linked to the invoicing account"}</span>}
-                            </div>
-                          </div>
-                          <div className="t-xs muted">
-                            {lang === "es"
-                              ? "Con esto sale el concepto en la factura. Sin clave se usa 01010101 («No existe en el catálogo») y sin unidad E48 (servicio); H87 es pieza."
-                              : "This is how the line appears on the invoice. With no key 01010101 is used, and with no unit E48 (service); H87 is piece."}
-                          </div>
-                        </div>
-                      </td></tr>
-                    );
-                  })()}
+                  {fx && !isMobile && fiscalFor === p.id && (
+                    <tr><td colSpan={6} style={{ background: "var(--surface-2)" }}>{fiscalEditor(p, false)}</td></tr>
+                  )}
                   </React.Fragment>
                 ))}
                 {view.length === 0 && <tr><td colSpan={personal ? 2 : fx ? 6 : 5} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
@@ -267,6 +282,24 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
         </section>
        </div>
       </div>
+      {fx && isMobile && fiscalProduct && (
+        <div className="modal-wrap" onClick={closeFiscal}>
+          <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="file" /></span>
+              <div className="col grow" style={{ minWidth: 0 }}>
+                <h3 className="truncate">{lang === "es" ? "Datos de facturación" : "Invoicing data"}</h3>
+                <span className="t-xs muted truncate">{fiscalProduct.name}</span>
+              </div>
+              <button className="iconbtn" onClick={closeFiscal}><Icon name="x" /></button>
+            </div>
+            <div className="modal-body">{fiscalEditor(fiscalProduct, true)}</div>
+            <div className="modal-foot">
+              <button className="btn btn-primary" onClick={closeFiscal}><Icon name="check" size={14} />{lang === "es" ? "Listo" : "Done"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
