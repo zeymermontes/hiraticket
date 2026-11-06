@@ -1,7 +1,8 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { getFiscalProfile, issueInvoice, notifyInvoice, previewInvoice, type InvoicePreview } from "@/app/(app)/invoicing/actions";
+import { getFiscalProfile, issueInvoice, notifyInvoice } from "@/app/(app)/invoicing/actions";
+import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/components/InvoiceSummary";
 import type { FiscalData } from "@/lib/invoicing";
 import type { InvoicingProvider } from "@/lib/plugins";
 
@@ -57,11 +58,12 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   const [notified, setNotified] = useState(false);
   // Cuánto va a decir la factura. Puede no ser el total del pedido: si el negocio suma el IVA al
   // facturar y el pedido se cobró sin él, la factura sale por más.
-  const [preview, setPreview] = useState<InvoicePreview | null>(null);
+  // El mismo resumen que se ve antes de mandar el link: conceptos, impuestos y total, y los datos
+  // del SAT que falten se piden aquí.
+  const { preview, missing, sat, patch } = useInvoicePreview(orderId);
   const [foliosUrl, setFoliosUrl] = useState<string | null>(null);
   const fx = provider === "hiraticket_facturacion";
   const es = lang === "es";
-  useEffect(() => { previewInvoice(orderId).then(setPreview).catch(() => {}); }, [orderId]);
   const invoiceTotal = preview?.ok ? preview.total : total;
 
   useEffect(() => {
@@ -76,7 +78,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de "la factura lleva IVA" está a la vista en este mismo formulario: emitir es aceptarlo.
-    const r = await issueInvoice(orderId, fiscal, paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax);
+    const r = await issueInvoice(orderId, fiscal, paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax, false, sat);
     setBusy(false);
     if (!r.ok) {
       setErr(r.code === "confirm-tax" ? (es ? `La factura saldrá por ${money(r.total ?? 0)} (se suma el IVA). Vuelve a pulsar Emitir para confirmar.` : `The invoice will be for ${money(r.total ?? 0)} (tax added). Press Issue again to confirm.`)
@@ -91,7 +93,6 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
         : r.error ? (es ? `No se pudo timbrar: ${r.error}` : `Couldn't stamp: ${r.error}`)
         : (es ? "No se pudo conectar con el servicio de facturación. Intenta de nuevo." : "Couldn't reach the invoicing service. Try again."));
       setFoliosUrl(r.code === "sin-folios" ? r.foliosUrl ?? null : null);
-      if (r.code === "confirm-tax") setPreview((p) => (p ? { ...p, addsTax: true, total: r.total ?? p.total } : p));
       return;
     }
     setResult({ invoiceId: r.invoiceId ?? null, uuid: r.uuid ?? null, pdfUrl: r.pdfUrl ?? null, publicUrl: r.publicUrl ?? null, simulated: !!r.simulated });
@@ -102,7 +103,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
 
   return (
     <div className="modal-wrap" onClick={onClose}>
-      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
+      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()} style={{ width: 600 }}>
         <div className="modal-head">
           <span className="t-ic" style={{ width: 38, height: 38, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="file" /></span>
           <h3 className="grow">{result ? "Factura emitida" : "Emitir factura (CFDI 4.0)"}</h3>
@@ -161,22 +162,14 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
                     <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={!fiscal.email?.trim()} />
                     <span className="t-sm">{lang === "es" ? "Enviar por correo (PDF + XML)" : "Email the invoice (PDF + XML)"}</span>
                   </label>
-                  {preview?.ok && preview.addsTax && (
-                    <div className="t-xs" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--amber-bg)", color: "var(--amber)", border: "1px solid var(--amber-bd)" }}>
-                      {es
-                        ? `Este pedido se cobró sin IVA (${money(preview.orderTotal)}). La factura lleva IVA ${preview.rate}% y saldrá por ${money(preview.total)}. Para cobrarle la diferencia al cliente, cierra y marca «Requiere factura» en el pedido.`
-                        : `This order was charged without tax (${money(preview.orderTotal)}). The invoice adds ${preview.rate}% tax and will be for ${money(preview.total)}. To charge the customer the difference, close this and tick "Requires invoice" on the order.`}
-                    </div>
-                  )}
-                  {preview && !preview.ok && (preview.error === "no-items" || preview.error === "non-positive") && (
-                    <div className="t-xs" style={{ color: "var(--red)" }}>
-                      {preview.error === "no-items" ? (es ? "El pedido no tiene artículos con precio." : "The order has no priced items.") : (es ? "No hay nada que facturar: el total del pedido es cero o negativo." : "Nothing to invoice: the order total is zero or negative.")}
-                    </div>
-                  )}
-                  <div className="row" style={{ paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-                    <span className="grow t-sm" style={{ fontWeight: 700 }}>{lang === "es" ? "Total a facturar (IVA incluido)" : "Invoice total (tax incl.)"}</span>
-                    <span className="mono" style={{ fontWeight: 800 }}>{money(invoiceTotal)}</span>
-                  </div>
+                  {preview && preview.error !== "order"
+                    ? <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search={fx} />
+                    : (
+                      <div className="row" style={{ paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+                        <span className="grow t-sm" style={{ fontWeight: 700 }}>{lang === "es" ? "Total a facturar (IVA incluido)" : "Invoice total (tax incl.)"}</span>
+                        <span className="mono" style={{ fontWeight: 800 }}>{money(invoiceTotal)}</span>
+                      </div>
+                    )}
                   {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
                   {foliosUrl && <a className="btn btn-sm btn-outline" style={{ alignSelf: "flex-start" }} href={foliosUrl} target="_blank" rel="noreferrer"><Icon name="external" size={13} />{es ? "Comprar folios" : "Buy folios"}</a>}
                 </>
@@ -184,7 +177,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
             </div>
             <div className="modal-foot">
               <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-              <button className="btn btn-primary" disabled={!valid || busy || (!!preview && !preview.ok && (preview.error === "no-items" || preview.error === "non-positive"))} onClick={submit}><Icon name="file" size={14} />{busy ? "Timbrando…" : "Emitir factura"}</button>
+              <button className="btn btn-primary" disabled={!valid || busy || satIncomplete(sat) || (!!preview && !preview.ok && (preview.error === "no-items" || preview.error === "non-positive"))} onClick={submit}><Icon name="file" size={14} />{busy ? "Timbrando…" : "Emitir factura"}</button>
             </div>
           </>
         ) : (

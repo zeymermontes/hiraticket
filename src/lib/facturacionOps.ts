@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPluginRuntimeConfig } from "@/lib/plugins";
@@ -7,7 +8,7 @@ import { appBaseUrl } from "@/lib/url";
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
-import { planInvoice, productKey, toNetPrice, fromNetPrice, type InvoicePlan, type InvoiceLine } from "@/lib/invoiceLines";
+import { planInvoice, productKey, toNetPrice, fromNetPrice, cleanSat, type InvoicePlan, type InvoiceLine, type SatOverrides } from "@/lib/invoiceLines";
 import {
   PLUGIN_ID, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
   setWebhook, WEBHOOK_EVENTS_PRODUCTS,
@@ -87,8 +88,12 @@ export interface OrderForInvoice {
 }
 
 /** Carga el pedido y arma el plan de facturación (qué renglones, a qué tasa, por cuánto). Vale
- *  para cualquier proveedor de CFDI: la regla de precios es una sola. */
-export async function planOrderInvoice(db: DB, orderId: string): Promise<{ order: OrderForInvoice; plan: InvoicePlan } | null> {
+ *  para cualquier proveedor de CFDI: la regla de precios es una sola.
+ *
+ *  `sat` son los datos del SAT que se capturaron al facturar para los renglones que no los tenían.
+ *  Entran al plan de esta factura; `catalog` (lo que hay guardado, sin ellos) sirve para saber a
+ *  qué productos hay que guardárselos. */
+export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrides | null): Promise<{ order: OrderForInvoice; plan: InvoicePlan; catalog: CatalogSat } | null> {
   // discount (0058) y requires_invoice/tax_rate (0050) pueden no existir: se cae a lo básico.
   let { data: o, error } = await db.from("orders").select("id, business_id, code, total, contact_id, conversation_id, tax_rate, discount").eq("id", orderId).maybeSingle();
   if (error) ({ data: o, error } = await db.from("orders").select("id, business_id, code, total, contact_id, conversation_id").eq("id", orderId).maybeSingle() as never);
@@ -109,6 +114,11 @@ export async function planOrderInvoice(db: DB, orderId: string): Promise<{ order
       iva: p.iva == null ? null : Number(p.iva),
     });
   }
+  const catalog: CatalogSat = new Map([...products].map(([k, v]) => [k, { id: v.id, sat_code: v.sat_code, sat_unit: v.sat_unit }]));
+  for (const [k, v] of Object.entries(cleanSat(sat))) {
+    const cur = products.get(k);
+    products.set(k, { id: cur?.id ?? "", sat_code: v.code || cur?.sat_code || null, sat_unit: v.unit || cur?.sat_unit || null, iva: cur?.iva ?? null });
+  }
   const plan = planInvoice({
     order: { total: Number(row.total) || 0, tax_rate: row.tax_rate == null ? null : Number(row.tax_rate), discount: row.discount == null ? null : Number(row.discount) },
     business: { invoice_add_tax: b.invoice_add_tax ?? true, invoice_tax_rate: Number(b.invoice_tax_rate ?? 16) },
@@ -118,7 +128,30 @@ export async function planOrderInvoice(db: DB, orderId: string): Promise<{ order
   return {
     order: { id: row.id as string, business_id: businessId, code: row.code as string, total: Number(row.total) || 0, contact_id: (row.contact_id as string) ?? null, conversation_id: (row.conversation_id as string) ?? null },
     plan,
+    catalog,
   };
+}
+
+/** Datos del SAT que el catálogo tiene guardados, por nombre normalizado. */
+export type CatalogSat = Map<string, { id: string; sat_code: string | null; sat_unit: string | null }>;
+
+/**
+ * Lo capturado al facturar se le guarda al producto del catálogo, para no volver a pedirlo en el
+ * siguiente pedido. Solo llena lo que estaba vacío (nunca pisa una clave que ya tenía) y solo
+ * toca renglones que sí son productos del catálogo. Es un extra: si quien factura no puede
+ * editar el catálogo, la factura sale igual con lo que capturó.
+ */
+export async function saveSatToCatalog(db: DB, catalog: CatalogSat, sat: SatOverrides | null | undefined): Promise<void> {
+  for (const [k, v] of Object.entries(cleanSat(sat))) {
+    const prod = catalog.get(k);
+    if (!prod?.id) continue;
+    const patch: Record<string, string> = {};
+    if (v.code && !prod.sat_code) patch.sat_code = v.code;
+    if (v.unit && !prod.sat_unit) patch.sat_unit = v.unit;
+    if (!Object.keys(patch).length) continue;
+    const { error } = await db.from("products").update(patch).eq("id", prod.id);
+    if (!error) after(() => pushProduct(prod.id).catch(() => {}));
+  }
 }
 
 const SAT_CODE = /^\d{8}$/;

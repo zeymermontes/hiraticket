@@ -10,9 +10,9 @@ import { signMediaUrl } from "@/lib/mediaSign";
 import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, upsertClient } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
-  syncLinkRow, closeLinkRow, type FxConfig,
+  syncLinkRow, closeLinkRow, saveSatToCatalog, type FxConfig,
 } from "@/lib/facturacionOps";
-import type { InvoicePlan } from "@/lib/invoiceLines";
+import { summarize, cleanSat, type InvoicePlan, type InvoiceMode, type InvoiceSummary, type SatOverrides } from "@/lib/invoiceLines";
 
 type SB = Awaited<ReturnType<typeof createClient>>;
 
@@ -55,17 +55,29 @@ export interface InvoicePreview {
   provider: InvoicingProvider | null;
   /** Total que tendrá la factura y total del pedido. Difieren cuando el IVA se suma al facturar. */
   total: number; orderTotal: number; addsTax: boolean; rate: number;
+  /** Cómo se leyeron los precios del pedido (con IVA incluido, sin él, o con el IVA del pedido). */
+  mode: InvoiceMode;
+  /** Se timbra como un solo concepto por el total exacto, con clave genérica (ver `InvoicePlan.single`). */
+  exact: boolean;
+  /** Los conceptos con sus importes, los totales y a qué renglones les faltan datos del SAT. */
+  summary: InvoiceSummary;
+  businessId: string | null;
 }
 
-/** Cuánto se va a facturar, antes de timbrar: lo enseña el modal y lo usa el botón del link. */
-export async function previewInvoice(orderId: string): Promise<InvoicePreview> {
+/**
+ * Qué va a decir la factura, antes de mandar el link o de timbrar: conceptos, subtotal, impuestos
+ * y total, y a qué renglones les faltan la clave o la unidad del SAT. `sat` es lo que ya se
+ * capturó en la ventana para esos renglones: el resumen se recalcula con ello.
+ */
+export async function previewInvoice(orderId: string, sat?: SatOverrides | null): Promise<InvoicePreview> {
   const supabase = await createClient();
-  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0 };
-  const ctx = await planOrderInvoice(supabase, orderId);
+  const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
+  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null };
+  const ctx = await planOrderInvoice(supabase, orderId, sat);
   if (!ctx) return { ...empty, error: "order" };
   const provider = await activeProvider(supabase, ctx.order.business_id);
   const { plan } = ctx;
-  const base = { provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate };
+  const base = { provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id };
   if (!plan.ok) return { ...base, ok: false, error: planError(plan) };
   return { ...base, ok: true };
 }
@@ -119,10 +131,11 @@ export interface IssueResult {
  *  fiscal profile on the contact and emails the invoice (PDF+XML) to the customer. */
 export async function issueInvoice(
   orderId: string, fiscal: FiscalData, paymentForm: string, saveProfile: boolean, sendEmail: boolean, confirmTax = false, retried = false,
+  sat: SatOverrides | null = null,
 ): Promise<IssueResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const ctx = await planOrderInvoice(supabase, orderId);
+  const ctx = await planOrderInvoice(supabase, orderId, sat);
   if (!ctx) return { ok: false, error: "order" };
   const { order, plan } = ctx;
   const businessId = order.business_id;
@@ -135,6 +148,8 @@ export async function issueInvoice(
   // Un pedido ya facturado no se vuelve a facturar: la UI esconde el botón, pero dos pestañas
   // abiertas (o dos asesores) pueden llegar aquí a la vez.
   if (rows.some((r) => r.status === "issued")) return { ok: false, error: "already-issued" };
+  // La clave y la unidad que se capturaron para esta factura se le quedan al producto del catálogo.
+  if (!retried) await saveSatToCatalog(supabase, ctx.catalog, sat);
 
   if (saveProfile && order.contact_id) {
     const row = { business_id: businessId, contact_id: order.contact_id, legal_name: fiscal.legal_name, rfc: fiscal.rfc.toUpperCase(), tax_system: fiscal.tax_system, zip: fiscal.zip, email: fiscal.email || null, cfdi_use: fiscal.cfdi_use, updated_at: new Date().toISOString() };
@@ -206,7 +221,7 @@ export async function issueInvoice(
         // El link quedó cerrado, vencido o en la global: ya no estorba, así que se timbra sin él en
         // este mismo intento. Solo una vez: si el estado no se pudo leer o sigue apareciendo vivo,
         // se le dice al asesor en vez de dar vueltas.
-        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true);
+        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true, sat);
         return { ok: false, code: "link-changed", error: r.error };
       }
       // 4xx: Facturación rechazó la petición y no timbró nada. La fila `pending` sobra, y el link
@@ -302,10 +317,10 @@ export interface LinkResult {
  * Facturación y se crea otro: un link abierto de más no solo permitiría facturar dos veces, esa
  * venta entraría además a la factura global del negocio.
  */
-export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean } = {}): Promise<LinkResult> {
+export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null } = {}): Promise<LinkResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const ctx = await planOrderInvoice(supabase, orderId);
+  const ctx = await planOrderInvoice(supabase, orderId, opts.sat);
   if (!ctx) return { ok: false, error: "order" };
   const { order, plan } = ctx;
   const businessId = order.business_id;
@@ -317,8 +332,13 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   if (rows.some((r) => r.status === "issued")) return { ok: false, code: "already-issued" };
   if (plan.addsTax && !opts.confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
 
+  await saveSatToCatalog(supabase, ctx.catalog, opts.sat);
+
   const live = liveLinks(rows);
-  let link = live.find((r) => !!r.link_url && (!r.link_expires || r.link_expires >= today()) && Math.abs((Number(r.total) || 0) - plan.total) < 0.005) ?? null;
+  // Con datos del SAT recién capturados no se reutiliza un link anterior aunque sea por el mismo
+  // monto: sus conceptos se crearon sin ellos. Se cierra y se crea otro.
+  const fresh = Object.keys(cleanSat(opts.sat)).length > 0;
+  let link = fresh ? null : live.find((r) => !!r.link_url && (!r.link_expires || r.link_expires >= today()) && Math.abs((Number(r.total) || 0) - plan.total) < 0.005) ?? null;
   const reused = !!link;
   // Los demás (otro monto, o ya vencidos aquí) se cierran antes de crear el nuevo. Si al cerrarlo
   // resulta que el cliente ya se había facturado con él, esa es la factura del pedido.

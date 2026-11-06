@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/auth";
 import { encryptSecret, decryptSecret } from "@/lib/secrets";
 import { PLUGIN_ID as FX, FACTURACION_HOST, integratorConfigured, linkRequest, linkPoll, linkRedeem, type FxLinkResult, type FxResult } from "@/lib/facturacion";
-import { syncProducts, fxWebhookUrl, eventsTag } from "@/lib/facturacionOps";
+import { syncProducts, fxWebhookUrl, eventsTag, ensureProductEvents, type SyncResult } from "@/lib/facturacionOps";
 
 // Conectar el plugin con la cuenta de Hiraticket Facturación del negocio SIN copiar la llave a mano.
 //
@@ -206,4 +206,26 @@ export async function redeemFacturacionCode(businessId: string, codeRaw: string)
       : r.status === 410 ? "Ese código venció o ya se usó. Genera uno nuevo en Facturación."
       : linkFailure(r, "No se pudo canjear el código."),
   };
+}
+
+/**
+ * Enciende la sincronización del catálogo desde el propio catálogo y corre la primera completa.
+ * Al conectar, la sincronización queda apagada y su selector vive al fondo de la configuración
+ * del plugin: quien acababa de conectar no encontraba cómo traer los conceptos que ya tenía en
+ * Facturación. El catálogo ofrece ahora los tres sentidos y este es el paso que los aplica.
+ */
+export async function startCatalogSync(businessId: string, mode: "push" | "pull" | "ambos"): Promise<SyncResult> {
+  const none: SyncResult = { ok: false, pushed: 0, created: 0, updated: 0, deactivated: 0 };
+  if (!["push", "pull", "ambos"].includes(mode)) return { ...none, error: "Sentido de sincronización no válido." };
+  const supabase = await createClient();
+  const a = await adminConfig(supabase, businessId);
+  if ("error" in a) return { ...none, error: "Solo un administrador puede encender la sincronización del catálogo." };
+  if (!a.cfg.api_key) return { ...none, error: "Primero conecta el plugin con tu cuenta de Facturación." };
+  const { error } = await saveCfg(supabase, businessId, { ...a.cfg, sync_productos: mode });
+  if (error) return { ...none, error: error.message };
+  const r = await syncProducts(supabase, businessId, true);
+  // Los cambios de allá llegan solos por el webhook: se comprueba que los eventos del catálogo estén pedidos.
+  if (r.ok) after(() => ensureProductEvents(businessId).catch(() => {}));
+  revalidatePath("/plugins"); revalidatePath("/catalog");
+  return r;
 }

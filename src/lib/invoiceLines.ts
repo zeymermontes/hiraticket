@@ -31,6 +31,27 @@ export interface InvoiceLine {
   satCode?: string;
   satUnit?: string;
   sku?: string;
+  /** Nombre normalizado del renglón del pedido (`productKey`): con él se casan los datos del SAT
+   *  capturados al facturar. No viaja al proveedor. */
+  key?: string;
+}
+
+/**
+ * Datos del SAT capturados al momento de facturar, por renglón (`productKey` del nombre). Cubren
+ * lo que el catálogo no tiene: un producto sin clave o un renglón escrito a mano en el pedido.
+ */
+export type SatOverrides = Record<string, { code?: string; unit?: string }>;
+
+/** Solo lo que es válido: clave de 8 dígitos y unidad de 1 a 3 letras o números. */
+export function cleanSat(sat: SatOverrides | null | undefined): SatOverrides {
+  const out: SatOverrides = {};
+  for (const [k, v] of Object.entries(sat ?? {})) {
+    const key = productKey(k);
+    const code = typeof v?.code === "string" && /^\d{8}$/.test(v.code.trim()) ? v.code.trim() : undefined;
+    const unit = typeof v?.unit === "string" && /^[A-Za-z0-9]{1,3}$/.test(v.unit.trim()) ? v.unit.trim().toUpperCase() : undefined;
+    if (key && (code || unit)) out[key] = { ...(code ? { code } : {}), ...(unit ? { unit } : {}) };
+  }
+  return out;
 }
 
 export interface InvoicePlan {
@@ -49,7 +70,7 @@ export interface InvoicePlan {
    * Un solo concepto por el total exacto, con IVA incluido. Solo viene cuando los conceptos
    * desglosados no pueden sumar lo cobrado (p. ej. 2 × $250 = $500 da $499.99 al desglosar) y
    * pasarlo a un concepto no pierde nada fiscal: un solo renglón, al 16 %, sin descuento y sin
-   * clave SAT propia. Hiraticket Facturación timbra ese total exacto; `total` ya lo refleja.
+   * clave ni unidad SAT propias. Hiraticket Facturación timbra ese total exacto; `total` ya lo refleja.
    */
   single?: { total: number; description: string };
 }
@@ -120,6 +141,7 @@ export function planInvoice(input: PlanInput): InvoicePlan {
       ...(prod?.sat_code ? { satCode: prod.sat_code } : {}),
       ...(prod?.sat_unit ? { satUnit: prod.sat_unit } : {}),
       ...(prod?.id ? { sku: prod.id } : {}),
+      key: productKey(r.it.name),
     };
   });
 
@@ -160,11 +182,70 @@ export function planInvoice(input: PlanInput): InvoicePlan {
   // como un concepto por el total exacto (ver `single`).
   const only = lines.length === 1 ? lines[0] : null;
   if (mode === "tax-included" && only && total !== orderTotal && orderTotal > 0 && only.discount === 0 && only.iva === 0.16
-    && (!only.satCode || only.satCode === "01010101")) {
+    && (!only.satCode || only.satCode === "01010101") && !only.satUnit) {
     const description = only.qty === 1 ? only.description : `${only.qty} × ${only.description}`;
     return { ok: true, mode, rate, lines, total: orderTotal, orderTotal, addsTax: false, single: { total: orderTotal, description } };
   }
   return { ok: true, mode, rate, lines, total, orderTotal, addsTax: mode === "adds-tax" && total > orderTotal + 0.005 };
+}
+
+/** Un concepto como se le enseña a quien va a facturar, con sus importes ya calculados. */
+export interface SummaryLine {
+  key: string; description: string; qty: number;
+  /** Precio unitario sin impuestos. */
+  price: number;
+  /** Importe sin impuestos (cantidad × precio), descuento, impuesto y total del renglón. */
+  amount: number; discount: number; tax: number; total: number;
+  iva: number; satCode: string | null; satUnit: string | null;
+  /** El renglón es un producto del catálogo: lo que se capture aquí se le puede guardar. */
+  inCatalog: boolean;
+}
+export interface InvoiceSummary {
+  lines: SummaryLine[];
+  subtotal: number; discount: number; tax: number; total: number;
+  /** Renglones (uno por nombre) a los que les falta clave o unidad del SAT. */
+  missing: { key: string; description: string; code: boolean; unit: boolean; inCatalog: boolean }[];
+}
+
+/** El plan en números para enseñar antes de mandar el link o de timbrar: conceptos, subtotal,
+ *  descuento, impuestos y total, y a qué renglones les faltan datos del SAT. */
+export function summarize(plan: InvoicePlan): InvoiceSummary {
+  if (!plan.ok) return { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
+  const first = plan.lines[0];
+  let lines: SummaryLine[];
+  if (plan.single) {
+    // Un concepto por el total exacto, con el IVA adentro: se enseña como lo va a timbrar Facturación.
+    const amount = r2(plan.single.total / (1 + first.iva));
+    lines = [{
+      key: first.key ?? productKey(first.description), description: plan.single.description, qty: 1, price: amount,
+      amount, discount: 0, tax: r2(plan.single.total - amount), total: plan.single.total,
+      iva: first.iva, satCode: null, satUnit: null, inCatalog: !!first.sku,
+    }];
+  } else {
+    lines = plan.lines.map((l) => {
+      const a = lineAmounts(l);
+      return {
+        key: l.key ?? productKey(l.description), description: l.description, qty: l.qty, price: l.price,
+        amount: a.sub, discount: a.discount, tax: a.tax, total: a.total,
+        iva: l.iva, satCode: l.satCode ?? null, satUnit: l.satUnit ?? null, inCatalog: !!l.sku,
+      };
+    });
+  }
+  const seen = new Set<string>();
+  const missing: InvoiceSummary["missing"] = [];
+  for (const l of lines) {
+    if ((l.satCode && l.satUnit) || seen.has(l.key)) continue;
+    seen.add(l.key);
+    missing.push({ key: l.key, description: plan.single ? first.description : l.description, code: !l.satCode, unit: !l.satUnit, inCatalog: l.inCatalog });
+  }
+  return {
+    lines,
+    subtotal: r2(lines.reduce((s, l) => s + l.amount, 0)),
+    discount: r2(lines.reduce((s, l) => s + l.discount, 0)),
+    tax: r2(lines.reduce((s, l) => s + l.tax, 0)),
+    total: plan.total,
+    missing,
+  };
 }
 
 /** Precio de catálogo de Hiraticket → precio sin impuestos (el que guarda Facturación). */

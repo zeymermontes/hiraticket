@@ -27,7 +27,8 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
-import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink } from "@/app/(app)/invoicing/actions";
+import { InvoiceLinkModal } from "@/components/InvoiceLinkModal";
+import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, type LinkResult } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -162,6 +163,7 @@ export function OrderDrawer({
   const [invOpen, setInvOpen] = useState(false);
   const [invSent, setInvSent] = useState<string | null>(null); // invoice id just WhatsApped
   const [invBusy, setInvBusy] = useState(false);
+  const [invLinkOpen, setInvLinkOpen] = useState(false);
   const [invCopied, setInvCopied] = useState(false);
   const [invMsg, setInvMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [wasteItem, setWasteItem] = useState(""); // "" → merma del pedido completo
@@ -286,6 +288,10 @@ export function OrderDrawer({
       return;
     }
     if (!r.ok) { setInvMsg({ ok: false, text: invErr(r.code, r.error) }); return; }
+    await invLinkDone(r);
+  };
+  // El link ya existe: se avisa qué pasó con él. Lo comparten «Reenviar» y la ventana del resumen.
+  const invLinkDone = async (r: LinkResult) => {
     if (!r.sent && r.url) {
       await copyInvLink(r.url);
       setInvMsg({ ok: true, text: lang === "es" ? "Link creado y copiado. Este pedido no tiene chat: mándaselo tú al cliente." : "Link created and copied. This order has no chat: send it to the customer yourself." });
@@ -839,8 +845,8 @@ export function OrderDrawer({
                 {issued.length === 0 && (
                   <div className="row gap-2" style={{ flexWrap: "wrap" }}>
                     {fx && !openLink && (
-                      <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => sendInvLink()}
-                        title={lang === "es" ? "El cliente captura sus datos fiscales y recibe su factura" : "The customer enters their tax details and gets the invoice"}>
+                      <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => { setInvMsg(null); setInvLinkOpen(true); }}
+                        title={lang === "es" ? "El cliente captura sus datos fiscales y recibe su factura. Antes de mandarlo ves qué dirá la factura." : "The customer enters their tax details and gets the invoice. You see what it will say before sending."}>
                         <Icon name={detail.conversation_id ? "send" : "file"} size={14} />{detail.conversation_id ? (lang === "es" ? "Enviar link para facturar" : "Send invoicing link") : (lang === "es" ? "Crear link para facturar" : "Create invoicing link")}
                       </button>
                     )}
@@ -1095,6 +1101,10 @@ export function OrderDrawer({
       {shipOpen && (
         <ShippingModal orderId={detail.id} contact={detail.contact ? { id: detail.contact.id, name: detail.contact.name, phone: detail.contact.phone } : null} lang={lang}
           onClose={() => setShipOpen(false)} onCreated={() => run(() => Promise.resolve())} />
+      )}
+      {invLinkOpen && (
+        <InvoiceLinkModal orderId={detail.id} hasChat={!!detail.conversation_id} lang={lang} errText={invErr}
+          onClose={() => setInvLinkOpen(false)} onDone={(r) => { setInvLinkOpen(false); void invLinkDone(r); }} />
       )}
       {invOpen && (
         <InvoiceModal orderId={detail.id} contactId={detail.contact?.id ?? null} total={detail.total} lang={lang} provider={invoicing ?? null}
