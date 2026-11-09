@@ -93,17 +93,18 @@ export interface OrderForInvoice {
  *  `sat` son los datos del SAT que se capturaron al facturar para los renglones que no los tenían.
  *  Entran al plan de esta factura; `catalog` (lo que hay guardado, sin ellos) sirve para saber a
  *  qué productos hay que guardárselos. */
-export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrides | null): Promise<{ order: OrderForInvoice; plan: InvoicePlan; catalog: CatalogSat } | null> {
+export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrides | null, group?: GroupChoice): Promise<{ order: OrderForInvoice; plan: InvoicePlan; catalog: CatalogSat; group: GroupInfo } | null> {
   // discount (0058) y requires_invoice/tax_rate (0050) pueden no existir: se cae a lo básico.
   let { data: o, error } = await db.from("orders").select("id, business_id, code, total, contact_id, conversation_id, tax_rate, discount").eq("id", orderId).maybeSingle();
   if (error) ({ data: o, error } = await db.from("orders").select("id, business_id, code, total, contact_id, conversation_id").eq("id", orderId).maybeSingle() as never);
   if (!o) return null;
   const row = o as Record<string, unknown>;
   const businessId = row.business_id as string;
-  const [{ data: biz }, itemsFull, prodRes] = await Promise.all([
+  const [{ data: biz }, itemsFull, prodRes, pcfg] = await Promise.all([
     db.from("businesses").select("invoice_add_tax, invoice_tax_rate").eq("id", businessId).maybeSingle(),
     db.from("order_items").select("name, qty, unit_price, subtotal, sat_code, sat_unit").eq("order_id", orderId),
-    db.from("products").select("id, name, sat_code, sat_unit, iva").eq("business_id", businessId),
+    db.from("products").select("id, name, sat_code, sat_unit, iva").eq("business_id", businessId).order("name"),
+    getPluginRuntimeConfig(businessId, PLUGIN_ID),
   ]);
   // sat_code/sat_unit del renglón son de 0097: sin ellas se lee lo de siempre.
   const itemsRes = itemsFull.error ? await db.from("order_items").select("name, qty, unit_price, subtotal").eq("order_id", orderId) : itemsFull;
@@ -131,16 +132,31 @@ export async function planOrderInvoice(db: DB, orderId: string, sat?: SatOverrid
     const cur = products.get(k);
     products.set(k, { id: cur?.id ?? "", sat_code: v.code || cur?.sat_code || null, sat_unit: v.unit || cur?.sat_unit || null, iva: cur?.iva ?? null });
   }
+  // Todo en un concepto: lo que se eligió ahora, o lo que el negocio dejó por defecto en el plugin.
+  // El concepto es un producto del catálogo; sus datos del SAT son los que ya se cruzaron arriba
+  // con lo capturado, así que una clave que se capture aquí para él también cuenta.
+  const prodRows = (prodRes.error ? [] : prodRes.data ?? []) as { id: string; name: string | null; sat_code: string | null; sat_unit: string | null; iva: number | null }[];
+  const defaultOn = pcfg?.agrupar === "true";
+  const defaultProductId = (pcfg?.agrupar_producto || "").trim() || null;
+  const choice = group === undefined || group === null ? { on: defaultOn, productId: defaultProductId } : group;
+  const gp = choice.on && choice.productId ? prodRows.find((p) => p.id === choice.productId) ?? null : null;
+  const gk = gp ? productKey(gp.name) : "";
+  const gsat = gp ? products.get(gk) : undefined;
   const plan = planInvoice({
     order: { total: Number(row.total) || 0, tax_rate: row.tax_rate == null ? null : Number(row.tax_rate), discount: row.discount == null ? null : Number(row.discount) },
     business: { invoice_add_tax: b.invoice_add_tax ?? true, invoice_tax_rate: Number(b.invoice_tax_rate ?? 16) },
     items: itemRows,
     products,
+    group: gp ? { description: (gp.name ?? "").trim(), satCode: gsat?.sat_code ?? gp.sat_code, satUnit: gsat?.sat_unit ?? gp.sat_unit, iva: gp.iva == null ? null : Number(gp.iva), sku: gp.id, key: gk } : null,
   });
   return {
     order: { id: row.id as string, business_id: businessId, code: row.code as string, total: Number(row.total) || 0, contact_id: (row.contact_id as string) ?? null, conversation_id: (row.conversation_id as string) ?? null },
     plan,
     catalog,
+    group: {
+      on: choice.on, productId: gp ? gp.id : choice.on ? choice.productId : null, defaultOn, defaultProductId,
+      options: prodRows.map((p) => ({ id: p.id, name: (p.name ?? "").trim(), satCode: p.sat_code || null, satUnit: p.sat_unit || null })),
+    },
   };
 }
 
@@ -166,6 +182,27 @@ export async function saveSatToOrder(db: DB, orderId: string, sat: SatOverrides 
 
 /** Datos del SAT que el catálogo tiene guardados, por nombre normalizado. */
 export type CatalogSat = Map<string, { id: string; sat_code: string | null; sat_unit: string | null }>;
+
+/** Cómo facturar los renglones: juntos en un concepto del catálogo (`on` con `productId`) o
+ *  desglosados. `undefined` = como lo tenga por defecto el negocio (configuración del plugin). */
+export type GroupChoice = { on: boolean; productId: string | null } | null | undefined;
+/** Lo que se le enseña a quien factura: qué se eligió, qué hay por defecto y de qué conceptos del
+ *  catálogo se puede escoger. */
+export interface GroupInfo {
+  on: boolean; productId: string | null;
+  defaultOn: boolean; defaultProductId: string | null;
+  options: { id: string; name: string; satCode: string | null; satUnit: string | null }[];
+}
+
+/** Guarda en la configuración del plugin cómo se agrupa por defecto. Solo quien puede editar la
+ *  configuración (RLS) lo cambia; si no puede, no pasa nada y se devuelve `false`. */
+export async function saveGroupDefault(db: DB, businessId: string, choice: { on: boolean; productId: string | null }): Promise<boolean> {
+  const { data } = await db.from("business_plugins").select("config").eq("business_id", businessId).eq("plugin_id", PLUGIN_ID).maybeSingle();
+  if (!data) return false;
+  const cfg = { ...((data.config as Record<string, unknown>) ?? {}), agrupar: choice.on ? "true" : "false", agrupar_producto: choice.on && choice.productId ? choice.productId : "" };
+  const { count, error } = await db.from("business_plugins").update({ config: cfg, updated_at: new Date().toISOString() }, { count: "exact" }).eq("business_id", businessId).eq("plugin_id", PLUGIN_ID);
+  return !error && !!count;
+}
 
 /**
  * Lo capturado al facturar se le guarda al producto del catálogo, para no volver a pedirlo en el

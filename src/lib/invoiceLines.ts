@@ -73,6 +73,9 @@ export interface InvoicePlan {
    * clave ni unidad SAT propias. Hiraticket Facturación timbra ese total exacto; `total` ya lo refleja.
    */
   single?: { total: number; description: string };
+  /** Los renglones del pedido se facturaron como UN concepto (el del catálogo que eligió el
+   *  negocio): cuántos renglones se juntaron. */
+  grouped?: { count: number };
 }
 
 export interface PlanInput {
@@ -81,6 +84,9 @@ export interface PlanInput {
   items: { name: string | null; qty: number | null; unit_price: number | null; subtotal?: number | null }[];
   /** Datos fiscales del catálogo, por nombre normalizado (`productKey`). */
   products?: Map<string, { id: string; sat_code: string | null; sat_unit: string | null; iva: number | null }>;
+  /** Juntar todos los renglones en un solo concepto con estos datos (p. ej. «Servicio de impresión»
+   *  por el total del pedido más IVA). El descuento del pedido ya queda restado en el importe. */
+  group?: { description: string; satCode?: string | null; satUnit?: string | null; iva?: number | null; sku?: string; key?: string } | null;
 }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -174,6 +180,31 @@ export function planInvoice(input: PlanInput): InvoicePlan {
       lines[A.i] = best.a;
       if (B && best.b) lines[B.i] = best.b;
     }
+  }
+
+  // Todo en un concepto: lo que suman los renglones (ya sin el descuento) como un solo renglón con
+  // la clave, unidad e IVA del concepto elegido. Con los precios con IVA incluido se busca la base
+  // en centavos cuya suma con su IVA dé exactamente lo cobrado; si ninguna lo da, la más cercana.
+  if (input.group && lines.length > 0) {
+    const g = input.group;
+    const iva = mode === "order-rate" ? rate / 100 : g.iva != null ? Number(g.iva) : rate / 100;
+    let base: number;
+    if (mode === "tax-included") {
+      const guess = r2(orderTotal / (1 + iva));
+      base = guess;
+      for (let k = 0; k <= 4 && r2(base + r2(base * iva)) !== orderTotal; k++) {
+        const up = r2(guess + k * 0.01), down = r2(guess - k * 0.01);
+        base = r2(up + r2(up * iva)) === orderTotal ? up : r2(down + r2(down * iva)) === orderTotal ? down : guess;
+      }
+    } else base = r2(lines.reduce((s, l) => s + lineAmounts(l).base, 0));
+    if (base <= 0) return fail("non-positive");
+    const line: InvoiceLine = {
+      description: g.description.trim() || "Servicio", qty: 1, price: base, discount: 0, iva,
+      ...(g.satCode ? { satCode: g.satCode } : {}), ...(g.satUnit ? { satUnit: g.satUnit } : {}), ...(g.sku ? { sku: g.sku } : {}),
+      key: g.key ?? productKey(g.description),
+    };
+    const total = linesTotal([line]);
+    return { ok: true, mode, rate, lines: [line], total, orderTotal, addsTax: mode === "adds-tax" && total > orderTotal + 0.005, grouped: { count: lines.length } };
   }
 
   const total = linesTotal(lines);

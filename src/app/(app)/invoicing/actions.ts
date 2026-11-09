@@ -11,7 +11,7 @@ import { signMediaUrl } from "@/lib/mediaSign";
 import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLink, updateLinkExpiry, upsertClient, fxUrl } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
-  syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, type FxConfig,
+  syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, saveGroupDefault, type FxConfig, type GroupChoice, type GroupInfo,
 } from "@/lib/facturacionOps";
 import { summarize, cleanSat, type InvoicePlan, type InvoiceMode, type InvoiceSummary, type SatOverrides } from "@/lib/invoiceLines";
 
@@ -84,6 +84,10 @@ export interface InvoicePreview {
   /** Hasta qué día se podrá facturar con el link si no se elige otro: hoy más los días de
    *  vigencia configurados en el plugin (YYYY-MM-DD). */
   linkUntil: string | null;
+  /** Todo en un concepto: lo elegido, lo que hay por defecto y los conceptos del catálogo. */
+  group: GroupInfo;
+  /** Cuántos renglones del pedido se juntaron en el concepto (0 si no se agrupa). */
+  groupedCount: number;
 }
 
 /**
@@ -91,16 +95,20 @@ export interface InvoicePreview {
  * y total, y a qué renglones les faltan la clave o la unidad del SAT. `sat` es lo que ya se
  * capturó en la ventana para esos renglones: el resumen se recalcula con ello.
  */
-export async function previewInvoice(orderId: string, sat?: SatOverrides | null): Promise<InvoicePreview> {
+export async function previewInvoice(orderId: string, sat?: SatOverrides | null, group?: GroupChoice): Promise<InvoicePreview> {
   const supabase = await createClient();
   const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
-  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null };
-  const ctx = await planOrderInvoice(supabase, orderId, sat);
+  const noGroup: GroupInfo = { on: false, productId: null, defaultOn: false, defaultProductId: null, options: [] };
+  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null, group: noGroup, groupedCount: 0 };
+  const ctx = await planOrderInvoice(supabase, orderId, sat, group);
   if (!ctx) return { ...empty, error: "order" };
   const provider = await activeProvider(supabase, ctx.order.business_id);
   const { plan } = ctx;
   const cfg = provider === FX ? await loadFxConfig(ctx.order.business_id) : null;
-  const base = { provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id, linkUntil: cfg ? daysFromNow(cfg.linkDays) : null };
+  const base = {
+    provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id,
+    linkUntil: cfg ? daysFromNow(cfg.linkDays) : null, group: ctx.group, groupedCount: plan.grouped?.count ?? 0,
+  };
   if (!plan.ok) return { ...base, ok: false, error: planError(plan) };
   return { ...base, ok: true };
 }
@@ -192,11 +200,11 @@ export interface IssueResult {
  *  fiscal profile on the contact and emails the invoice (PDF+XML) to the customer. */
 export async function issueInvoice(
   orderId: string, fiscal: FiscalData, paymentForm: string, saveProfile: boolean, sendEmail: boolean, confirmTax = false, retried = false,
-  sat: SatOverrides | null = null,
+  sat: SatOverrides | null = null, group: GroupChoice = undefined, saveGroupAsDefault = false,
 ): Promise<IssueResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const ctx = await planOrderInvoice(supabase, orderId, sat);
+  const ctx = await planOrderInvoice(supabase, orderId, sat, group);
   if (!ctx) return { ok: false, error: "order" };
   const { order, plan } = ctx;
   const businessId = order.business_id;
@@ -211,6 +219,7 @@ export async function issueInvoice(
   if (rows.some((r) => r.status === "issued")) return { ok: false, error: "already-issued" };
   // La clave y la unidad que se capturaron para esta factura se le quedan al producto del catálogo.
   if (!retried) { await saveSatToCatalog(supabase, ctx.catalog, sat); await saveSatToOrder(supabase, orderId, sat); }
+  if (saveGroupAsDefault && group) await saveGroupDefault(supabase, businessId, group);
 
   if (saveProfile && order.contact_id) {
     const row = { business_id: businessId, contact_id: order.contact_id, legal_name: fiscal.legal_name, rfc: fiscal.rfc.toUpperCase(), tax_system: fiscal.tax_system, zip: fiscal.zip, email: fiscal.email || null, cfdi_use: fiscal.cfdi_use, updated_at: new Date().toISOString() };
@@ -392,10 +401,10 @@ export interface LinkResult {
  * enfrente aún no sabe cambiar links; en ese caso el anterior se cierra antes, porque un link
  * abierto de más permitiría facturar dos veces y metería la venta a la factura global.
  */
-export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null } = {}): Promise<LinkResult> {
+export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null; group?: GroupChoice; saveGroupAsDefault?: boolean } = {}): Promise<LinkResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
-  const ctx = await planOrderInvoice(supabase, orderId, opts.sat);
+  const ctx = await planOrderInvoice(supabase, orderId, opts.sat, opts.group);
   if (!ctx) return { ok: false, error: "order" };
   const { order, plan } = ctx;
   const businessId = order.business_id;
@@ -409,6 +418,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
 
   await saveSatToCatalog(supabase, ctx.catalog, opts.sat);
   await saveSatToOrder(supabase, orderId, opts.sat);
+  if (opts.saveGroupAsDefault && opts.group) await saveGroupDefault(supabase, businessId, opts.group);
 
   const live = liveLinks(rows);
   // El link del pedido es el más reciente; si quedaron otros de antes de esta regla, se cierran.

@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { getFiscalProfile, issueInvoice, notifyInvoice } from "@/app/(app)/invoicing/actions";
-import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/components/InvoiceSummary";
+import { InvoiceSummaryView, useInvoicePreview, satIncomplete, groupIncomplete } from "@/components/InvoiceSummary";
 import type { FiscalData } from "@/lib/invoicing";
 import type { InvoicingProvider } from "@/lib/plugins";
 
@@ -60,7 +60,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   // facturar y el pedido se cobró sin él, la factura sale por más.
   // El mismo resumen que se ve antes de mandar el link: conceptos, impuestos y total, y los datos
   // del SAT que falten se piden aquí.
-  const { preview, missing, sat, patch } = useInvoicePreview(orderId);
+  const { preview, missing, sat, patch, setGroup, groupChoice, saveDefault, setSaveDefault } = useInvoicePreview(orderId);
   const [foliosUrl, setFoliosUrl] = useState<string | null>(null);
   const fx = provider === "hiraticket_facturacion";
   const es = lang === "es";
@@ -78,7 +78,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de "la factura lleva IVA" está a la vista en este mismo formulario: emitir es aceptarlo.
-    const r = await issueInvoice(orderId, fiscal, paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax, false, sat);
+    const r = await issueInvoice(orderId, fiscal, paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax, false, sat, groupChoice, saveDefault);
     setBusy(false);
     if (!r.ok) {
       setErr(r.code === "confirm-tax" ? (es ? `La factura saldrá por ${money(r.total ?? 0)} (se suma el IVA). Vuelve a pulsar Emitir para confirmar.` : `The invoice will be for ${money(r.total ?? 0)} (tax added). Press Issue again to confirm.`)
@@ -163,7 +163,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
                     <span className="t-sm">{lang === "es" ? "Enviar por correo (PDF + XML)" : "Email the invoice (PDF + XML)"}</span>
                   </label>
                   {preview && preview.error !== "order"
-                    ? <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search={fx} />
+                    ? <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search={fx} onGroup={fx ? setGroup : undefined} saveDefault={saveDefault} onSaveDefault={setSaveDefault} />
                     : (
                       <div className="row" style={{ paddingTop: 8, borderTop: "1px solid var(--border)" }}>
                         <span className="grow t-sm" style={{ fontWeight: 700 }}>{lang === "es" ? "Total a facturar (IVA incluido)" : "Invoice total (tax incl.)"}</span>
@@ -177,7 +177,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
             </div>
             <div className="modal-foot">
               <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-              <button className="btn btn-primary" disabled={!valid || busy || satIncomplete(sat) || (!!preview && !preview.ok && (preview.error === "no-items" || preview.error === "non-positive"))} onClick={submit}><Icon name="file" size={14} />{busy ? "Timbrando…" : "Emitir factura"}</button>
+              <button className="btn btn-primary" disabled={!valid || busy || satIncomplete(sat) || groupIncomplete(preview) || (!!preview && !preview.ok && (preview.error === "no-items" || preview.error === "non-positive"))} onClick={submit}><Icon name="file" size={14} />{busy ? "Timbrando…" : "Emitir factura"}</button>
             </div>
           </>
         ) : (

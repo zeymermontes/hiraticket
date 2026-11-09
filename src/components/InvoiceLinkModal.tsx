@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { sendInvoiceLink, type LinkResult } from "@/app/(app)/invoicing/actions";
-import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/components/InvoiceSummary";
+import { InvoiceSummaryView, useInvoicePreview, satIncomplete, groupIncomplete } from "@/components/InvoiceSummary";
 
 // Antes de mandar el link para que el cliente se facture: qué va a decir esa factura (conceptos,
 // impuestos y total) y, si a algún concepto le faltan la clave o la unidad del SAT, se piden aquí.
@@ -24,10 +24,11 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   onDone: (r: LinkResult) => void;
 }) {
   const es = lang === "es";
-  const { preview, missing, sat, patch } = useInvoicePreview(orderId);
+  const { preview, missing, sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault } = useInvoicePreview(orderId);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const captured = Object.values(sat).some((v) => !!v.code || !!v.unit);
+  // Algo cambió aquí (datos del SAT, cómo se agrupa): el link se va a poner al día, no solo a reenviar.
+  const captured = Object.values(sat).some((v) => !!v.code || !!v.unit) || group !== null;
   // Hasta cuándo se puede facturar con el link. Empieza con los días del plugin; se puede cambiar
   // para este link. Con uno ya abierto se parte de su fecha actual.
   const [until, setUntil] = useState("");
@@ -40,7 +41,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de que la factura lleva IVA de más está a la vista en el resumen: mandar es aceptarlo.
-    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat, until: until || null });
+    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat, until: until || null, group: groupChoice, saveGroupAsDefault: saveDefault });
     setBusy(false);
     if (!r.ok) { setErr(errText(r.code, r.error)); return; }
     onDone(r);
@@ -69,7 +70,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
           )}
           {!preview ? <span className="t-sm muted">…</span>
             : preview.error === "order" ? <div className="t-xs" style={{ color: "var(--red)" }}>{es ? "No se pudo leer el pedido." : "Couldn't read the order."}</div>
-            : <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search />}
+            : <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search onGroup={setGroup} saveDefault={saveDefault} onSaveDefault={setSaveDefault} />}
           {preview?.ok && (
             <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
               <label className="lbl" style={{ margin: 0 }}>{es ? "El cliente puede facturarse hasta el" : "The customer can invoice until"}</label>
@@ -85,7 +86,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{es ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={busy || !preview?.ok || satIncomplete(sat) || !untilOk} onClick={submit}>
+          <button className="btn btn-primary" disabled={busy || !preview?.ok || satIncomplete(sat) || groupIncomplete(preview) || !untilOk} onClick={submit}>
             <Icon name={hasChat ? "send" : "file"} size={14} />
             {busy ? (es ? "Enviando…" : "Sending…")
               : openCode && !captured ? (hasChat ? (es ? "Reenviar link" : "Resend link") : (es ? "Copiar link" : "Copy link"))

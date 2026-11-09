@@ -28,7 +28,7 @@ import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
 import { InvoiceLinkModal } from "@/components/InvoiceLinkModal";
-import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, setInvoiceLinkExpiry, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, refreshInvoiceLink, closeInvoiceLink, setInvoiceLinkExpiry, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -169,6 +169,7 @@ export function OrderDrawer({
   // el pedido (y cuando cambian sus artículos o sus facturas) para decirlo en el bloque de
   // Factura: sin esto el link salía con la clave genérica y nada lo avisaba.
   const [invMissing, setInvMissing] = useState(0);
+  const [invTick, setInvTick] = useState(0); // sube al mandar o actualizar un link: el aviso se recalcula
   const invItemsKey = detailProp.items.map((i) => i.name).join("|");
   const invIssued = detailProp.invoices.some((i) => i.status === "issued");
   const invRows = detailProp.invoices.length;
@@ -178,7 +179,7 @@ export function OrderDrawer({
     if (invoicing !== "hiraticket_facturacion" || invIssued) return;
     previewInvoice(detailProp.id).then((p) => { if (alive) setInvMissing(p.ok ? p.summary.missing.length : 0); }).catch(() => {});
     return () => { alive = false; };
-  }, [detailProp.id, invItemsKey, invIssued, invRows, invoicing]);
+  }, [detailProp.id, invItemsKey, invIssued, invRows, invoicing, invTick]);
   const [invCopied, setInvCopied] = useState(false);
   const [invMsg, setInvMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // Fecha límite del link abierto mientras se edita (YYYY-MM-DD); null = no se está editando.
@@ -287,28 +288,9 @@ export function OrderDrawer({
     return error ? (es ? `No se pudo: ${error}` : `Couldn't do it: ${error}`) : (es ? "No se pudo conectar con Facturación. Intenta de nuevo." : "Couldn't reach the invoicing service. Try again.");
   };
   const copyInvLink = async (url: string) => { try { await navigator.clipboard.writeText(url); setInvCopied(true); setTimeout(() => setInvCopied(false), 1500); } catch {} };
-  const sendInvLink = async (confirmTax = false): Promise<void> => {
-    setInvBusy(true); setInvMsg(null);
-    const r = await sendInvoiceLink(detail.id, { confirmTax });
-    setInvBusy(false);
-    if (r.code === "confirm-tax") {
-      // El pedido se cobró sin IVA y el negocio lo suma al facturar: la factura sale por más.
-      const yes = await ask({
-        icon: "file",
-        title: lang === "es" ? "La factura lleva IVA" : "The invoice adds tax",
-        message: lang === "es"
-          ? `Este pedido se cobró sin IVA ($${formatMoney(r.orderTotal ?? 0)}). La factura saldrá por $${formatMoney(r.total ?? 0)}.\n\nSi quieres cobrarle la diferencia al cliente, cancela y marca «Requiere factura» en el pedido antes de mandar el link.`
-          : `This order was charged without tax ($${formatMoney(r.orderTotal ?? 0)}). The invoice will be for $${formatMoney(r.total ?? 0)}.\n\nTo charge the customer the difference, cancel and tick "Requires invoice" on the order before sending the link.`,
-        confirmLabel: lang === "es" ? `Facturar por $${formatMoney(r.total ?? 0)}` : `Invoice $${formatMoney(r.total ?? 0)}`,
-      });
-      if (yes) return sendInvLink(true);
-      return;
-    }
-    if (!r.ok) { setInvMsg({ ok: false, text: invErr(r.code, r.error) }); return; }
-    await invLinkDone(r);
-  };
   // El link ya existe: se avisa qué pasó con él. Lo comparten «Reenviar» y la ventana del resumen.
   const invLinkDone = async (r: LinkResult) => {
+    setInvTick((t) => t + 1);
     if (!r.sent && r.url) {
       await copyInvLink(r.url);
       setInvMsg({ ok: true, text: r.updated
@@ -872,7 +854,7 @@ export function OrderDrawer({
                     <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {detail.conversation_id && (
                         <button className="btn btn-sm btn-outline" disabled={invBusy}
-                          onClick={() => { if (invMissing > 0) { setInvMsg(null); setInvLinkOpen({ code: openLink.link_code ?? null }); } else void sendInvLink(); }}>
+                          onClick={() => { setInvMsg(null); setInvLinkOpen({ code: openLink.link_code ?? null }); }}>
                           <Icon name="whatsapp" size={13} />{lang === "es" ? "Reenviar" : "Resend"}
                         </button>
                       )}

@@ -3,6 +3,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { SatSearch } from "@/components/SatSearch";
 import { previewInvoice, type InvoicePreview } from "@/app/(app)/invoicing/actions";
 import type { InvoiceSummary, SatOverrides } from "@/lib/invoiceLines";
+import type { GroupChoice } from "@/lib/facturacionOps";
+
+/** Lo elegido sobre agrupar; `null` = lo que el negocio tenga por defecto. */
+export type GroupState = { on: boolean; productId: string | null } | null;
 
 // Lo que va a decir la factura de un pedido, antes de mandar el link o de timbrar: los conceptos
 // con su clave y unidad del SAT, subtotal, descuento, impuestos y total. Si a un concepto le
@@ -31,23 +35,33 @@ export function useInvoicePreview(orderId: string) {
   const [preview, setPreview] = useState<InvoicePreview | null>(null);
   const [missing, setMissing] = useState<Missing | null>(null);
   const [sat, setSat] = useState<SatOverrides>({});
+  // Agrupar todo en un concepto: lo que se elija aquí; null = lo que el negocio tenga por defecto.
+  const [group, setGroupState] = useState<GroupState>(null);
+  const [saveDefault, setSaveDefault] = useState(false);
   const seq = useRef(0);
   useEffect(() => {
     const id = ++seq.current; // una respuesta vieja no pisa a la de lo último que se escribió
     const t = setTimeout(() => {
-      previewInvoice(orderId, sat).then((p) => {
+      previewInvoice(orderId, sat, group as GroupChoice).then((p) => {
         if (seq.current !== id) return;
         setPreview(p);
         setMissing((m) => m ?? p.summary.missing);
       }).catch(() => {});
     }, Object.keys(sat).length ? 350 : 0);
     return () => clearTimeout(t);
-  }, [orderId, sat]);
+  }, [orderId, sat, group]);
   const patch = (key: string, v: { code?: string; unit?: string }) => setSat((s) => ({ ...s, [key]: { ...s[key], ...v } }));
-  return { preview, missing: missing ?? [], sat, patch };
+  // Al cambiar cómo se agrupa cambian los conceptos: lo que falte del SAT se vuelve a calcular.
+  const setGroup = (g: GroupState) => { setGroupState(g); setMissing(null); setSat({}); };
+  /** Lo que se manda al servidor: la elección en pantalla (o la de por defecto, ya resuelta). */
+  const groupChoice: { on: boolean; productId: string | null } | null = group ?? (preview ? { on: preview.group.on, productId: preview.group.productId } : null);
+  return { preview, missing: missing ?? [], sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault };
 }
 
-export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search }: {
+/** Se pidió agrupar pero no se ha elegido el concepto: así no se manda. */
+export const groupIncomplete = (preview: InvoicePreview | null) => !!preview && preview.group.on && !preview.group.productId;
+
+export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search, onGroup, saveDefault, onSaveDefault }: {
   preview: InvoicePreview;
   missing: Missing;
   sat: SatOverrides;
@@ -55,9 +69,51 @@ export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search 
   lang: "es" | "en";
   /** Hay de dónde buscar claves por nombre (Hiraticket Facturación). */
   search: boolean;
+  /** Cambiar cómo se agrupa; sin esto no se ofrece agrupar. */
+  onGroup?: (g: { on: boolean; productId: string | null }) => void;
+  saveDefault?: boolean;
+  onSaveDefault?: (v: boolean) => void;
 }) {
   const es = lang === "es";
   const s = preview.summary;
+  const g = preview.group;
+  const chosen = g.productId ? g.options.find((o) => o.id === g.productId) ?? null : null;
+  const differs = g.on !== g.defaultOn || (g.on && g.productId !== g.defaultProductId);
+  const groupBlock = onGroup && g.options.length > 0 && (
+    <div className="col gap-2" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+      <label className="row gap-2" style={{ alignItems: "center", cursor: "pointer" }}>
+        <input type="checkbox" checked={g.on} onChange={(e) => onGroup({ on: e.target.checked, productId: g.productId ?? g.defaultProductId })} />
+        <span className="t-sm" style={{ fontWeight: 600 }}>{es ? "Facturar todo como un solo concepto" : "Invoice everything as a single line"}</span>
+        {g.defaultOn && <span className="t-xs muted">{es ? "· así está por defecto" : "· the default"}</span>}
+      </label>
+      {g.on && (
+        <div className="col gap-1">
+          <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+            <label className="lbl" style={{ margin: 0 }}>{es ? "Concepto" : "Line item"}</label>
+            <select className="select" style={{ minWidth: 220, maxWidth: "100%" }} value={g.productId ?? ""} onChange={(e) => onGroup({ on: true, productId: e.target.value || null })}>
+              <option value="">{es ? "Elige un producto o servicio del catálogo…" : "Pick a catalog product or service…"}</option>
+              {g.options.map((o) => <option key={o.id} value={o.id}>{o.name}{o.satCode ? ` · ${o.satCode}` : ""}</option>)}
+            </select>
+          </div>
+          <div className="t-xs muted">
+            {!chosen
+              ? (es ? "El concepto sale con el nombre, la clave SAT, la unidad y el IVA de ese producto del catálogo." : "The line takes the name, SAT key, unit and tax of that catalog product.")
+              : preview.groupedCount > 1
+              ? (es ? `Los ${preview.groupedCount} renglones del pedido salen como «${chosen.name}», un solo concepto por el total.` : `The order's ${preview.groupedCount} lines go out as "${chosen.name}", one line for the total.`)
+              : (es ? `El pedido sale como «${chosen.name}».` : `The order goes out as "${chosen.name}".`)}
+          </div>
+        </div>
+      )}
+      {onSaveDefault && differs && (
+        <label className="row gap-2" style={{ alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={!!saveDefault} onChange={(e) => onSaveDefault(e.target.checked)} />
+          <span className="t-xs">{g.on
+            ? (es ? "Agrupar así por defecto en las próximas facturas de este negocio" : "Group like this by default on this business's next invoices")
+            : (es ? "Dejar de agrupar por defecto en este negocio" : "Stop grouping by default on this business")}</span>
+        </label>
+      )}
+    </div>
+  );
   if (!preview.ok) {
     if (preview.error !== "no-items" && preview.error !== "non-positive") return null;
     return (
@@ -73,6 +129,7 @@ export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search 
 
   return (
     <div className="col gap-2">
+      {groupBlock}
       {missing.length > 0 && (
         <div className="col gap-2" style={warn}>
           <div className="t-sm" style={{ fontWeight: 700 }}>
