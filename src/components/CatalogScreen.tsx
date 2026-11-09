@@ -9,6 +9,7 @@ import type { Product } from "@/lib/extras";
 import type { PriceTier } from "@/lib/types";
 import type { CatalogFiscal } from "@/lib/facturacionOps";
 import { SatSearch } from "@/components/SatSearch";
+import { CatalogBulkFiscal } from "@/components/CatalogBulkFiscal";
 import { createProduct, updateProduct, deleteProduct, syncCatalog } from "@/app/(app)/features-actions";
 import { startCatalogSync } from "@/app/(app)/plugins/link-actions";
 
@@ -73,6 +74,14 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
   const [newUnit, setNewUnit] = useState("");
   const run = (fn: () => Promise<void>) => start(async () => { await fn(); router.refresh(); });
   const view = products.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
+  // Selección múltiple (solo con el plugin): para ponerles los datos de facturación a varios de una vez.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allViewSel = view.length > 0 && view.every((p) => sel.has(p.id));
+  const incomplete = (p: Product) => { const f = fx?.byId[p.id]; return !f?.sat_code || !f?.sat_unit; };
+  const missingInView = fx ? view.filter(incomplete) : [];
+  const selProducts = products.filter((p) => sel.has(p.id));
 
   // Clave SAT, unidad e IVA de un producto. En escritorio se despliega bajo su renglón; en teléfono
   // la tabla se barre de lado y ahí adentro los campos quedaban cortados, así que va en una ventana.
@@ -168,14 +177,33 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
               </button>
             </div>
           )}
+          {fx && sel.size > 0 && (
+            <div className="row gap-2" style={{ margin: "10px 14px 0", padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--brand)", borderRadius: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <strong>{sel.size}</strong><span className="t-sm">{lang === "es" ? "seleccionados" : "selected"}</span>
+              <span className="grow" />
+              <button className="btn btn-sm btn-primary" onClick={() => setBulkOpen(true)}><Icon name="file" size={14} />{lang === "es" ? "Datos de facturación" : "Invoicing data"}</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setSel(new Set())}>{lang === "es" ? "Limpiar" : "Clear"}</button>
+            </div>
+          )}
+          {fx && sel.size === 0 && missingInView.length > 1 && (
+            <div className="row gap-2" style={{ padding: "8px 14px 0", alignItems: "center", flexWrap: "wrap" }}>
+              <span className="t-xs muted grow" style={{ minWidth: 160 }}>
+                {lang === "es" ? `${missingInView.length} productos sin clave o unidad del SAT.` : `${missingInView.length} products missing a SAT key or unit.`}
+              </span>
+              <button className="btn btn-sm btn-ghost" onClick={() => setSel(new Set(missingInView.map((p) => p.id)))}>
+                <Icon name="check" size={13} />{lang === "es" ? "Seleccionarlos" : "Select them"}
+              </button>
+            </div>
+          )}
           <div className="tablewrap keep-table scroll">
             {/* `.tbl` pide 1040px de ancho (es la regla de la tabla de pedidos): aquí cortaba los botones del renglón. */}
             <table className="tbl" style={{ minWidth: 620 }}>
-              <thead><tr><th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}{!personal && <th title={lang === "es" ? "Lo que te cuesta — se usa para calcular la ganancia en reportes" : "What it costs you — used to compute profit in reports"}>{lang === "es" ? "Costo" : "Cost"}</th>}{fx && <th title={lang === "es" ? "Con esto sale el concepto en la factura: clave SAT, unidad e IVA" : "How the line appears on the invoice: SAT key, unit and tax"}>{lang === "es" ? "Datos de facturación" : "Invoicing data"}</th>}<th></th></tr></thead>
+              <thead><tr>{fx && <th style={{ width: 32 }}><input type="checkbox" title={lang === "es" ? "Seleccionar todos los de la lista" : "Select all listed"} checked={allViewSel} onChange={(e) => setSel(e.target.checked ? new Set(view.map((p) => p.id)) : new Set())} /></th>}<th>{lang === "es" ? "Nombre" : "Name"}</th>{!personal && <th>{lang === "es" ? "Tipo" : "Type"}</th>}{!personal && <th>{lang === "es" ? "Precio" : "Price"}</th>}{!personal && <th title={lang === "es" ? "Lo que te cuesta — se usa para calcular la ganancia en reportes" : "What it costs you — used to compute profit in reports"}>{lang === "es" ? "Costo" : "Cost"}</th>}{fx && <th title={lang === "es" ? "Con esto sale el concepto en la factura: clave SAT, unidad e IVA" : "How the line appears on the invoice: SAT key, unit and tax"}>{lang === "es" ? "Datos de facturación" : "Invoicing data"}</th>}<th></th></tr></thead>
               <tbody>
                 {view.map((p) => (
                   <React.Fragment key={p.id}>
-                  <tr style={p.active === false ? { opacity: 0.55 } : undefined}>
+                  <tr style={p.active === false ? { opacity: 0.55 } : undefined} className={sel.has(p.id) ? "sel-row" : ""}>
+                    {fx && <td><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} /></td>}
                     <td><input key={p.name} className="inp-inline grow" defaultValue={p.name} size={10} style={{ width: "100%", minWidth: 130 }} onBlur={(e) => { if (e.target.value !== p.name) run(() => updateProduct(p.id, { name: e.target.value })); }} /></td>
                     {!personal && <td>{p.active === false
                       ? <span title={lang === "es" ? "No se ofrece al armar pedidos. Se desactiva solo cuando el producto se borra en Facturación." : "Not offered when building orders. It's turned off automatically when the product is deleted in the invoicing account."}><Pill color="slate">{lang === "es" ? "Inactivo" : "Inactive"}</Pill></span>
@@ -220,16 +248,16 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
                     </td>
                   </tr>
                   {!personal && tiersFor === p.id && (
-                    <tr><td colSpan={fx ? 6 : 5} style={{ background: "var(--surface-2)" }}>
+                    <tr><td colSpan={fx ? 7 : 5} style={{ background: "var(--surface-2)" }}>
                       <TierEditor product={p} lang={lang} onSave={(tiers) => run(() => updateProduct(p.id, { price_tiers: tiers }))} />
                     </td></tr>
                   )}
                   {fx && !isMobile && fiscalFor === p.id && (
-                    <tr><td colSpan={6} style={{ background: "var(--surface-2)" }}>{fiscalEditor(p, false)}</td></tr>
+                    <tr><td colSpan={7} style={{ background: "var(--surface-2)" }}>{fiscalEditor(p, false)}</td></tr>
                   )}
                   </React.Fragment>
                 ))}
-                {view.length === 0 && <tr><td colSpan={personal ? 2 : fx ? 6 : 5} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
+                {view.length === 0 && <tr><td colSpan={personal ? 2 : fx ? 7 : 5} className="muted" style={{ textAlign: "center", padding: 24 }}>{personal ? (lang === "es" ? "Sin tareas repetitivas." : "No recurring tasks.") : (lang === "es" ? "Sin productos." : "No products.")}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -282,6 +310,14 @@ export function CatalogScreen({ businessId, products, fiscal = null }: {
         </section>
        </div>
       </div>
+      {fx && bulkOpen && selProducts.length > 0 && (
+        <CatalogBulkFiscal products={selProducts} businessId={businessId} lang={lang} onClose={() => setBulkOpen(false)}
+          onDone={(count) => {
+            setBulkOpen(false); setSel(new Set());
+            setSyncMsg({ ok: true, text: lang === "es" ? `Datos de facturación guardados en ${count} producto${count === 1 ? "" : "s"}.` : `Invoicing data saved on ${count} product${count === 1 ? "" : "s"}.` });
+            router.refresh();
+          }} />
+      )}
       {fx && isMobile && fiscalProduct && (
         <div className="modal-wrap" onClick={closeFiscal}>
           <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>

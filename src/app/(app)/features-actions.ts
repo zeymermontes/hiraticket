@@ -95,6 +95,36 @@ export async function updateProduct(id: string, patch: ProductPatch) {
   if (!error && (SYNCED_FIELDS.some((k) => k in patch) || patch.active === true)) after(() => pushProduct(id).catch(() => {}));
   revalidatePath("/catalog");
 }
+/** Datos de facturación de varios productos de una vez (selección múltiple del catálogo). Solo
+ *  cambia los campos que vienen en `patch`; los demás se quedan como estaban. Con `onlyEmpty`, cada
+ *  campo se escribe nada más en los productos que no lo tenían. */
+export async function updateProductsFiscal(ids: string[], patch: Pick<ProductPatch, "sat_code" | "sat_unit" | "iva">, onlyEmpty = false): Promise<{ ok: boolean; count: number }> {
+  const list = [...new Set(ids)].slice(0, 500);
+  const fields = (["sat_code", "sat_unit", "iva"] as const).filter((k) => k in patch);
+  if (!list.length || !fields.length) return { ok: true, count: 0 };
+  if (patch.sat_code != null && !/^\d{8}$/.test(patch.sat_code)) return { ok: false, count: 0 };
+  if (patch.sat_unit != null && !/^[A-Z0-9]{1,3}$/.test(patch.sat_unit)) return { ok: false, count: 0 };
+  const supabase = await createClient();
+  const touched = new Set<string>();
+  if (onlyEmpty) {
+    // Campo por campo: cada uno va solo a los productos que lo tienen vacío.
+    for (const k of fields) {
+      const { data, error } = await supabase.from("products").update({ [k]: patch[k] }).in("id", list).is(k, null).select("id");
+      if (error) return { ok: false, count: touched.size };
+      for (const r of (data ?? []) as { id: string }[]) touched.add(r.id);
+    }
+  } else {
+    const upd: Record<string, unknown> = {};
+    for (const k of fields) upd[k] = patch[k];
+    const { data, error } = await supabase.from("products").update(upd).in("id", list).select("id");
+    if (error) return { ok: false, count: 0 };
+    for (const r of (data ?? []) as { id: string }[]) touched.add(r.id);
+  }
+  // Los tres campos viajan a Facturación: cada producto tocado se manda.
+  for (const id of touched) after(() => pushProduct(id).catch(() => {}));
+  revalidatePath("/catalog");
+  return { ok: true, count: touched.size };
+}
 export async function deleteProduct(id: string) {
   const supabase = await createClient();
   // El enlace con Facturación se lee ANTES de borrar: después ya no hay de dónde sacarlo. Sin 0096
