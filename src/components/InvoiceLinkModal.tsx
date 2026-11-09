@@ -63,8 +63,8 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
           {openCode && (
             <div className="t-xs muted" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               {es
-                ? `Este pedido ya tiene un link abierto (${openCode}). Si capturas datos aquí, ese link se cierra y se manda uno nuevo con ellos. Si no capturas nada, se reenvía el mismo, salvo que el pedido haya cambiado desde que se creó.`
-                : `This order already has an open link (${openCode}). If you enter data here, that link is closed and a new one is sent with it. If you enter nothing, the same one is sent again, unless the order changed since it was created.`}
+                ? `Este pedido ya tiene un link (${openCode}). Si capturas datos aquí, o el pedido cambió desde que se creó, ese mismo link se pone al día: la liga que ya tiene el cliente sigue sirviendo. Si nada cambió, se reenvía tal cual.`
+                : `This order already has a link (${openCode}). If you enter data here, or the order changed since it was created, that same link is updated: the link the customer already has keeps working. If nothing changed, it's sent again as is.`}
             </div>
           )}
           {!preview ? <span className="t-sm muted">…</span>
@@ -89,7 +89,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
             <Icon name={hasChat ? "send" : "file"} size={14} />
             {busy ? (es ? "Enviando…" : "Sending…")
               : openCode && !captured ? (hasChat ? (es ? "Reenviar link" : "Resend link") : (es ? "Copiar link" : "Copy link"))
-              : openCode ? (hasChat ? (es ? "Enviar link nuevo" : "Send new link") : (es ? "Crear link nuevo" : "Create new link"))
+              : openCode ? (hasChat ? (es ? "Actualizar y reenviar" : "Update and resend") : (es ? "Actualizar link" : "Update link"))
               : hasChat ? (es ? "Enviar link al cliente" : "Send link to customer") : (es ? "Crear link" : "Create link")}
           </button>
         </div>

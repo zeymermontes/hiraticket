@@ -8,7 +8,7 @@ import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type Fis
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { signMediaUrl } from "@/lib/mediaSign";
-import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLinkExpiry, upsertClient, fxUrl } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLink, updateLinkExpiry, upsertClient, fxUrl } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
   syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, type FxConfig,
@@ -142,6 +142,39 @@ async function newLinkRow(
   return { row: { id: ins.id as string, provider: FX, status: "link_enviado", total: r.data.total, link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, external_id: null, link_sig: sig } };
 }
 
+/** Pone al día el link que ya tiene el pedido, sin cambiarle la liga: lo que dice (conceptos o
+ *  total exacto) y, si hace falta, hasta cuándo sirve. Un pedido tiene un solo link: cuando cambia
+ *  el pedido, cambia el link, y la liga que ya tiene el cliente sigue sirviendo.
+ *  `status`: allá el link ya no está abierto (se leyó su estado real y quedó reflejado aquí).
+ *  `code: "unsupported"`: la Facturación de enfrente todavía no sabe cambiar links. */
+async function patchLinkRow(
+  supabase: SB, cfg: FxConfig, link: InvRow, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null,
+): Promise<{ row?: InvRow; status?: string | null; error?: string; code?: string }> {
+  const expired = !!link.link_expires && link.link_expires < today();
+  // La fecha elegida; si no hay y el link ya venció, se le da el plazo del plugin para que sirva.
+  const vence = validUntil(until) ? until! : expired ? daysFromNow(cfg.linkDays) : undefined;
+  const r = await updateLink(cfg.apiKey, link.link_code!, {
+    ...(vence ? { vence } : {}),
+    ...(plan.single
+      ? { total: plan.single.total, descripcion: plan.single.description }
+      : { conceptos: toConcepts(plan.lines), descripcion: `Pedido ${order.code}` }),
+  });
+  if (!r.ok || !r.data) {
+    if (r.status === 401) return { code: "disconnected" };
+    if (r.status === 405) return { code: "unsupported" };
+    if (r.status === 409 || r.status === 404) {
+      const now = await syncLinkRow(supabase, cfg, linkRef(link, order.business_id, order.id), userId);
+      return { status: now.status, error: now.error };
+    }
+    return { error: r.status === 0 ? undefined : r.error };
+  }
+  const sig = planSig(plan);
+  const fields = { total: r.data.total, link_expires: r.data.vence, link_url: r.data.url };
+  const { error } = await supabase.from("invoices").update({ ...fields, link_sig: sig }).eq("id", link.id);
+  if (error) await supabase.from("invoices").update(fields).eq("id", link.id); // sin 0097
+  return { row: { ...link, ...fields, link_sig: link.link_sig === undefined ? undefined : sig } };
+}
+
 export interface IssueResult {
   ok: boolean; error?: string;
   /** `confirm-tax`: la factura sale por más que el pedido (se suma IVA); se vuelve a llamar con `confirmTax`.
@@ -206,14 +239,22 @@ export async function issueInvoice(
     for (const extra of live.slice(1)) await closeLinkRow(supabase, cfg, linkRef(extra, businessId, orderId), user?.id ?? null);
 
     // Un solo concepto por el total exacto: solo se puede timbrar a través de un link creado así.
-    // Si el que hay es por otro monto (se hizo desglosado, o el pedido cambió), se cierra y se crea.
+    // Si el que hay es por otro monto (se hizo desglosado, o el pedido cambió), se pone al día ese
+    // mismo link; solo con una Facturación que no sepa hacerlo se cierra y se crea otro.
     let ownLink = false; // el link se creó aquí solo para timbrar; el cliente nunca lo recibió
     if (plan.single) {
       if (target && Math.abs((Number(target.total) || 0) - plan.single.total) >= 0.005) {
-        const closed = await closeLinkRow(supabase, cfg, linkRef(target, businessId, orderId), user?.id ?? null);
-        if (closed.status === "issued") return { ok: false, error: "already-issued" };
-        if (closed.status === null) return { ok: false, error: closed.error, code: "retry" };
-        target = null;
+        const p = await patchLinkRow(supabase, cfg, target, order, plan, user?.id ?? null);
+        if (p.row) target = p.row;
+        else if (p.status === "issued") return { ok: false, error: "already-issued" };
+        else if (p.code === "disconnected") return { ok: false, code: "disconnected" };
+        else if (p.code === "unsupported") {
+          const closed = await closeLinkRow(supabase, cfg, linkRef(target, businessId, orderId), user?.id ?? null);
+          if (closed.status === "issued") return { ok: false, error: "already-issued" };
+          if (closed.status === null) return { ok: false, error: closed.error, code: "retry" };
+          target = null;
+        } else if (p.status) target = null; // allá ya estaba cerrado o en la global: se crea otro
+        else return { ok: false, error: p.error, code: "retry" };
       }
       if (!target) {
         const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null);
@@ -332,7 +373,9 @@ export interface LinkResult {
    *  `disconnected`: hay que volver a conectar el plugin. */
   code?: string;
   url?: string; sent?: boolean; reused?: boolean; expires?: string;
-  /** Había un link abierto y se cambió por uno nuevo porque ya no decía lo mismo que el pedido. */
+  /** El link que ya tenía el pedido se puso al día con lo que dice hoy; la liga es la misma. */
+  updated?: boolean;
+  /** Había un link y se cambió por uno nuevo (Facturación no pudo actualizarlo o allá ya no servía). */
   replaced?: boolean;
   total?: number; orderTotal?: number;
 }
@@ -342,11 +385,12 @@ export interface LinkResult {
  * su RFC y recibe su factura; cuando lo hace, el webhook `link.facturado` deja la factura en el
  * pedido.
  *
- * Un link abierto que dice lo mismo que el pedido de hoy se reutiliza: volver a pulsar el botón
- * reenvía la misma liga en vez de dejar dos abiertas. Si cambió el monto, o los conceptos (una
- * clave SAT que se capturó después, un precio), el anterior se CIERRA en Facturación y se crea
- * otro: un link abierto de más no solo permitiría facturar dos veces, esa venta entraría además a
- * la factura global del negocio.
+ * Un pedido tiene UN link. Si dice lo mismo que el pedido de hoy, se reenvía tal cual. Si cambió el
+ * monto, los conceptos (una clave SAT que se capturó después, un precio) o la fecha límite, ese
+ * mismo link se pone al día en Facturación y la liga que ya tiene el cliente sigue sirviendo. Solo
+ * se crea otro cuando allá ya no está abierto (se cerró o entró a la global) o la Facturación de
+ * enfrente aún no sabe cambiar links; en ese caso el anterior se cierra antes, porque un link
+ * abierto de más permitiría facturar dos veces y metería la venta a la factura global.
  */
 export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null } = {}): Promise<LinkResult> {
   const supabase = await createClient();
@@ -367,33 +411,50 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   await saveSatToOrder(supabase, orderId, opts.sat);
 
   const live = liveLinks(rows);
-  // Con datos del SAT recién capturados no se reutiliza un link anterior aunque sea por el mismo
-  // monto: sus conceptos se crearon sin ellos. Tampoco uno cuya huella ya no es la del pedido de
-  // hoy, ni uno sin huella (se creó antes de guardarla y no se sabe qué dice). Sin la columna de
-  // la huella (`undefined`) no hay con qué comparar y se reutiliza por monto, como antes.
-  const fresh = Object.keys(cleanSat(opts.sat)).length > 0;
-  const sig = planSig(plan);
-  const same = (r: InvRow) => r.link_sig === undefined || r.link_sig === sig;
-  let link = fresh ? null : live.find((r) => !!r.link_url && (!r.link_expires || r.link_expires >= today()) && Math.abs((Number(r.total) || 0) - plan.total) < 0.005 && same(r)) ?? null;
-  const reused = !!link;
-  const replaced = !link && live.length > 0;
-  // Los demás (otro monto, o ya vencidos aquí) se cierran antes de crear el nuevo. Si al cerrarlo
-  // resulta que el cliente ya se había facturado con él, esa es la factura del pedido.
-  for (const old of live.filter((r) => r !== link)) {
+  // El link del pedido es el más reciente; si quedaron otros de antes de esta regla, se cierran.
+  // Si al cerrar uno resulta que el cliente ya se había facturado con él, esa es la factura.
+  let link: InvRow | null = live[0] ?? null;
+  for (const old of live.slice(1)) {
     const closed = await closeLinkRow(supabase, cfg, linkRef(old, businessId, orderId), user?.id ?? null);
     if (closed.status === "issued") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); return { ok: false, code: "already-issued" }; }
     if (closed.status === null) return { ok: false, error: closed.error };
+  }
+  // Dice lo de hoy si tiene el mismo monto y la misma huella, no venció y no se acaban de capturar
+  // datos del SAT (sus conceptos se crearon sin ellos). Sin la columna de la huella (`undefined`)
+  // se compara solo por monto, como antes; con huella nula (link de antes de guardarla) no se sabe.
+  const fresh = Object.keys(cleanSat(opts.sat)).length > 0;
+  const sig = planSig(plan);
+  const same = (r: InvRow) => r.link_sig === undefined || r.link_sig === sig;
+  let reused = false, updated = false, replaced = false;
+  if (link) {
+    const current = !fresh && !!link.link_url && (!link.link_expires || link.link_expires >= today()) && Math.abs((Number(link.total) || 0) - plan.total) < 0.005 && same(link);
+    if (current) {
+      reused = true;
+      if (validUntil(opts.until) && link.link_expires !== opts.until) {
+        // Se reenvía el mismo link pero con otra fecha límite: se le cambia allá y aquí.
+        const r = await updateLinkExpiry(cfg.apiKey, link.link_code!, opts.until!);
+        if (!r.ok) return { ok: false, error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
+        await supabase.from("invoices").update({ link_expires: r.data?.vence ?? opts.until }).eq("id", link.id);
+        link = { ...link, link_expires: r.data?.vence ?? opts.until! };
+      }
+    } else {
+      const p = await patchLinkRow(supabase, cfg, link, order, plan, user?.id ?? null, opts.until);
+      if (p.row) { link = p.row; updated = true; }
+      else if (p.status === "issued") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); return { ok: false, code: "already-issued" }; }
+      else if (p.code === "disconnected") return { ok: false, code: "disconnected" };
+      else if (p.code === "unsupported") {
+        const closed = await closeLinkRow(supabase, cfg, linkRef(link, businessId, orderId), user?.id ?? null);
+        if (closed.status === "issued") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); return { ok: false, code: "already-issued" }; }
+        if (closed.status === null) return { ok: false, error: closed.error };
+        link = null; replaced = true;
+      } else if (p.status) { link = null; replaced = true; } // allá ya estaba cerrado o en la global
+      else return { ok: false, error: p.error };
+    }
   }
   if (!link) {
     const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null, opts.until);
     if (!made.row) return { ok: false, error: made.error, code: made.code };
     link = made.row;
-  } else if (validUntil(opts.until) && link.link_expires !== opts.until) {
-    // Se reenvía el mismo link pero con otra fecha límite: se le cambia allá y aquí.
-    const r = await updateLinkExpiry(cfg.apiKey, link.link_code!, opts.until!);
-    if (!r.ok) return { ok: false, error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
-    await supabase.from("invoices").update({ link_expires: r.data?.vence ?? opts.until }).eq("id", link.id);
-    link = { ...link, link_expires: r.data?.vence ?? opts.until! };
   }
 
   let sent = false;
@@ -413,10 +474,10 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   }
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
-    kind: "file", text: `Link de facturación ${sent ? (reused ? "reenviado" : "enviado") : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
+    kind: "file", text: `Link de facturación ${updated ? "actualizado y " : ""}${sent ? (reused ? "reenviado" : "enviado") : updated ? "listo" : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
   });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
-  return { ok: true, url: link.link_url ?? undefined, sent, reused, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal };
+  return { ok: true, url: link.link_url ?? undefined, sent, reused, updated, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal };
 }
 
 /** Pregunta a Facturación cómo va un link: si el cliente ya se facturó deja la factura en el

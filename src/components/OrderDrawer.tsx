@@ -311,9 +311,12 @@ export function OrderDrawer({
   const invLinkDone = async (r: LinkResult) => {
     if (!r.sent && r.url) {
       await copyInvLink(r.url);
-      setInvMsg({ ok: true, text: lang === "es" ? "Link creado y copiado. Este pedido no tiene chat: mándaselo tú al cliente." : "Link created and copied. This order has no chat: send it to the customer yourself." });
+      setInvMsg({ ok: true, text: r.updated
+        ? (lang === "es" ? "El link se puso al día con lo que dice hoy el pedido y se copió; es la misma liga que ya tenía el cliente." : "The link was updated to what the order says today and copied; it's the same link the customer already has.")
+        : (lang === "es" ? "Link creado y copiado. Este pedido no tiene chat: mándaselo tú al cliente." : "Link created and copied. This order has no chat: send it to the customer yourself.") });
     } else {
       setInvMsg({ ok: true, text: r.reused ? (lang === "es" ? "Se reenvió el mismo link al chat." : "The same link was sent again.")
+        : r.updated ? (lang === "es" ? "El link se puso al día con lo que dice hoy el pedido y se reenvió al chat; es la misma liga." : "The link was updated to what the order says today and sent again; it's the same link.")
         : r.replaced ? (lang === "es" ? "El link anterior ya no decía lo mismo que el pedido: se cerró y se mandó uno nuevo al chat." : "The previous link no longer matched the order: it was closed and a new one was sent.")
         : (lang === "es" ? "Link enviado al chat del cliente." : "Link sent to the customer's chat.") });
     }
