@@ -325,3 +325,32 @@ export async function pushTransfer(opts: {
     // Un aviso que no sale no puede tumbar la transferencia que lo disparó.
   }
 }
+
+/**
+ * Aviso de que el cliente YA SE FACTURÓ con el link del pedido. Lo dispara el webhook de
+ * Facturación (o la consulta del link si el webhook no llegó), así que sin esto el equipo solo se
+ * enteraba abriendo el pedido. Va a quien tiene asignado el pedido; si nadie, a todo el equipo.
+ * Sigue la preferencia «Pagos y facturas» de cada quien.
+ */
+export async function pushCustomerInvoiced(opts: { businessId: string; orderId: string; total?: number | null }): Promise<void> {
+  if (!pushConfigured()) return;
+  const admin = createAdminClient();
+  try {
+    const { data: order } = await admin.from("orders").select("code, assignee_id").eq("id", opts.orderId).maybeSingle();
+    const o = order as { code?: string; assignee_id?: string | null } | null;
+    let userIds: string[] = o?.assignee_id ? [o.assignee_id] : [];
+    if (!userIds.length) {
+      const { data: members } = await admin.from("business_members").select("user_id").eq("business_id", opts.businessId);
+      userIds = (members ?? []).map((m) => m.user_id as string);
+    }
+    const money = opts.total != null ? ` · $${Number(opts.total).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
+    await sendPushToUsers(opts.businessId, userIds, {
+      title: "🧾 El cliente ya se facturó",
+      body: `${o?.code ?? "Pedido"}${money} · la factura ya está en el pedido`,
+      href: `/orders?order=${opts.orderId}`,
+      tag: `inv-${opts.orderId}`,
+    }, "payments");
+  } catch {
+    // Un aviso que no sale no puede tumbar el registro de la factura.
+  }
+}

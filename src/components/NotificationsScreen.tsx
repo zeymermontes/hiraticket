@@ -21,6 +21,8 @@ function when(at: string | null, lang: "es" | "en") {
 function NotifIcon({ kind }: { kind: Notif["kind"] }) {
   if (kind === "mention") return <span className="nf-ic" style={{ background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="at" size={16} /></span>;
   if (kind === "internal") return <span className="nf-ic" style={{ background: "var(--brand-50)", color: "var(--brand-700)" }}><Icon name="chat" size={16} /></span>;
+  if (kind === "payment") return <span className="nf-ic" style={{ background: "var(--amber-bg)", color: "var(--amber)" }}><Icon name="checks" size={16} /></span>;
+  if (kind === "invoice") return <span className="nf-ic" style={{ background: "var(--green-bg)", color: "var(--green)" }}><Icon name="file" size={16} /></span>;
   return <span className="nf-ic" style={{ background: "var(--wa)", color: "#fff" }}><Icon name="whatsapp" size={16} /></span>;
 }
 

@@ -61,6 +61,8 @@ function notifIcon(kind: Notif["kind"]) {
   if (kind === "chat") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--wa)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="whatsapp" size={15} /></span>;
   // Un pago por aprobar no es un mensaje: es trabajo pendiente, y se distingue con su propio color.
   if (kind === "payment") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--amber-bg)", color: "var(--amber)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="checks" size={15} /></span>;
+  // El cliente ya se facturó con el link: informativo, en verde, con el icono de factura.
+  if (kind === "invoice") return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--green-bg)", color: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="file" size={15} /></span>;
   const name = kind === "internal" ? "chat" : "at";
   return <span style={{ width: 30, height: 30, borderRadius: 9, background: "var(--brand-50)", color: "var(--brand-700)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={name} size={15} /></span>;
 }

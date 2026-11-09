@@ -14,7 +14,7 @@ export interface NotifPrefs {
   mentions: boolean;    // @menciones (equipo y notas)
   calls: boolean;       // llamadas de WhatsApp
   transfers: boolean;   // cuando alguien me transfiere un chat
-  payments: boolean;    // comprobante de pago nuevo, pendiente de revisar
+  payments: boolean;    // comprobante de pago nuevo por revisar, y cliente que se facturó con el link
 }
 
 /** Todo encendido: quien nunca entró a Ajustes debe seguir recibiendo lo de siempre. */

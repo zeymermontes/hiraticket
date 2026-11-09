@@ -8,6 +8,8 @@ import { appBaseUrl } from "@/lib/url";
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
+import { pushCustomerInvoiced } from "@/lib/push";
+import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
 import { planInvoice, productKey, toNetPrice, fromNetPrice, cleanSat, type InvoicePlan, type InvoiceLine, type SatOverrides } from "@/lib/invoiceLines";
 import {
   PLUGIN_ID, fxUrl, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
@@ -273,8 +275,10 @@ export async function recordIssuedInvoice(
 /** El cliente se facturó desde el link: se registra la factura y, si el negocio lo pidió, se le
  *  manda por WhatsApp. Devuelve si esta llamada fue la que la registró. */
 export async function settleLinkInvoice(db: DB, cfg: FxConfig, inv: InvoiceRowRef, cfdi: FxCfdi, actorId: string | null): Promise<boolean> {
-  const { changed } = await recordIssuedInvoice(db, cfg, inv, cfdi, { actorId, eventText: "Factura emitida desde el link" });
+  const { changed } = await recordIssuedInvoice(db, cfg, inv, cfdi, { actorId, eventText: LINK_INVOICED_EVENT });
   if (changed && cfg.autoWhatsapp) await sendInvoiceToChat(db, inv.order_id, inv.id, null);
+  // El equipo se entera sin tener que abrir el pedido: push a quien lo tiene asignado (o a todos).
+  if (changed) after(() => pushCustomerInvoiced({ businessId: inv.business_id, orderId: inv.order_id, total: cfdi.total }).catch(() => {}));
   return changed;
 }
 

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { decryptBody } from "@/lib/msgcrypto";
 import { connectedNumberPhone } from "@/lib/chat";
+import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
 
 /** Count of chats with unread messages — badge on the Chat nav item. */
 export async function getMyChatBadge(businessId: string): Promise<number> {
@@ -38,7 +39,7 @@ export interface Notif {
   name: string;
   unread: number;
   at: string | null;
-  kind: "chat" | "mention" | "internal" | "payment";
+  kind: "chat" | "mention" | "internal" | "payment" | "invoice";
   href: string;
   text?: string;
 }
@@ -99,6 +100,21 @@ export async function getNotificationFeed(
     proofsP = q as unknown as typeof empty;
   }
 
+  /**
+   * Facturas que el cliente hizo solo desde el link. Llegan por webhook, sin que nadie esté
+   * mirando: sin esto el equipo se enteraba al abrir el pedido. Como no hay «leído», se enseñan
+   * los últimos tres días; son del equipo, no de una persona.
+   */
+  let invP = empty;
+  if (filter === "all") {
+    let q = supabase.from("events").select("id, parent_id, text, created_at")
+      .eq("business_id", businessId).eq("parent_type", "order").like("text", `${LINK_INVOICED_EVENT}%`)
+      .order("created_at", { ascending: false }).limit(limit);
+    if (before) q = q.lt("created_at", before);
+    if (unreadOnly) q = q.gte("created_at", new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString());
+    invP = q as unknown as typeof empty;
+  }
+
   // unread WhatsApp chats assigned to you — scoped to the connected number, like the chat list.
   let chatP = empty;
   if (filter === "all") {
@@ -109,7 +125,13 @@ export async function getNotificationFeed(
     chatP = q as unknown as typeof empty;
   }
 
-  const [notesRes, intRes, chatsRes, proofsRes] = await Promise.all([notesP, intP, chatP, proofsP]);
+  const [notesRes, intRes, chatsRes, proofsRes, invRes] = await Promise.all([notesP, intP, chatP, proofsP, invP]);
+  const invRows = (invRes.data ?? []) as Record<string, unknown>[];
+  const invCodes = new Map<string, string>();
+  if (invRows.length) {
+    const { data: ords } = await supabase.from("orders").select("id, code").in("id", invRows.map((e) => e.parent_id as string));
+    (ords ?? []).forEach((o) => invCodes.set(o.id as string, (o.code as string) ?? ""));
+  }
 
   const authorIds = Array.from(new Set([...(notesRes.data ?? []), ...(intRes.data ?? [])].map((x: Record<string, unknown>) => x.author_id as string).filter(Boolean)));
   const nameMap = new Map<string, string>();
@@ -150,7 +172,16 @@ export async function getNotificationFeed(
     };
   });
 
-  return [...mentions, ...internal, ...chats, ...proofs].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, limit);
+  const invoiced: Notif[] = invRows.map((e) => {
+    const code = invCodes.get(e.parent_id as string) ?? "";
+    return {
+      id: "inv-" + (e.id as string), name: code || "Pedido", unread: 1, at: (e.created_at as string) ?? null,
+      kind: "invoice" as const, href: `/orders?order=${e.parent_id as string}`,
+      text: `El cliente ya se facturó${code ? ` · ${code}` : ""}`,
+    };
+  });
+
+  return [...mentions, ...internal, ...chats, ...proofs, ...invoiced].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, limit);
 }
 
 /** Recent notifications for the bell + badge (first page of the unified feed). */

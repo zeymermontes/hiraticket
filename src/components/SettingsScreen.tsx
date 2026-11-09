@@ -708,7 +708,7 @@ function NotifPrefsRows({ lang, orgName }: { lang: "es" | "en"; orgName?: string
     { k: "mentions", es: "Menciones internas", en: "Internal mentions", hintEs: "Cuando te nombran con @", hintEn: "When someone @-mentions you" },
     { k: "calls", es: "Llamadas", en: "Calls", hintEs: "Llamadas entrantes y perdidas de WhatsApp", hintEn: "Incoming and missed WhatsApp calls" },
     { k: "transfers", es: "Transferencias a mí", en: "Transfers to me", hintEs: "Cuando alguien te pasa un chat", hintEn: "When someone hands you a chat" },
-    { k: "payments", es: "Pagos por revisar", en: "Payments to review", hintEs: "Comprobante de transferencia nuevo, pendiente de aprobar", hintEn: "New transfer receipt, pending approval" },
+    { k: "payments", es: "Pagos y facturas", en: "Payments and invoices", hintEs: "Comprobante de transferencia nuevo por aprobar, y cuando un cliente se factura con el link", hintEn: "New transfer receipt pending approval, and when a customer invoices through the link" },
   ];
 
   return (

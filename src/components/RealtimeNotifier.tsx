@@ -7,6 +7,7 @@ import { alertIncoming, requestNotifyPermissionOnce, vibrate, CALL_VIBRATION } f
 import { formatMoney } from "@/lib/types";
 import { keepSubscribed } from "@/lib/realtime";
 import { DEFAULT_NOTIF_PREFS, notifOn, type NotifPrefs } from "@/lib/notifPrefs";
+import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
 import { loadNotifPrefs } from "@/app/(app)/settings/notif-actions";
 export const NOTIF_PREFS_EVENT = "ht:notifprefs";
 
@@ -194,7 +195,24 @@ export function RealtimeNotifier({ businessId, userId, myName, prefs = DEFAULT_N
       // actualización de `conversations` no dice QUIÉN te la pasó, y sin replica identity full
       // tampoco deja ver el asignado anterior para saber si de verdad cambió.
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "events", filter: `business_id=eq.${businessId}` }, async (payload) => {
-        const e = payload.new as { kind?: string; target_id?: string | null; actor_id?: string | null; parent_type?: string; parent_id?: string };
+        const e = payload.new as { kind?: string; target_id?: string | null; actor_id?: string | null; parent_type?: string; parent_id?: string; text?: string | null };
+        // El cliente se facturó solo con el link: llega por webhook, sin que nadie esté mirando el
+        // pedido. Con la app abierta, un toast; con la app cerrada llega el push del servidor.
+        if (e.kind === "file" && e.parent_type === "order" && (e.text ?? "").startsWith(LINK_INVOICED_EVENT)) {
+          if (!notifOn(prefsRef.current, "payments")) return;
+          let code = "";
+          try {
+            const { data } = await supabase.from("orders").select("code").eq("id", e.parent_id ?? "").maybeSingle();
+            code = (data as { code?: string } | null)?.code ?? "";
+          } catch {}
+          const title = "🧾 El cliente ya se facturó";
+          const message = (code ? `${code} · ` : "") + "La factura ya está en el pedido";
+          const href = `/orders?order=${e.parent_id}`;
+          push({ kind: "info", title, message, href, key: `inv-${e.parent_id}` });
+          alertIncoming({ title, body: message, href, tag: `inv-${e.parent_id}` });
+          notify();
+          return;
+        }
         if (e.kind === "reaction") {
           // Reaccionaron a un mensaje mío. Llega por evento y no por el UPDATE de `messages`
           // porque sin replica identity full el cliente no ve qué cambió — y ponérsela a la tabla
