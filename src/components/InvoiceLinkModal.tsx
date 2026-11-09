@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { sendInvoiceLink, type LinkResult } from "@/app/(app)/invoicing/actions";
 import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/components/InvoiceSummary";
@@ -8,11 +8,13 @@ import { InvoiceSummaryView, useInvoicePreview, satIncomplete } from "@/componen
 // impuestos y total) y, si a algún concepto le faltan la clave o la unidad del SAT, se piden aquí.
 // El link se crea con lo que se ve en esta ventana.
 
-export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = null, onClose, onDone }: {
+export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = null, openUntil = null, onClose, onDone }: {
   orderId: string;
   /** El pedido ya tiene un link abierto con este código: se reenvía, o se cambia por uno nuevo si
    *  aquí se capturan datos o si ya no dice lo mismo que el pedido. */
   openCode?: string | null;
+  /** Hasta cuándo sirve ese link abierto (YYYY-MM-DD), para partir de ahí al cambiarle la fecha. */
+  openUntil?: string | null;
   /** El pedido tiene chat: el link se manda por ahí. Sin chat solo se crea, para copiarlo. */
   hasChat: boolean;
   lang: "es" | "en";
@@ -26,11 +28,19 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const captured = Object.values(sat).some((v) => !!v.code || !!v.unit);
+  // Hasta cuándo se puede facturar con el link. Empieza con los días del plugin; se puede cambiar
+  // para este link. Con uno ya abierto se parte de su fecha actual.
+  const [until, setUntil] = useState("");
+  useEffect(() => { if (!until && preview?.linkUntil) setUntil(openUntil ?? preview.linkUntil); }, [preview?.linkUntil, openUntil, until]);
+  const today = new Date().toISOString().slice(0, 10);
+  const maxDay = new Date(Date.now() + 366 * 864e5).toISOString().slice(0, 10);
+  const untilOk = !until || (until >= today && until <= maxDay);
+  const untilChanged = !!openCode && !!until && until !== (openUntil ?? "");
 
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de que la factura lleva IVA de más está a la vista en el resumen: mandar es aceptarlo.
-    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat });
+    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat, until: until || null });
     setBusy(false);
     if (!r.ok) { setErr(errText(r.code, r.error)); return; }
     onDone(r);
@@ -60,11 +70,22 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
           {!preview ? <span className="t-sm muted">…</span>
             : preview.error === "order" ? <div className="t-xs" style={{ color: "var(--red)" }}>{es ? "No se pudo leer el pedido." : "Couldn't read the order."}</div>
             : <InvoiceSummaryView preview={preview} missing={missing} sat={sat} onSat={patch} lang={lang} search />}
+          {preview?.ok && (
+            <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+              <label className="lbl" style={{ margin: 0 }}>{es ? "El cliente puede facturarse hasta el" : "The customer can invoice until"}</label>
+              <input className="inp-inline" type="date" min={today} max={maxDay} value={until} onChange={(e) => setUntil(e.target.value)} style={{ width: 160, borderColor: untilOk ? undefined : "var(--red)" }} />
+              <span className="t-xs muted">
+                {untilChanged
+                  ? (es ? "Se le cambia la fecha al link abierto." : "The open link gets the new date.")
+                  : (es ? "Después se puede cambiar desde el pedido." : "You can change it later from the order.")}
+              </span>
+            </div>
+          )}
           {err && <div className="t-xs" style={{ color: "var(--red)" }}>{err}</div>}
         </div>
         <div className="modal-foot">
           <button className="btn btn-outline" onClick={onClose}>{es ? "Cancelar" : "Cancel"}</button>
-          <button className="btn btn-primary" disabled={busy || !preview?.ok || satIncomplete(sat)} onClick={submit}>
+          <button className="btn btn-primary" disabled={busy || !preview?.ok || satIncomplete(sat) || !untilOk} onClick={submit}>
             <Icon name={hasChat ? "send" : "file"} size={14} />
             {busy ? (es ? "Enviando…" : "Sending…")
               : openCode && !captured ? (hasChat ? (es ? "Reenviar link" : "Resend link") : (es ? "Copiar link" : "Copy link"))

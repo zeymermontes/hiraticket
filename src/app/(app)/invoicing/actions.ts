@@ -8,7 +8,7 @@ import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type Fis
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { signMediaUrl } from "@/lib/mediaSign";
-import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, upsertClient, fxUrl } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLinkExpiry, upsertClient, fxUrl } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
   syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, type FxConfig,
@@ -19,6 +19,9 @@ type SB = Awaited<ReturnType<typeof createClient>>;
 
 const RFC_GENERIC = "XAXX010101000";
 const today = () => new Date().toISOString().slice(0, 10);
+const daysFromNow = (d: number) => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+/** Fecha de vencimiento que pide el usuario: YYYY-MM-DD, de hoy a un año. */
+const validUntil = (v: string | null | undefined) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= today() && v <= daysFromNow(366);
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 /** El plugin de CFDI activo del negocio (con los dos instalados manda Hiraticket Facturación). */
@@ -78,6 +81,9 @@ export interface InvoicePreview {
   /** Los conceptos con sus importes, los totales y a qué renglones les faltan datos del SAT. */
   summary: InvoiceSummary;
   businessId: string | null;
+  /** Hasta qué día se podrá facturar con el link si no se elige otro: hoy más los días de
+   *  vigencia configurados en el plugin (YYYY-MM-DD). */
+  linkUntil: string | null;
 }
 
 /**
@@ -88,12 +94,13 @@ export interface InvoicePreview {
 export async function previewInvoice(orderId: string, sat?: SatOverrides | null): Promise<InvoicePreview> {
   const supabase = await createClient();
   const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
-  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null };
+  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null };
   const ctx = await planOrderInvoice(supabase, orderId, sat);
   if (!ctx) return { ...empty, error: "order" };
   const provider = await activeProvider(supabase, ctx.order.business_id);
   const { plan } = ctx;
-  const base = { provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id };
+  const cfg = provider === FX ? await loadFxConfig(ctx.order.business_id) : null;
+  const base = { provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id, linkUntil: cfg ? daysFromNow(cfg.linkDays) : null };
   if (!plan.ok) return { ...base, ok: false, error: planError(plan) };
   return { ...base, ok: true };
 }
@@ -107,9 +114,10 @@ const liveLinks = (rows: InvRow[]) => rows.filter((r) => r.provider === FX && r.
 /** Crea el link en Facturación y su fila. Desglosado por concepto, o un solo concepto por el
  *  total exacto cuando el plan lo pide (`plan.single`). */
 async function newLinkRow(
-  supabase: SB, cfg: FxConfig, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null,
+  supabase: SB, cfg: FxConfig, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null,
 ): Promise<{ row?: InvRow; error?: string; code?: string }> {
-  const vence = new Date(Date.now() + cfg.linkDays * 864e5).toISOString().slice(0, 10);
+  // Hasta cuándo se puede facturar: lo que se eligió para este link, o los días del plugin.
+  const vence = validUntil(until) ? until! : daysFromNow(cfg.linkDays);
   const r = await createLink(cfg.apiKey, {
     emisor: cfg.emisor, referencia: order.code, vence, ...(cfg.marca ? { marca: cfg.marca } : {}),
     ...(plan.single
@@ -340,7 +348,7 @@ export interface LinkResult {
  * otro: un link abierto de más no solo permitiría facturar dos veces, esa venta entraría además a
  * la factura global del negocio.
  */
-export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null } = {}): Promise<LinkResult> {
+export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null } = {}): Promise<LinkResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const ctx = await planOrderInvoice(supabase, orderId, opts.sat);
@@ -377,9 +385,15 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
     if (closed.status === null) return { ok: false, error: closed.error };
   }
   if (!link) {
-    const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null);
+    const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null, opts.until);
     if (!made.row) return { ok: false, error: made.error, code: made.code };
     link = made.row;
+  } else if (validUntil(opts.until) && link.link_expires !== opts.until) {
+    // Se reenvía el mismo link pero con otra fecha límite: se le cambia allá y aquí.
+    const r = await updateLinkExpiry(cfg.apiKey, link.link_code!, opts.until!);
+    if (!r.ok) return { ok: false, error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
+    await supabase.from("invoices").update({ link_expires: r.data?.vence ?? opts.until }).eq("id", link.id);
+    link = { ...link, link_expires: r.data?.vence ?? opts.until! };
   }
 
   let sent = false;
@@ -420,6 +434,38 @@ export async function refreshInvoiceLink(invoiceId: string): Promise<{ ok: boole
   if (r.status === null) return { ok: false, error: r.error };
   if (r.status !== "link_enviado") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); }
   return { ok: true, status: r.status };
+}
+
+/** Cambia hasta cuándo puede facturarse el cliente con el link abierto de un pedido: darle más
+ *  tiempo, o menos. Se cambia en Facturación y luego aquí; una fecha de hoy en adelante vuelve a
+ *  abrir uno que ya se veía vencido. Devuelve la fecha que quedó. */
+export async function setInvoiceLinkExpiry(invoiceId: string, until: string): Promise<{ ok: boolean; until?: string; error?: string; code?: string }> {
+  if (!validUntil(until)) return { ok: false, error: "date" };
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: inv } = await supabase.from("invoices").select("id, business_id, order_id, status, link_code, link_expires").eq("id", invoiceId).maybeSingle();
+  if (!inv?.link_code) return { ok: false, error: "no-link" };
+  // Uno que aquí ya se marcó vencido también se puede extender: allá sigue abierto (el vencimiento
+  // se mira por la fecha), así que al darle más tiempo vuelve a servir.
+  if (inv.status !== "link_enviado" && inv.status !== "vencido") return { ok: false, code: "not-open" };
+  const cfg = await loadFxConfig(inv.business_id as string);
+  if (!cfg) return { ok: false, error: "not-configured" };
+  const r = await updateLinkExpiry(cfg.apiKey, inv.link_code as string, until);
+  if (!r.ok) {
+    if (r.status === 401) return { ok: false, code: "disconnected" };
+    // 409: allá ya no está abierto (se facturó, entró a la global o se cerró). Se trae ese estado.
+    if (r.status === 409) { await refreshInvoiceLink(invoiceId); return { ok: false, code: "not-open" }; }
+    return { ok: false, error: r.status === 0 ? undefined : r.error };
+  }
+  const vence = r.data?.vence ?? until;
+  await supabase.from("invoices").update({ link_expires: vence, status: "link_enviado" }).eq("id", invoiceId);
+  const fecha = new Date(`${vence}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "long" });
+  await supabase.from("events").insert({
+    business_id: inv.business_id, parent_type: "order", parent_id: inv.order_id, actor_id: user?.id ?? null,
+    kind: "file", text: `Link de facturación ${inv.link_code}: ahora se puede usar hasta el ${fecha}`,
+  });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
+  return { ok: true, until: vence };
 }
 
 /** Cierra el link de un pedido cuando la venta no se va a facturar por ahí (no procede, el cliente

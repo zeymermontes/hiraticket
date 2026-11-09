@@ -144,6 +144,10 @@ export const createLink = (k: string, body: { emisor: string; referencia: string
 export const getLink = (k: string, codigo: string) => call<FxLink>(k, "GET", `/links/${encodeURIComponent(codigo)}`);
 /** Cierra un link sin factura. Idempotente; 409 si ya se facturó o entró a la factura global. */
 export const closeLink = (k: string, codigo: string) => call<FxLink>(k, "DELETE", `/links/${encodeURIComponent(codigo)}`);
+/** Cambia hasta cuándo se puede facturar con un link abierto (`vence` YYYY-MM-DD, de hoy en
+ *  adelante). Una fecha futura vuelve a abrir uno que ya había vencido sin factura. 409 si ya se
+ *  facturó, entró a la global o se cerró. */
+export const updateLinkExpiry = (k: string, codigo: string, vence: string) => call<FxLink>(k, "PATCH", `/links/${encodeURIComponent(codigo)}`, { vence });
 
 /* ---------- clientes ---------- */
 export const upsertClient = (k: string, c: { rfc: string; nombre: string; regimen: string; cp: string; uso?: string; correo?: string }) =>

@@ -28,7 +28,7 @@ import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
 import { InvoiceModal } from "@/components/InvoiceModal";
 import { InvoiceLinkModal } from "@/components/InvoiceLinkModal";
-import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, sendInvoiceLink, refreshInvoiceLink, closeInvoiceLink, setInvoiceLinkExpiry, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -181,6 +181,8 @@ export function OrderDrawer({
   }, [detailProp.id, invItemsKey, invIssued, invRows, invoicing]);
   const [invCopied, setInvCopied] = useState(false);
   const [invMsg, setInvMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Fecha límite del link abierto mientras se edita (YYYY-MM-DD); null = no se está editando.
+  const [invUntil, setInvUntil] = useState<string | null>(null);
   const [wasteItem, setWasteItem] = useState(""); // "" → merma del pedido completo
   const [wasteProductId, setWasteProductId] = useState<string | null>(null); // del catálogo → costo tomado de ahí; null = genérico
   const [wasteName, setWasteName] = useState("");
@@ -315,6 +317,26 @@ export function OrderDrawer({
         : r.replaced ? (lang === "es" ? "El link anterior ya no decía lo mismo que el pedido: se cerró y se mandó uno nuevo al chat." : "The previous link no longer matched the order: it was closed and a new one was sent.")
         : (lang === "es" ? "Link enviado al chat del cliente." : "Link sent to the customer's chat.") });
     }
+    run(() => Promise.resolve());
+  };
+  const saveInvUntil = async (invoiceId: string) => {
+    if (!invUntil) return;
+    setInvBusy(true); setInvMsg(null);
+    const r = await setInvoiceLinkExpiry(invoiceId, invUntil);
+    setInvBusy(false);
+    if (!r.ok) {
+      setInvMsg({ ok: false, text: r.code === "not-open"
+        ? (lang === "es" ? "Ese link ya no está abierto, no se le puede cambiar la fecha." : "That link is no longer open, its date can't be changed.")
+        : r.error === "date" ? (lang === "es" ? "Elige una fecha de hoy en adelante (máximo un año)." : "Pick a date from today on (up to a year).")
+        : invErr(r.code, r.error) });
+      if (r.code === "not-open") { setInvUntil(null); run(() => Promise.resolve()); }
+      return;
+    }
+    setInvUntil(null);
+    const d = new Date(`${r.until}T12:00:00`).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "numeric", month: "long" });
+    setInvMsg({ ok: true, text: detail.conversation_id
+      ? (lang === "es" ? `Listo: el cliente puede facturarse hasta el ${d}. Si quieres que lo sepa, reenvíale el link.` : `Done: the customer can invoice until ${d}. Resend the link if you want them to know.`)
+      : (lang === "es" ? `Listo: el cliente puede facturarse hasta el ${d}.` : `Done: the customer can invoice until ${d}.`) });
     run(() => Promise.resolve());
   };
   const checkInvLink = async (invoiceId: string) => {
@@ -786,6 +808,19 @@ export function OrderDrawer({
             const deadLink = !openLink && !issued.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || i.status === "cerrado" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
             const unconfirmed = !issued.length && detail.invoices.some((i) => i.status === "pending");
             const day = (d: string) => new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
+            // Un link vencido sin factura se puede volver a abrir dándole más tiempo.
+            const extendable = deadLink && (deadLink.status === "vencido" || deadLink.status === "link_enviado") ? deadLink : undefined;
+            const untilEditor = (inv: OrderInvoice) => (
+              <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap", padding: "6px 8px", borderRadius: 8, background: "var(--surface-2)" }}>
+                <span className="t-xs">{lang === "es" ? "Puede facturarse hasta el" : "Can invoice until"}</span>
+                <input className="inp-inline" type="date" value={invUntil ?? ""} min={todayStr} max={new Date(Date.now() + 366 * 864e5).toISOString().slice(0, 10)}
+                  onChange={(e) => setInvUntil(e.target.value)} style={{ width: 150 }} />
+                <button className="btn btn-sm btn-primary" disabled={invBusy || !invUntil || invUntil < todayStr || invUntil === inv.link_expires} onClick={() => saveInvUntil(inv.id)}>
+                  {invBusy ? "…" : (lang === "es" ? "Guardar" : "Save")}
+                </button>
+                <button className="btn btn-sm btn-ghost" disabled={invBusy} onClick={() => setInvUntil(null)}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
+              </div>
+            );
             return (
             <div className="ws-block">
               <div className="ws-block-head"><Icon name="file" size={16} /><h4 className="grow">{lang === "es" ? "Factura (CFDI)" : "Invoice (CFDI)"}</h4>
@@ -822,9 +857,14 @@ export function OrderDrawer({
                     <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                       <span className="mono t-xs" style={{ fontWeight: 700 }}>{openLink.link_code}</span>
                       <span className="t-xs muted">{lang === "es" ? "Abierto" : "Open"}{openLink.link_expires ? ` · ${lang === "es" ? "vence" : "expires"} ${day(openLink.link_expires)}` : ""}</span>
+                      {invUntil === null && (
+                        <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Cambiar hasta cuándo puede facturarse el cliente" : "Change until when the customer can invoice"}
+                          onClick={() => { setInvMsg(null); setInvUntil(openLink.link_expires ?? todayStr); }}><Icon name="edit" size={13} /></button>
+                      )}
                       <span className="grow" />
                       {openLink.total != null && <span className="mono t-sm">${formatMoney(openLink.total)}</span>}
                     </div>
+                    {invUntil !== null && untilEditor(openLink)}
                     <div className="t-xs muted">{lang === "es" ? "Cuando el cliente capture sus datos, la factura aparece aquí. Si la emites tú, el link se da por usado." : "Once the customer enters their details, the invoice shows up here. If you issue it yourself, the link counts as used."}</div>
                     <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {detail.conversation_id && (
@@ -852,8 +892,14 @@ export function OrderDrawer({
                       : deadLink.status === "cerrado"
                       ? (lang === "es" ? `El link ${deadLink.link_code} se cerró sin factura.` : `Link ${deadLink.link_code} was closed without an invoice.`)
                       : (lang === "es" ? `El link ${deadLink.link_code} venció${deadLink.link_expires ? ` el ${day(deadLink.link_expires)}` : ""}.` : `Link ${deadLink.link_code} expired${deadLink.link_expires ? ` on ${day(deadLink.link_expires)}` : ""}.`)}
+                    {extendable && invUntil === null && (
+                      <button className="btn btn-sm btn-ghost" style={{ marginLeft: 6 }} disabled={invBusy} onClick={() => { setInvMsg(null); setInvUntil(todayStr); }}>
+                        <Icon name="clock" size={13} />{lang === "es" ? "Darle más tiempo" : "Give more time"}
+                      </button>
+                    )}
                   </div>
                 )}
+                {extendable && invUntil !== null && untilEditor(extendable)}
                 {unconfirmed && (
                   <div className="t-xs" style={{ color: "var(--amber)" }}>
                     {lang === "es" ? "El último timbrado no se confirmó. Vuelve a emitir la factura: si ya se había timbrado, se recupera la misma y no se gasta otro folio." : "The last stamping wasn't confirmed. Issue the invoice again: if it had been stamped, the same one is recovered and no extra folio is used."}
@@ -1138,7 +1184,7 @@ export function OrderDrawer({
           onClose={() => setShipOpen(false)} onCreated={() => run(() => Promise.resolve())} />
       )}
       {invLinkOpen && (
-        <InvoiceLinkModal orderId={detail.id} hasChat={!!detail.conversation_id} lang={lang} errText={invErr} openCode={invLinkOpen.code}
+        <InvoiceLinkModal orderId={detail.id} hasChat={!!detail.conversation_id} lang={lang} errText={invErr} openCode={invLinkOpen.code} openUntil={invLinkOpen.code ? (detail.invoices.find((i) => i.link_code === invLinkOpen.code)?.link_expires ?? null) : null}
           onClose={() => setInvLinkOpen(null)} onDone={(r) => { setInvLinkOpen(null); void invLinkDone(r); }} />
       )}
       {invOpen && (
