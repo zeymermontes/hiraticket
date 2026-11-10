@@ -43,7 +43,7 @@ import { useToast, useFlowToast } from "@/components/Toast";
 import { loadStickerTray } from "@/app/(app)/chat/live-actions";
 import { liveListPage, liveChatCounts, liveMessages, liveConvHeader, liveDetail, loadOlderMessages, loadMessageRange } from "@/lib/chatLive";
 import { ExportChatModal } from "@/components/chat/ExportChatModal";
-import { FollowUpModal } from "@/components/chat/FollowUpModal";
+import { FollowUpModal, whenLabel } from "@/components/chat/FollowUpModal";
 import { exportFileBase, type ExportMsg } from "@/lib/chatExport";
 
 const EMPTY_CHAT_COUNTS: ChatListCounts = { all: 0, active: 0, open: 0, pending: 0, resolved: 0, unread: 0, trash: 0, archived: 0, mine: 0, unassigned: 0 };
@@ -1308,6 +1308,8 @@ export function ChatScreen({
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMenu, setBulkMenu] = useState<{ kind: "status" | "agent"; rect: DOMRect } | null>(null);
+  // Programar el mismo mensaje a todos los chats seleccionados (0098); salen uno cada 10 s.
+  const [scheduleFor, setScheduleFor] = useState<string[] | null>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const justLongPressed = useRef(false);
   const toggleSel = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -1638,8 +1640,12 @@ export function ChatScreen({
             <span className="grow" />
             <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "status", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Estado" : "Status"}><Icon name="dot" size={13} /></button>
             <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={(e) => setBulkMenu({ kind: "agent", rect: e.currentTarget.getBoundingClientRect() })} title={lang === "es" ? "Asignar" : "Assign"}><Icon name="agents" size={13} /></button>
+            <button className="btn btn-sm btn-outline" disabled={!selected.size} onClick={() => { setBulkMenu(null); setScheduleFor([...selected]); }} title={lang === "es" ? "Programar mensaje" : "Schedule message"}><Icon name="calendar" size={13} /></button>
             <button className="btn btn-sm btn-danger" disabled={!selected.size} onClick={async () => { if (await ask({ icon: "trash", danger: true, title: lang === "es" ? `Eliminar ${selected.size} chat(s)` : `Delete ${selected.size} chat(s)`, message: lang === "es" ? "Se borran también sus mensajes. No se puede deshacer." : "Their messages are deleted too. This can't be undone.", confirmLabel: lang === "es" ? "Eliminar" : "Delete", cancelLabel: lang === "es" ? "Volver" : "Back" })) runBulk(() => bulkDeleteConvs([...selected])); }} title={lang === "es" ? "Eliminar" : "Delete"}><Icon name="trash" size={13} /></button>
           </div>
+        )}
+        {scheduleFor && (
+          <FollowUpModal mode="schedule" convIds={scheduleFor} businessId={businessId} onClose={() => setScheduleFor(null)} onSaved={() => { exitSelect(); refetchListRef.current(); }} />
         )}
         {bulkMenu && (
           <>
@@ -2278,6 +2284,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
   // últimas 24 h; cerrada → únicamente plantillas aprobadas. whatsmeow y grupos no tienen ventana.
   const [tplOpen, setTplOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false); // "mensaje en espera" (0095)
+  const [scheduleOpen, setScheduleOpen] = useState(false); // "programar mensaje" (0098): se lleva el borrador
   const [nowMin, setNowMin] = useState(() => Date.now());
   useEffect(() => { const iv = setInterval(() => setNowMin(Date.now()), 60_000); return () => clearInterval(iv); }, []);
   const lastInboundAt = useMemo(() => {
@@ -2532,28 +2539,38 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
       </div>
 
       <div className="composer">
-        {/* Lo que quedó en espera: se ve hasta que salga (cuando el cliente responda) o se cancele. */}
-        {(detail.followups ?? []).length > 0 && (
-          <div className="col gap-1" style={{ padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", marginBottom: 6 }}>
-            <div className="row gap-2 t-xs" style={{ color: "var(--brand-700)", fontWeight: 700 }}>
-              <Icon name="clock" size={13} />{lang === "es"
-                ? `En espera · se enviará cuando ${personal ? "el contacto" : "el cliente"} responda`
-                : `Waiting · will be sent when the ${personal ? "contact" : "customer"} replies`}
-            </div>
-            {detail.followups.map((f) => (
-              <div key={f.id} className="row gap-2" style={{ alignItems: "center" }}>
-                {f.media_name || f.type !== "text" ? <Icon name="paperclip" size={13} /> : <Icon name="edit" size={13} />}
-                <span className="t-sm grow truncate">{f.body || f.media_name || quoteText({ type: f.type, body: null, media_name: f.media_name, media_mime: f.media_mime, meta: null }, lang)}</span>
-                <button className="iconbtn sm" title={lang === "es" ? "Cancelar envío" : "Cancel"} onClick={async () => {
-                  if (await ask({ icon: "trash", danger: true, title: lang === "es" ? "Cancelar mensaje en espera" : "Cancel waiting message", message: lang === "es" ? "No se enviará." : "It will not be sent.", confirmLabel: lang === "es" ? "Cancelar envío" : "Cancel it", cancelLabel: lang === "es" ? "Volver" : "Back" })) {
-                    patch({ followups: detail.followups.filter((x) => x.id !== f.id) });
-                    start(async () => { await cancelFollowUp(f.id); refresh(); });
-                  }
-                }}><Icon name="x" size={13} /></button>
+        {/* Lo que quedó pendiente: en espera (sale cuando el cliente responda) y programado (sale a su
+            hora). Se ve hasta que salga o se cancele. */}
+        {(["wait", "scheduled"] as const).map((group) => {
+          const rows = (detail.followups ?? []).filter((f) => (group === "scheduled") === !!f.send_at);
+          if (!rows.length) return null;
+          return (
+            <div key={group} className="col gap-1" style={{ padding: "8px 12px", background: "var(--brand-50)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", marginBottom: 6 }}>
+              <div className="row gap-2 t-xs" style={{ color: "var(--brand-700)", fontWeight: 700 }}>
+                <Icon name={group === "scheduled" ? "calendar" : "clock"} size={13} />
+                {group === "scheduled"
+                  ? (lang === "es" ? `Programado · ${rows.length === 1 ? "se enviará" : "se enviarán"} a la hora marcada` : `Scheduled · will be sent at the time shown`)
+                  : (lang === "es"
+                    ? `En espera · se enviará cuando ${personal ? "el contacto" : "el cliente"} responda`
+                    : `Waiting · will be sent when the ${personal ? "contact" : "customer"} replies`)}
               </div>
-            ))}
-          </div>
-        )}
+              {rows.map((f) => (
+                <div key={f.id} className="row gap-2" style={{ alignItems: "center" }}>
+                  {f.media_name || f.type !== "text" ? <Icon name="paperclip" size={13} /> : <Icon name="edit" size={13} />}
+                  <span className="t-sm grow truncate">{f.body || f.media_name || quoteText({ type: f.type, body: null, media_name: f.media_name, media_mime: f.media_mime, meta: null }, lang)}</span>
+                  {f.send_at && <span className="pill" style={{ height: 22, padding: "0 8px", flex: "none", fontSize: 11, fontWeight: 700 }} title={new Date(f.send_at).toLocaleString(lang === "es" ? "es-MX" : "en-US")}>{whenLabel(f.send_at, lang)}</span>}
+                  <button className="iconbtn sm" title={lang === "es" ? "Cancelar envío" : "Cancel"} onClick={async () => {
+                    const scheduled = !!f.send_at;
+                    if (await ask({ icon: "trash", danger: true, title: lang === "es" ? (scheduled ? "Cancelar mensaje programado" : "Cancelar mensaje en espera") : (scheduled ? "Cancel scheduled message" : "Cancel waiting message"), message: lang === "es" ? "No se enviará." : "It will not be sent.", confirmLabel: lang === "es" ? "Cancelar envío" : "Cancel it", cancelLabel: lang === "es" ? "Volver" : "Back" })) {
+                      patch({ followups: detail.followups.filter((x) => x.id !== f.id) });
+                      start(async () => { await cancelFollowUp(f.id); refresh(); });
+                    }
+                  }}><Icon name="x" size={13} /></button>
+                </div>
+              ))}
+            </div>
+          );
+        })}
         {waBlocked && (
           <div className="row gap-3" style={{ padding: "10px 12px", background: "var(--amber-bg, var(--surface-2))", border: "1px solid var(--amber-bd, var(--border))", borderRadius: "var(--r-md)", marginBottom: 6, alignItems: "center" }}>
             <Icon name="clock" size={16} />
@@ -2741,6 +2758,7 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
               )}
             </span>
             <span className="grow" />
+            <button className="btn btn-outline btn-sm" onClick={() => setScheduleOpen(true)} disabled={pending || !!pendingTpl} title={lang === "es" ? "Programar: elegir a qué hora se envía" : "Schedule: pick when it is sent"} aria-label={lang === "es" ? "Programar mensaje" : "Schedule message"}><Icon name="calendar" size={15} /></button>
             <button className="btn btn-primary btn-sm" onClick={doSend} disabled={(!text.trim() && !pendingTpl) || pending}><Icon name="send" size={15} /> {lang === "es" ? "Enviar" : "Send"}</button>
           </div>
         </div>
@@ -2758,7 +2776,10 @@ export function Thread({ detail, agents, areas, connected, ctxVisible, onToggleC
         />
       )}
       {followUpOpen && (
-        <FollowUpModal convId={detail.id} businessId={businessId} onClose={() => setFollowUpOpen(false)} onSaved={refresh} />
+        <FollowUpModal convIds={[detail.id]} businessId={businessId} onClose={() => setFollowUpOpen(false)} onSaved={refresh} />
+      )}
+      {scheduleOpen && (
+        <FollowUpModal mode="schedule" convIds={[detail.id]} businessId={businessId} initialText={text} onClose={() => setScheduleOpen(false)} onSaved={() => { setText(""); refresh(); }} />
       )}
 
       {staged.length > 0 && (

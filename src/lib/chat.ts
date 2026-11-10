@@ -139,10 +139,11 @@ export interface ConvNote {
   created_at: string;
 }
 
-/** Mensaje en espera (0095): sale solo cuando el cliente responda. */
+/** Mensaje en espera (0095): sale solo cuando el cliente responda. Con `send_at` (0098) es un
+ *  mensaje programado: sale a esa hora, responda o no. */
 export interface ConvFollowUp {
   id: string; type: string; body: string | null; media_name: string | null; media_mime: string | null;
-  author_id: string | null; created_at: string;
+  author_id: string | null; created_at: string; send_at: string | null;
 }
 
 export interface ConvEvent {
@@ -662,11 +663,19 @@ export async function getConversationDetail(
 /** Los mensajes en espera de la conversación. Sin 0095 la tabla no existe: lista vacía. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function pendingFollowUps(supabase: any, convId: string, businessId: string): Promise<ConvFollowUp[]> {
-  const { data, error } = await supabase.from("conversation_followups")
-    .select("id, type, body, media_name, media_mime, author_id, created_at")
-    .eq("conversation_id", convId).is("sent_at", null).order("seq", { ascending: true });
+  // Primero los que esperan la respuesta del cliente, luego los programados por hora. Sin 0098 no
+  // existe `send_at`: se vuelve a pedir sin esa columna.
+  let { data, error } = await supabase.from("conversation_followups")
+    .select("id, type, body, media_name, media_mime, author_id, created_at, send_at")
+    .eq("conversation_id", convId).is("sent_at", null)
+    .order("send_at", { ascending: true, nullsFirst: true }).order("seq", { ascending: true });
+  if (error) {
+    ({ data, error } = await supabase.from("conversation_followups")
+      .select("id, type, body, media_name, media_mime, author_id, created_at")
+      .eq("conversation_id", convId).is("sent_at", null).order("seq", { ascending: true }));
+  }
   if (error || !data) return [];
-  return (data as ConvFollowUp[]).map((f) => ({ ...f, body: f.body ? decryptBody(businessId, f.body) : null }));
+  return (data as ConvFollowUp[]).map((f) => ({ ...f, send_at: f.send_at ?? null, body: f.body ? decryptBody(businessId, f.body) : null }));
 }
 
 /**

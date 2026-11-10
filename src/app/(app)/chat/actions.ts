@@ -229,33 +229,60 @@ function waTemplateMeta(tpl: { name: string; language: string; header?: string |
   };
 }
 
+type FollowUpItem = { type: string; body?: string; mediaUrl?: string; mime?: string; name?: string; size?: number; thumb?: string };
+
 /** Un mensaje en espera (0095): texto y/o archivos que saldrán solos cuando el cliente responda.
  *  Cada archivo es una fila; el texto va como pie del primero, o solo, igual que al enviar. */
-export async function queueFollowUp(
-  convId: string,
-  items: { type: string; body?: string; mediaUrl?: string; mime?: string; name?: string; size?: number; thumb?: string }[],
-): Promise<{ ok: boolean; error?: string }> {
+export async function queueFollowUp(convId: string, items: FollowUpItem[]): Promise<{ ok: boolean; error?: string }> {
+  return queueFollowUps([convId], items, null);
+}
+
+/**
+ * Mensaje programado (0098): el mismo texto y archivos a uno o varios chats, a la hora elegida.
+ * Si son varios, el worker los va soltando uno tras otro con 10 segundos entre cada chat.
+ * `sendAt` es un instante ISO (el navegador ya lo convirtió desde la hora local del agente).
+ */
+export async function scheduleMessage(convIds: string[], items: FollowUpItem[], sendAt: string): Promise<{ ok: boolean; error?: string; count?: number }> {
+  const t = new Date(sendAt);
+  if (isNaN(t.getTime()) || t.getTime() > Date.now() + 366 * 24 * 60 * 60 * 1000) return { ok: false, error: "date" };
+  if (t.getTime() < Date.now() - 60 * 1000) return { ok: false, error: "past" };
+  return queueFollowUps(convIds, items, t.toISOString());
+}
+
+async function queueFollowUps(convIds: string[], items: FollowUpItem[], sendAt: string | null): Promise<{ ok: boolean; error?: string; count?: number }> {
   const { supabase, userId } = await ctx();
-  const businessId = await businessOf(convId);
+  const ids = [...new Set(convIds)].slice(0, 500);
+  if (!ids.length) return { ok: false, error: "conversation" };
+  const businessId = await businessOf(ids[0]);
   if (!businessId) return { ok: false, error: "conversation" };
-  const rows = items
+  // Solo chats de ese mismo negocio: RLS ya corta los ajenos, pero así tampoco queda una fila a
+  // nombre del negocio equivocado.
+  const { data: convs } = await supabase.from("conversations").select("id").in("id", ids).eq("business_id", businessId);
+  const okIds = (convs ?? []).map((c) => c.id as string);
+  if (!okIds.length) return { ok: false, error: "conversation" };
+
+  const base = items
     .filter((it) => (it.body && it.body.trim()) || it.mediaUrl)
     .map((it, i) => {
       if (it.mediaUrl && !ownsMediaPath(businessId, it.mediaUrl)) return null;
       return {
-        business_id: businessId, conversation_id: convId, author_id: userId, seq: i,
+        business_id: businessId, author_id: userId, seq: i,
         type: it.mediaUrl ? it.type : "text",
         body: it.body && it.body.trim() ? encryptBody(businessId, it.body.trim()) : null,
         media_url: it.mediaUrl ?? null, media_mime: it.mime ?? null, media_name: it.name ?? null, media_size: it.size ?? null,
         meta: it.thumb ? { thumb: it.thumb } : null,
       };
     });
-  if (rows.some((r) => !r)) return { ok: false, error: "media-path" };
-  const clean = rows.filter((r): r is NonNullable<typeof r> => !!r);
+  if (base.some((r) => !r)) return { ok: false, error: "media-path" };
+  const clean = base.filter((r): r is NonNullable<typeof r> => !!r);
   if (!clean.length) return { ok: false, error: "empty" };
-  const { error } = await supabase.from("conversation_followups").insert(clean);
-  if (error) return { ok: false, error: /conversation_followups/.test(error.message) ? "migration-0095" : error.message };
-  return { ok: true };
+  const rows = okIds.flatMap((cid) => clean.map((r) => ({ ...r, conversation_id: cid, ...(sendAt ? { send_at: sendAt } : {}) })));
+  const { error } = await supabase.from("conversation_followups").insert(rows);
+  if (error) {
+    if (/send_at/.test(error.message)) return { ok: false, error: "migration-0098" };
+    return { ok: false, error: /conversation_followups/.test(error.message) ? "migration-0095" : error.message };
+  }
+  return { ok: true, count: okIds.length };
 }
 
 /** Quitar un mensaje en espera que todavía no salió. */

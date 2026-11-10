@@ -356,6 +356,7 @@ end $$;`); err != nil {
 	go m.pollContacts(ctx)
 	go m.pollOps(ctx)
 	go m.pollHeartbeat(ctx)
+	go m.pollScheduled(ctx)
 	go m.pollMemory(ctx)
 	// Apagado salvo THUMB_BACKFILL=1, y termina solo al no quedar fotos sin miniatura.
 	go m.backfillThumbs(ctx)
@@ -750,6 +751,79 @@ func (m *Manager) notifyPush(businessID, convID, title, body string) {
 	io.Copy(io.Discard, resp.Body) // drenar para que la conexión se reuse
 	if resp.StatusCode >= 300 {
 		m.log.Warnf("push notify: HTTP %d", resp.StatusCode)
+	}
+}
+
+// pollScheduled libera los mensajes programados cuya hora ya llegó (0098). Cada 10 segundos pide a
+// `release_due_followups()` que suelte UNA conversación por negocio: así, lo programado a cincuenta
+// chats a la misma hora sale uno tras otro con 10 s entre cada uno, en vez de cincuenta mensajes en
+// el mismo segundo que WhatsApp lee como spam. Lo liberado es un `queued` normal: los negocios por QR
+// los manda pollOutbound en la vuelta siguiente; para los de la API oficial se avisa a la app, que
+// es quien tiene la sesión de Meta.
+//
+// La tabla y la función pueden no existir todavía (migración sin aplicar): se avisa una vez por hora,
+// no cada 10 segundos.
+func (m *Manager) pollScheduled(ctx context.Context) {
+	var lastWarn time.Time
+	for {
+		time.Sleep(10 * time.Second)
+		if ctx.Err() != nil {
+			return
+		}
+		qctx, cancel := withDBTimeout(ctx)
+		rows, err := m.db.QueryContext(qctx, `SELECT biz, conv FROM public.release_due_followups()`)
+		if err != nil {
+			cancel()
+			if time.Since(lastWarn) > time.Hour {
+				m.log.Warnf("mensajes programados: %v (¿falta la migración 0098?)", err)
+				lastWarn = time.Now()
+			}
+			continue
+		}
+		var released []string
+		for rows.Next() {
+			var biz, conv string
+			if rows.Scan(&biz, &conv) == nil {
+				released = append(released, biz)
+				m.log.Infof("mensaje programado liberado: negocio %s, conversación %s", biz, conv)
+			}
+		}
+		rows.Close()
+		cancel()
+		for _, biz := range released {
+			go m.notifyFlush(biz)
+		}
+	}
+}
+
+// notifyFlush avisa a la app que hay mensajes en cola de este negocio, para que si está en la API
+// oficial salgan por cloud-outbox (el worker no tiene esa sesión). Para un negocio por QR la app no
+// hace nada y el mensaje lo manda pollOutbound. Mismo secreto y mismo "fuego y olvido" que el push.
+func (m *Manager) notifyFlush(businessID string) {
+	if m.appURL == "" || m.pushKey == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"businessId": businessID})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", m.appURL+"/api/outbox/flush", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-push-secret", m.pushKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.log.Warnf("outbox flush: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 300 {
+		m.log.Warnf("outbox flush: HTTP %d", resp.StatusCode)
 	}
 }
 

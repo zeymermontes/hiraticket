@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
 import { pushInboundMessage, pushConfigured } from "@/lib/push";
+import { hookSecretOk } from "@/lib/hookSecret";
 
 /**
  * Disparador de push para el worker de whatsmeow.
@@ -10,24 +10,12 @@ import { pushInboundMessage, pushConfigured } from "@/lib/push";
  * decisión de a quién le toca cada aviso —- y a la primera semana no dirían lo mismo. Así que el
  * worker avisa por HTTP y la lógica sigue viviendo en un solo sitio (`src/lib/push.ts`).
  *
- * Autenticación por secreto compartido, no por sesión: aquí no hay usuario, hay un servicio. Se
- * compara en tiempo constante —- comparar secretos con `===` filtra su longitud y su prefijo por el
- * tiempo que tarda en fallar.
+ * Autenticación por secreto compartido, no por sesión (ver `hookSecretOk`).
  */
 export const runtime = "nodejs";
 
-function secretOk(header: string | null): boolean {
-  const expected = process.env.PUSH_HOOK_SECRET?.trim();
-  // Sin secreto configurado la ruta queda CERRADA, no abierta: un despliegue al que se le olvidó
-  // la variable no debe convertirse en un webhook público.
-  if (!expected) return false;
-  const got = (header ?? "").trim();
-  if (!got || got.length !== expected.length) return false;
-  try { return timingSafeEqual(Buffer.from(got), Buffer.from(expected)); } catch { return false; }
-}
-
 export async function POST(req: Request) {
-  if (!secretOk(req.headers.get("x-push-secret"))) {
+  if (!hookSecretOk(req.headers.get("x-push-secret"))) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   if (!pushConfigured()) {
