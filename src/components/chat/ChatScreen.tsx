@@ -620,7 +620,8 @@ function msgPreview(c: ConvListItem, lang: "es" | "en"): string {
   }
 }
 
-function Tick({ state }: { state: string | null }) {
+/** Palomitas de estado de un mensaje saliente. Las usa también el chat del equipo (mismo dibujo). */
+export function Tick({ state }: { state: string | null }) {
   if (state === "read") return <span className="tick" style={{ color: "var(--blue)", display: "inline-flex" }}><Icon name="checks" size={16} /></span>;
   if (state === "delivered") return <span className="tick" style={{ display: "inline-flex", opacity: 0.6 }}><Icon name="checks" size={16} /></span>;
   if (state === "sent") return <span className="tick" style={{ display: "inline-flex", opacity: 0.6 }}><Icon name="check" size={14} /></span>;

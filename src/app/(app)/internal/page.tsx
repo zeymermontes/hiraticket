@@ -13,6 +13,6 @@ export default async function InternalPage({ searchParams }: { searchParams: Pro
   const supabase = await createClient();
   const user = await getSessionUser();
   if (!user) return null;
-  const { threads, agents } = await getInternalThreads(business.id, user.id);
-  return <InternalChat initial={{ threads, agents, meId: user.id }} businessId={business.id} initialChannel={sp.ch ?? null} />;
+  const { threads, agents, receipts } = await getInternalThreads(business.id, user.id);
+  return <InternalChat initial={{ threads, agents, receipts, meId: user.id }} businessId={business.id} initialChannel={sp.ch ?? null} />;
 }

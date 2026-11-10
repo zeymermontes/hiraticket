@@ -2,7 +2,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/auth";
 import { getMyBusiness } from "@/lib/queries";
-import { getInternalThreads, getInternalMessages, type InternalThread, type InternalMsg } from "@/lib/internal";
+import { getInternalThreads, getInternalMessages, type InternalThread, type InternalMsg, type InternalReceipt } from "@/lib/internal";
 import type { Agent } from "@/lib/chat";
 import { encryptBody } from "@/lib/msgcrypto";
 import { ownsMediaPath, STICKER_MIME } from "@/lib/stickers";
@@ -14,11 +14,11 @@ async function ctx() {
   return { supabase, userId: user?.id ?? null, businessId: biz?.id ?? null };
 }
 
-export async function loadInternalThreads(): Promise<{ threads: InternalThread[]; agents: Agent[]; meId: string } | null> {
+export async function loadInternalThreads(): Promise<{ threads: InternalThread[]; agents: Agent[]; receipts: InternalReceipt[]; meId: string } | null> {
   const { userId, businessId } = await ctx();
   if (!userId || !businessId) return null;
-  const { threads, agents } = await getInternalThreads(businessId, userId);
-  return { threads, agents, meId: userId };
+  const { threads, agents, receipts } = await getInternalThreads(businessId, userId);
+  return { threads, agents, receipts, meId: userId };
 }
 
 export async function loadInternalMessages(channel: string, before?: string): Promise<InternalMsg[]> {

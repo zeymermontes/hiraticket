@@ -8,7 +8,7 @@ import { Avatar, deriveInitials } from "@/components/ui";
 import { useApp } from "@/components/AppContext";
 import { useToast } from "@/components/Toast";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel } from "@/components/chat/ChatScreen";
+import { firstUrl, LinkPreview, MediaThumb, MediaBlock, Lightbox, dayLabel, Tick } from "@/components/chat/ChatScreen";
 import { QuoteCard, quoteText } from "@/components/chat/QuoteCard";
 import { useFileDrop, DropOverlay } from "@/components/chat/fileDrop";
 import { menuStyle } from "@/lib/popover";
@@ -17,7 +17,7 @@ import { putMessages } from "@/lib/localCache";
 import { copyFile, copyLink, canCopyFile, downloadMedia } from "@/lib/mediaDrag";
 import { MSG_PAGE } from "@/lib/types";
 import type { Agent, ChatMessage } from "@/lib/chat";
-import type { InternalThread, InternalMsg } from "@/lib/internal";
+import type { InternalThread, InternalMsg, InternalReceipt } from "@/lib/internal";
 import {
   loadInternalThreads, loadInternalMessages, loadInternalMessageRange, sendInternalMessage, sendInternalMedia, forwardInternalMessage, sendInternalSticker,
   markInternalRead, editInternalMessage, deleteInternalMessage, reactInternalMessage,
@@ -70,11 +70,14 @@ function renderBody(body: string, mentionNames: string[]) {
   });
 }
 
-export function InternalChat({ initial, businessId, initialChannel }: { initial: { threads: InternalThread[]; agents: Agent[]; meId: string }; businessId: string; initialChannel?: string | null }) {
+export function InternalChat({ initial, businessId, initialChannel }: { initial: { threads: InternalThread[]; agents: Agent[]; receipts: InternalReceipt[]; meId: string }; businessId: string; initialChannel?: string | null }) {
   const { lang } = useApp();
   const ask = useConfirm(); // diálogo propio, no el confirm() del navegador
   const { push } = useToast();
   const [threads, setThreads] = useState(initial.threads);
+  // Cursores de recibido/visto de cada miembro (0101): de aquí salen las palomitas de mis mensajes.
+  const [receipts, setReceipts] = useState<InternalReceipt[]>(initial.receipts ?? []);
+  const [receiptMenu, setReceiptMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [sel, setSel] = useState<string>(initial.threads[0]?.key ?? "team");
   const [msgs, setMsgs] = useState<InternalMsg[]>([]);
   // Persist text messages to the per-device cache (bodies are encrypted in the DB, so message
@@ -157,7 +160,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
 
   // Tell the Shell to refetch the nav "Equipo" badge after we mark a channel read.
   const pokeBadges = () => { try { window.dispatchEvent(new Event("ht:badges")); } catch {} };
-  const refreshThreads = useCallback(() => { loadInternalThreads().then((r) => { if (r) setThreads(r.threads); }).catch(() => {}); }, []);
+  const refreshThreads = useCallback(() => { loadInternalThreads().then((r) => { if (r) { setThreads(r.threads); setReceipts(r.receipts ?? []); } }).catch(() => {}); }, []);
   // Merge the latest page into what's loaded (keeps older history + applies edits/reactions/deletes).
   const refreshMsgs = useCallback((ch: string) => {
     loadInternalMessages(ch).then((fresh) => { scrollAction.current = "follow"; setMsgs((prev) => mergeInternal(prev, fresh)); setHasMore((h) => h || fresh.length >= MSG_PAGE); }).catch(() => {});
@@ -235,6 +238,8 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
         refreshThreads();
         if (row?.channel && row.channel === selRef.current) { refreshMsgs(selRef.current); markInternalRead(selRef.current).catch(() => {}); pokeBadges(); }
       })
+      // Alguien recibió o leyó: las palomitas de mis mensajes cambian en vivo (0101).
+      .on("postgres_changes", { event: "*", schema: "public", table: "internal_reads", filter: `business_id=eq.${businessId}` }, () => refreshThreads())
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const t = payload as { channel?: string; userId?: string; name?: string };
         if (t.channel !== selRef.current || t.userId === meId) return;
@@ -428,6 +433,39 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
     flush(); return out;
   }, [msgs]);
 
+  /**
+   * Estado de un mensaje MÍO frente a los demás del canal: en un directo es el otro; en el equipo,
+   * todos los demás miembros. «Visto» cuando todos lo leyeron, «recibido» cuando a todos les llegó,
+   * si no «enviado» (misma regla que un grupo de WhatsApp). Cada quien por separado va al detalle.
+   */
+  const receiptOf = (m: InternalMsg): { state: "sent" | "delivered" | "read" | null; per: { agent: Agent; st: "sent" | "delivered" | "read" }[] } => {
+    if (m.id.startsWith("tmp")) return { state: null, per: [] };
+    const t = threads.find((x) => x.key === m.channel);
+    const others = t?.kind === "dm" ? initial.agents.filter((a) => a.id === t.otherId) : initial.agents.filter((a) => a.id !== meId);
+    const per = others.map((agent) => {
+      const r = receipts.find((x) => x.user_id === agent.id && x.channel === m.channel);
+      // Por instante, no por texto: Postgres y el navegador no escriben el ISO con los mismos decimales.
+      const at = Date.parse(m.created_at);
+      const st: "sent" | "delivered" | "read" = r?.last_read_at && Date.parse(r.last_read_at) >= at ? "read"
+        : r?.last_delivered_at && Date.parse(r.last_delivered_at) >= at ? "delivered" : "sent";
+      return { agent, st };
+    });
+    if (!per.length) return { state: "sent", per };
+    const state = per.every((x) => x.st === "read") ? "read" : per.every((x) => x.st !== "sent") ? "delivered" : "sent";
+    return { state, per };
+  };
+  const receiptLabel = (st: "sent" | "delivered" | "read") => st === "read" ? (lang === "es" ? "Visto" : "Seen") : st === "delivered" ? (lang === "es" ? "Recibido" : "Delivered") : (lang === "es" ? "Enviado" : "Sent");
+  const ticks = (m: InternalMsg) => {
+    const r = receiptOf(m);
+    return (
+      <button type="button" style={{ display: "inline-flex", alignItems: "center", padding: 0, marginLeft: 2, cursor: "pointer", color: "inherit", border: "none", background: "none", font: "inherit" }}
+        title={r.state ? receiptLabel(r.state) : undefined} aria-label={lang === "es" ? "Quién lo recibió y lo vio" : "Who received and saw it"}
+        onClick={(e) => { e.stopPropagation(); setReceiptMenu({ id: m.id, rect: e.currentTarget.getBoundingClientRect() }); }}>
+        <Tick state={r.state} />
+      </button>
+    );
+  };
+
   function renderBubble(m: InternalMsg, fresh = false) {
     const mine = m.author_id === meId;
     const au = m.author_id ? agentMap.get(m.author_id) : null;
@@ -451,7 +489,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
               {url && <LinkPreview url={url} />}
             </>
           )}
-          <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}<span>{clock(m.created_at, lang)}</span></div>
+          <div className="bubble-meta">{m.edited && !m.deleted && <span style={{ marginRight: 4, fontSize: 10.5, opacity: 0.7 }}>{lang === "es" ? "editado" : "edited"}</span>}<span>{clock(m.created_at, lang)}</span>{mine && !m.deleted && ticks(m)}</div>
           {!m.deleted && m.reactions.length > 0 && (
             <div className="msg-reacts">
               {m.reactions.map((r, i) => <button key={i} className={"msg-react" + (r.by === meId ? " mine" : "")} onClick={() => react(m.id, r.emoji)}>{r.emoji}</button>)}
@@ -537,7 +575,7 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
                           </a>
                         ))}
                       </div>
-                      <div className="bubble-meta"><span>{clock(row.items[row.items.length - 1].created_at, lang)}</span></div>
+                      <div className="bubble-meta"><span>{clock(row.items[row.items.length - 1].created_at, lang)}</span>{mine && ticks(row.items[row.items.length - 1])}</div>
                     </div>
                   </div>
                 </Fragment>
@@ -551,6 +589,26 @@ export function InternalChat({ initial, businessId, initialChannel }: { initial:
             && Math.abs(new Date(m.created_at).getTime() - new Date(t.created_at).getTime()) < 120_000))
             .map((m) => <Fragment key={m.id}>{renderBubble(m, true)}</Fragment>)}
           {typingName && <div className="msg in"><div className="bubble typing-bubble"><span className="td" /><span className="td" /><span className="td" /></div></div>}
+          {receiptMenu && (() => {
+            const m = msgs.find((x) => x.id === receiptMenu.id) ?? extra.find((x) => x.id === receiptMenu.id);
+            const r = m ? receiptOf(m) : null;
+            return (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 200 }} onClick={() => setReceiptMenu(null)} />
+                <div className="menu scroll" style={menuStyle(receiptMenu.rect, { width: 250, height: Math.min(300, 44 + 40 * Math.max(1, r?.per.length ?? 1)), align: "right" })}>
+                  <div className="menu-label">{lang === "es" ? "Recibido y visto" : "Delivered and seen"}</div>
+                  {(r?.per ?? []).map(({ agent, st }) => (
+                    <div key={agent.id} className="menu-item" style={{ cursor: "default", gap: 8 }}>
+                      <Avatar name={agent.name} initials={deriveInitials(agent.name)} color={agent.color} src={agent.avatar_url ?? undefined} size={22} />
+                      <span className="grow truncate">{agent.name}</span>
+                      <span className="row gap-1 t-xs" style={{ alignItems: "center", color: st === "read" ? "var(--blue)" : "var(--text-faint)", flex: "none" }}><Tick state={st} />{receiptLabel(st)}</span>
+                    </div>
+                  ))}
+                  {!r?.per.length && <div className="menu-item muted t-sm" style={{ cursor: "default" }}>{lang === "es" ? "Nadie más en este canal." : "No one else in this channel."}</div>}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         <div className="composer">

@@ -52,6 +52,49 @@ export interface InternalMsg {
   forwarded: boolean;
 }
 
+/** Cursor de un miembro en un canal (0036 + 0101): hasta dónde le llegó y hasta dónde leyó. */
+export interface InternalReceipt {
+  user_id: string;
+  channel: string;
+  last_read_at: string | null;
+  last_delivered_at: string | null;
+}
+
+/**
+ * Adelanta el «recibido» del usuario: cada canal cuyo último mensaje es posterior a su
+ * last_delivered_at queda marcado como entregado ahora. Se llama al cargar los hilos y al
+ * refrescar la barra (así cuenta aunque no esté en Equipo). Sin la 0101 la columna no existe y
+ * no hace nada. Un canal sin fila se crea con last_read_at en 1970: «entregado» no es «leído».
+ */
+export async function markInternalDelivered(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any, businessId: string, userId: string,
+  lastPerChannel: Map<string, string>, mine: InternalReceipt[],
+): Promise<void> {
+  const have = new Map(mine.map((r) => [r.channel, r]));
+  const now = new Date().toISOString();
+  const upd: string[] = []; const ins: string[] = [];
+  for (const [channel, lastAt] of lastPerChannel) {
+    const r = have.get(channel);
+    if (!r) ins.push(channel);
+    else if (!r.last_delivered_at || r.last_delivered_at < lastAt) upd.push(channel);
+  }
+  if (!upd.length && !ins.length) return;
+  try {
+    if (upd.length) await supabase.from("internal_reads").update({ last_delivered_at: now }).eq("business_id", businessId).eq("user_id", userId).in("channel", upd);
+    if (ins.length) await supabase.from("internal_reads").insert(ins.map((channel) => ({ business_id: businessId, user_id: userId, channel, last_read_at: "1970-01-01T00:00:00Z", last_delivered_at: now })));
+  } catch { /* sin 0101 */ }
+}
+
+/** Cursores de todos los miembros en los canales que el usuario comparte (RLS 0101). Sin la
+ *  migración solo vuelven los propios: las palomitas se quedan en «enviado». */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadReceipts(supabase: any, businessId: string): Promise<InternalReceipt[]> {
+  let { data, error } = await supabase.from("internal_reads").select("user_id, channel, last_read_at, last_delivered_at").eq("business_id", businessId);
+  if (error) ({ data } = await supabase.from("internal_reads").select("user_id, channel, last_read_at").eq("business_id", businessId));
+  return ((data ?? []) as InternalReceipt[]).map((r) => ({ ...r, last_delivered_at: r.last_delivered_at ?? null }));
+}
+
 export interface InternalThread {
   key: string;                 // channel key
   kind: "team" | "dm";
@@ -65,14 +108,15 @@ export interface InternalThread {
 }
 
 /** Team channel + a DM thread per other agent, with last message + unread for each. */
-export async function getInternalThreads(businessId: string, userId: string): Promise<{ threads: InternalThread[]; agents: Agent[] }> {
+export async function getInternalThreads(businessId: string, userId: string): Promise<{ threads: InternalThread[]; agents: Agent[]; receipts: InternalReceipt[] }> {
   const supabase = await createClient();
   const agents = await getAgents(businessId);
-  const [readsRes, msgsRes] = await Promise.all([
-    supabase.from("internal_reads").select("channel, last_read_at").eq("business_id", businessId).eq("user_id", userId),
+  const [receipts, msgsRes] = await Promise.all([
+    loadReceipts(supabase, businessId),
     supabase.from("internal_messages").select("id, channel, author_id, body, created_at, type").eq("business_id", businessId).order("created_at", { ascending: false }).limit(500),
   ]);
-  const reads = new Map<string, string>(((readsRes.data ?? []) as { channel: string; last_read_at: string }[]).map((r) => [r.channel, r.last_read_at]));
+  const mine = receipts.filter((r) => r.user_id === userId);
+  const reads = new Map<string, string>(mine.filter((r) => r.last_read_at).map((r) => [r.channel, r.last_read_at as string]));
   const mediaPreview = (t?: string) => (t === "image" ? "📷 Foto" : t && t !== "text" ? "📎 Archivo" : "");
   const msgs = ((msgsRes.data ?? []) as { id: string; channel: string; author_id: string | null; body: string; created_at: string; type?: string }[]).map((m) => ({ ...m, body: decryptBody(businessId, m.body) || mediaPreview(m.type) }));
 
@@ -91,6 +135,15 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
     return { key, kind, title, otherId, color, lastBody: a?.last.body ?? null, lastAt: a?.last.created_at ?? null, lastAuthorId: a?.last.author_id ?? null, unread: a?.unread ?? 0 };
   };
 
+  // Lo que acaba de llegar a esta app ya está «recibido» para quien manda. Se actualiza el cursor
+  // y se refleja en lo que se devuelve, sin volver a consultar.
+  const lastPer = new Map<string, string>();
+  for (const [ch, a] of agg) if (a.last.author_id !== userId) lastPer.set(ch, a.last.created_at);
+  await markInternalDelivered(supabase, businessId, userId, lastPer, mine);
+  const now = new Date().toISOString();
+  const out = receipts.map((r) => (r.user_id === userId && lastPer.has(r.channel) ? { ...r, last_delivered_at: now } : r));
+  for (const ch of lastPer.keys()) if (!mine.some((r) => r.channel === ch)) out.push({ user_id: userId, channel: ch, last_read_at: null, last_delivered_at: now });
+
   const team = threadFor(TEAM_CHANNEL, "team", "", null, "#0E8C82");
   const dms = agents.filter((ag) => ag.id !== userId).map((ag) => threadFor(dmKey(userId, ag.id), "dm", ag.name, ag.id, ag.color));
   // Team first, then DMs: ones with messages by recency, then the rest alphabetically.
@@ -99,7 +152,7 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
     if (x.lastAt && y.lastAt) return x.lastAt > y.lastAt ? -1 : 1;
     return x.title.localeCompare(y.title);
   });
-  return { threads: [team, ...dms], agents };
+  return { threads: [team, ...dms], agents, receipts: out };
 }
 
 /** Total unread internal messages for the user across every channel they can see (RLS-scoped) —
@@ -107,15 +160,22 @@ export async function getInternalThreads(businessId: string, userId: string): Pr
 export async function getInternalUnread(businessId: string, userId: string): Promise<number> {
   const supabase = await createClient();
   const [readsRes, msgsRes] = await Promise.all([
-    supabase.from("internal_reads").select("channel, last_read_at").eq("business_id", businessId).eq("user_id", userId),
+    supabase.from("internal_reads").select("user_id, channel, last_read_at, last_delivered_at").eq("business_id", businessId).eq("user_id", userId),
     supabase.from("internal_messages").select("channel, created_at").eq("business_id", businessId).neq("author_id", userId).order("created_at", { ascending: false }).limit(500),
   ]);
-  const reads = new Map<string, string>(((readsRes.data ?? []) as { channel: string; last_read_at: string }[]).map((r) => [r.channel, r.last_read_at]));
+  const mine = readsRes.error
+    ? ((await supabase.from("internal_reads").select("user_id, channel, last_read_at").eq("business_id", businessId).eq("user_id", userId)).data ?? []) as InternalReceipt[]
+    : (readsRes.data ?? []) as InternalReceipt[];
+  const reads = new Map<string, string>(mine.filter((r) => r.last_read_at).map((r) => [r.channel, r.last_read_at as string]));
   let n = 0;
+  const lastPer = new Map<string, string>();
   for (const m of (msgsRes.data ?? []) as { channel: string; created_at: string }[]) {
+    if (!lastPer.has(m.channel)) lastPer.set(m.channel, m.created_at); // vienen del más nuevo al más viejo
     const lastRead = reads.get(m.channel);
     if (!lastRead || m.created_at > lastRead) n++;
   }
+  // La barra se refresca desde cualquier pantalla: si la app ya trajo el conteo, el mensaje llegó.
+  await markInternalDelivered(supabase, businessId, userId, lastPer, mine.map((r) => ({ ...r, last_delivered_at: r.last_delivered_at ?? null })));
   return n;
 }
 
