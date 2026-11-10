@@ -5,6 +5,7 @@ import { getAgents } from "@/lib/chat";
 import { getStages, getAreas } from "@/lib/business";
 import type { PriceTier } from "@/lib/types";
 import { orderBreakdown } from "@/lib/orderTotal";
+import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
 
 export interface Automation {
   id: string;
@@ -202,6 +203,9 @@ export interface ReportData {
   wasteCount: number;
   wasteTotal: number;
   wasteList: { code: string; name: string; qty: number; cost: number; reason: string; created_at: string }[];
+  // Facturación (0096): qué pasó con los links de autofactura creados en el periodo y cuántas
+  // facturas se emitieron. Cohorte por fecha de creación de la fila (link o factura).
+  invoices: ReportInvoices;
   // Per-order detail for the report export (names already resolved).
   orders: {
     code: string; contact: string; phone: string; stage: string; area: string; agent: string;
@@ -212,6 +216,24 @@ export interface ReportData {
     created_at: string | null; updated_at: string | null; due_at: string | null;
   }[];
 }
+const ymdLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+export interface ReportInvoices {
+  total: number;          // filas de facturación creadas en el periodo (links + facturas directas)
+  issuedCount: number;    // facturas emitidas (por link o directas), con su total
+  issuedTotal: number;
+  cancelledCount: number; // canceladas (de las creadas en el periodo)
+  cancelledTotal: number;
+  pendingCount: number;   // mandadas a timbrar sin respuesta
+  linksCreated: number;   // links de autofactura generados
+  linksFilled: number;    // ...que el cliente llenó solo (factura emitida desde el link)
+  linksTeam: number;      // ...que terminó emitiendo el equipo desde el pedido
+  linksOpen: number;      // ...vigentes, todavía sin factura
+  linksExpired: number;   // ...vencidos sin factura (por fecha, aunque nadie los haya revisado)
+  linksClosed: number;    // ...cerrados a mano, sustituidos por otro link o pasados a la global
+  linksCancelled: number; // ...facturados y luego cancelados
+}
+
 export async function getReports(businessId: string, range: ReportRange, manualMarginPct = 50, doneFromStageId: string | null = null): Promise<ReportData> {
   const supabase = await createClient();
   const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
@@ -275,7 +297,47 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       .order("created_at", { ascending: false }));
     return error ? [] : (data ?? []);
   };
-  const [orders, { count: resolved }, stages, areas, agents, catalog, payRows, wasteRows] = await Promise.all([
+  // Facturación (0096): sin el plugin, o sin la migración, la tabla no tiene estas columnas y el
+  // bloque sale en ceros. "Llenado por el cliente" es el evento que deja el webhook en el pedido.
+  const fetchInvoices = async (): Promise<ReportInvoices> => {
+    const zero: ReportInvoices = { total: 0, issuedCount: 0, issuedTotal: 0, cancelledCount: 0, cancelledTotal: 0, pendingCount: 0, linksCreated: 0, linksFilled: 0, linksTeam: 0, linksOpen: 0, linksExpired: 0, linksClosed: 0, linksCancelled: 0 };
+    const { data, error } = await fetchAll(() => supabase.from("invoices")
+      .select("id, order_id, status, total, link_code, link_expires, created_at")
+      .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
+      .order("created_at", { ascending: false }));
+    if (error || !data.length) return zero;
+    const links = data.filter((r) => r.link_code);
+    const filled = new Set<string>();
+    if (links.length) {
+      const { data: ev } = await supabase.from("events").select("parent_id")
+        .eq("business_id", businessId).eq("parent_type", "order").like("text", `${LINK_INVOICED_EVENT}%`)
+        .in("parent_id", [...new Set(links.map((r) => r.order_id as string))]);
+      (ev ?? []).forEach((e) => filled.add(e.parent_id as string));
+    }
+    const today = ymdLocal(new Date());
+    const sum = (rows: Record<string, unknown>[]) => Math.round(rows.reduce((a, r) => a + Number(r.total ?? 0), 0) * 100) / 100;
+    const issued = data.filter((r) => r.status === "issued");
+    const cancelled = data.filter((r) => r.status === "cancelada");
+    const linkIssued = links.filter((r) => r.status === "issued");
+    const linkFilled = linkIssued.filter((r) => filled.has(r.order_id as string)).length;
+    const open = links.filter((r) => r.status === "link_enviado" && (!r.link_expires || (r.link_expires as string) >= today));
+    const expired = links.filter((r) => r.status === "vencido" || (r.status === "link_enviado" && r.link_expires && (r.link_expires as string) < today));
+    return {
+      total: data.length,
+      issuedCount: issued.length, issuedTotal: sum(issued),
+      cancelledCount: cancelled.length, cancelledTotal: sum(cancelled),
+      pendingCount: data.filter((r) => r.status === "pending").length,
+      linksCreated: links.length,
+      linksFilled: linkFilled,
+      linksTeam: linkIssued.length - linkFilled,
+      linksOpen: open.length,
+      linksExpired: expired.length,
+      linksClosed: links.filter((r) => r.status === "cerrado" || r.status === "reemplazado" || r.status === "global").length,
+      linksCancelled: links.filter((r) => r.status === "cancelada").length,
+    };
+  };
+
+  const [orders, { count: resolved }, stages, areas, agents, catalog, payRows, wasteRows, invoices] = await Promise.all([
     fetchOrders(),
     supabase.from("conversations").select("id", { count: "exact", head: true })
       .eq("business_id", businessId).eq("status", "resolved")
@@ -286,6 +348,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     getProducts(businessId),
     fetchPayments(),
     fetchWaste(),
+    fetchInvoices(),
   ]);
 
   // Profit per sold item: items whose name matches a catalog product with a cost use
@@ -460,6 +523,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     wasteCount,
     wasteTotal: Math.round(wasteTotal * 100) / 100,
     wasteList,
+    invoices,
     byAgentDiscounts,
     orders: rows.map((o) => ({
       code: (o.code as string) ?? "",

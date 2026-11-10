@@ -214,6 +214,21 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           [es ? "Total" : "Total", null, null, data.wasteTotal, null, null],
         ] as CellValue[][],
       }]),
+      ...(personal || data.invoices.total === 0 ? [] : [{
+        name: es ? "Facturación" : "Invoicing",
+        rows: [
+          [es ? "Concepto" : "Item", es ? "Cantidad" : "Count", es ? "Monto" : "Amount"],
+          [es ? "Links generados" : "Links generated", data.invoices.linksCreated, null],
+          [es ? "Links llenados por el cliente" : "Links filled by the customer", data.invoices.linksFilled, null],
+          [es ? "Links emitidos por el equipo" : "Links issued by the team", data.invoices.linksTeam, null],
+          [es ? "Links vigentes" : "Links still open", data.invoices.linksOpen, null],
+          [es ? "Links vencidos" : "Links expired", data.invoices.linksExpired, null],
+          [es ? "Links cerrados" : "Links closed", data.invoices.linksClosed, null],
+          [es ? "Links cancelados" : "Links cancelled", data.invoices.linksCancelled, null],
+          [es ? "Facturas emitidas" : "Invoices issued", data.invoices.issuedCount, data.invoices.issuedTotal],
+          [es ? "Facturas canceladas" : "Invoices cancelled", data.invoices.cancelledCount, data.invoices.cancelledTotal],
+        ] as CellValue[][],
+      }]),
       { name: objs, rows: detail },
       { name: itemLabel, rows: itemsSheet },
     ]);
@@ -326,6 +341,55 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
             </div>
           </section>
         )}
+
+        {/* Facturación (0096): qué pasó con los links de autofactura del periodo (los llenó el cliente,
+            los emitió el equipo, vencieron, se cerraron) y cuántas facturas salieron y se cancelaron. */}
+        {!personal && data.invoices.total > 0 && (() => {
+          const inv = data.invoices;
+          const es = lang === "es";
+          return (
+            <section className="ws-block" style={{ marginBottom: 20 }}>
+              <div className="ws-block-head">
+                <Icon name="file" size={16} />
+                <h4>{es ? "Facturación" : "Invoicing"}</h4>
+                <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                  {es ? "links y facturas creados en el periodo" : "links and invoices created in the period"}
+                </span>
+              </div>
+              <div className="ws-block-body col gap-3">
+                <div className="rep-grid stats" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+                  <Stat icon="external" tone="brand" label={es ? "Links generados" : "Links generated"} value={inv.linksCreated} />
+                  <Stat icon="check" tone="green" valueColor="var(--green)" label={es ? "Llenados por el cliente" : "Filled by the customer"} value={inv.linksFilled} />
+                  <Stat icon="clock" tone={inv.linksExpired > 0 ? "amber" : "slate"} valueColor={inv.linksExpired > 0 ? "var(--amber)" : undefined} label={es ? "Vencidos sin factura" : "Expired without invoice"} value={inv.linksExpired} />
+                  <Stat icon="ban" tone={inv.cancelledCount > 0 ? "red" : "slate"} valueColor={inv.cancelledCount > 0 ? "var(--red)" : undefined} label={es ? "Facturas canceladas" : "Cancelled invoices"} value={inv.cancelledCount} />
+                </div>
+                <div className="rep-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <BarList title={es ? "Qué pasó con los links" : "What happened to the links"} rows={[
+                    { name: es ? "Llenó el cliente" : "Customer filled it", color: "green", count: inv.linksFilled },
+                    { name: es ? "Emitió el equipo" : "Team issued it", color: "teal", count: inv.linksTeam },
+                    { name: es ? "Vigentes" : "Still open", color: "blue", count: inv.linksOpen },
+                    { name: es ? "Vencidos" : "Expired", color: "amber", count: inv.linksExpired },
+                    { name: es ? "Cerrados" : "Closed", color: "slate", count: inv.linksClosed },
+                    { name: es ? "Cancelados" : "Cancelled", color: "red", count: inv.linksCancelled },
+                  ].filter((r) => r.count > 0)} />
+                  <section className="ws-block">
+                    <div className="ws-block-head"><Icon name="file" size={16} /><h4>{es ? "Facturas" : "Invoices"}</h4></div>
+                    <div className="ws-block-body col gap-3">
+                      <Stat icon="check" tone="green" label={es ? "Emitidas" : "Issued"} value={<>{inv.issuedCount} <span className="t-sm muted" style={{ fontWeight: 600 }}>· {money(Math.round(inv.issuedTotal))}</span></>} />
+                      <Stat icon="ban" tone={inv.cancelledCount > 0 ? "red" : "slate"} valueColor={inv.cancelledCount > 0 ? "var(--red)" : undefined} label={es ? "Canceladas" : "Cancelled"} value={<>{inv.cancelledCount} <span className="t-sm muted" style={{ fontWeight: 600 }}>· {money(Math.round(inv.cancelledTotal))}</span></>} />
+                      {inv.pendingCount > 0 && <Stat icon="clock" tone="amber" valueColor="var(--amber)" label={es ? "Sin respuesta del timbrado" : "Awaiting stamping"} value={inv.pendingCount} />}
+                      <div className="t-xs muted">
+                        {es
+                          ? `${inv.linksCreated ? Math.round((inv.linksFilled / inv.linksCreated) * 100) : 0}% de los links los llenó el cliente sin que nadie del equipo interviniera.`
+                          : `${inv.linksCreated ? Math.round((inv.linksFilled / inv.linksCreated) * 100) : 0}% of the links were filled by the customer with no one from the team involved.`}
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* Mermas (0074): costo real, no venta perdida — ya se restó de la utilidad estimada.
             Lista de detalle (no solo el agregado) para poder revisar/auditar cada registro. */}
