@@ -101,6 +101,8 @@ export interface FxConcept {
   clave?: string; unidad?: string; descuento?: number; sku?: string;
   /** IVA fijado del concepto (cantidad 1) para que sume un total exacto con IVA incluido. */
   iva_importe?: number;
+  /** Retenciones como fracción de la base: ISR (0.10, 0.0125) e IVA (0.106667, 0.04). */
+  ret_isr?: number; ret_iva?: number;
 }
 
 /* ---------- CFDI ---------- */

@@ -5,6 +5,7 @@ import { previewInvoice, type InvoicePreview } from "@/app/(app)/invoicing/actio
 import type { InvoiceSummary, SatOverrides } from "@/lib/invoiceLines";
 import type { GroupChoice } from "@/lib/facturacionOps";
 import type { InvoiceKind, KindChoice } from "@/lib/invoiceKinds";
+import { RETENTIONS } from "@/lib/retentions";
 
 /** Lo elegido sobre agrupar; `null` = lo que el negocio tenga por defecto. */
 export type GroupState = { on: boolean; productId: string | null } | null;
@@ -39,6 +40,9 @@ export function useInvoicePreview(orderId: string, choice?: KindChoice | null) {
   // Agrupar todo en un concepto: lo que se elija aquí; null = lo que el negocio tenga por defecto.
   const [group, setGroupState] = useState<GroupState>(null);
   const [saveDefault, setSaveDefault] = useState(false);
+  // Retenciones de ISR/IVA: lo elegido aquí; null = las del negocio por defecto.
+  const [retention, setRetention] = useState<string | null>(null);
+  const [saveRetention, setSaveRetention] = useState(false);
   const seq = useRef(0);
   // El tipo de factura y el monto de un anticipo como dependencias planas: un objeto nuevo con lo
   // mismo adentro no vuelve a pedir el resumen.
@@ -47,14 +51,14 @@ export function useInvoicePreview(orderId: string, choice?: KindChoice | null) {
   useEffect(() => {
     const id = ++seq.current; // una respuesta vieja no pisa a la de lo último que se escribió
     const t = setTimeout(() => {
-      previewInvoice(orderId, sat, group as GroupChoice, { kind, amount }).then((p) => {
+      previewInvoice(orderId, sat, group as GroupChoice, { kind, amount }, retention).then((p) => {
         if (seq.current !== id) return;
         setPreview(p);
         setMissing((m) => m ?? p.summary.missing);
       }).catch(() => {});
     }, Object.keys(sat).length || kind === "anticipo" ? 350 : 0);
     return () => clearTimeout(t);
-  }, [orderId, sat, group, kind, amount]);
+  }, [orderId, sat, group, kind, amount, retention]);
   const patch = (key: string, v: { code?: string; unit?: string }) => setSat((s) => ({ ...s, [key]: { ...s[key], ...v } }));
   // Al cambiar cómo se agrupa cambian los conceptos: lo que falte del SAT se vuelve a calcular.
   const setGroup = (g: GroupState) => { setGroupState(g); setMissing(null); setSat({}); };
@@ -62,7 +66,47 @@ export function useInvoicePreview(orderId: string, choice?: KindChoice | null) {
   useEffect(() => { setMissing(null); }, [kind]);
   /** Lo que se manda al servidor: la elección en pantalla (o la de por defecto, ya resuelta). */
   const groupChoice: { on: boolean; productId: string | null } | null = group ?? (preview ? { on: preview.group.on, productId: preview.group.productId } : null);
-  return { preview, missing: missing ?? [], sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault };
+  /** Las retenciones que se mandan: lo elegido, o lo que el negocio tiene por defecto (ya resuelto). */
+  const retentionId = retention ?? preview?.retention.defaultId ?? "";
+  return { preview, missing: missing ?? [], sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault, retention: retentionId, setRetention, saveRetention, setSaveRetention };
+}
+
+/** Retenciones de ISR e IVA de esta factura: las mismas opciones que Facturación. Dependen de quién
+ *  recibe (persona moral, RESICO, fletes), por eso se eligen por factura y se puede dejar la
+ *  elección como la del negocio por defecto. */
+export function RetentionPicker({ value, onChange, preview, lang, save, onSave }: {
+  value: string;
+  onChange: (id: string) => void;
+  preview: InvoicePreview | null;
+  lang: "es" | "en";
+  save: boolean;
+  onSave: (v: boolean) => void;
+}) {
+  const es = lang === "es";
+  const defaultId = preview?.retention.defaultId ?? "";
+  const differs = value !== defaultId;
+  const retained = preview?.ok ? preview.summary.retained : 0;
+  return (
+    <div className="col gap-1" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+      <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <label className="lbl" style={{ margin: 0 }}>{es ? "Retenciones" : "Withholding"}</label>
+        <select className="select" style={{ minWidth: 220, maxWidth: "100%", flex: 1 }} value={value} onChange={(e) => onChange(e.target.value)} data-testid="retention">
+          {RETENTIONS.map((r) => <option key={r.id} value={r.id}>{es ? r.es : r.en}{r.id === defaultId && r.id ? (es ? " · por defecto" : " · default") : ""}</option>)}
+        </select>
+      </div>
+      <div className="t-xs muted">
+        {value
+          ? (es ? `Se retienen ${money(retained)} sobre la base de los conceptos; el IVA retenido solo donde se cobra IVA. El cliente paga el total ya con la retención descontada.` : `${money(retained)} is withheld on the lines' base; VAT is withheld only where VAT is charged. The customer pays the total net of withholding.`)
+          : (es ? "Para servicios a una persona moral (honorarios, arrendamiento, RESICO) o fletes, elige la retención que aplica." : "For services to a company (fees, rent, RESICO) or freight, pick the withholding that applies.")}
+      </div>
+      {differs && (
+        <label className="row gap-2" style={{ alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={save} onChange={(e) => onSave(e.target.checked)} />
+          <span className="t-xs">{value ? (es ? "Usar estas retenciones por defecto en las próximas facturas de este negocio" : "Use this withholding by default on this business's next invoices") : (es ? "Dejar de retener por defecto en este negocio" : "Stop withholding by default on this business")}</span>
+        </label>
+      )}
+    </div>
+  );
 }
 
 /** Se pidió agrupar pero no se ha elegido el concepto: así no se manda. */
@@ -212,6 +256,7 @@ export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search,
                 <span style={l.satUnit ? undefined : { color: "var(--amber)" }}>{l.satUnit ?? (es ? "sin unidad" : "no unit")}</span>
                 {" · IVA "}{pct(l.iva)}
                 {l.discount > 0 ? ` · ${es ? "descuento" : "discount"} ${money(l.discount)}` : ""}
+                {l.retained > 0 ? ` · ${es ? "retenido" : "withheld"} ${money(l.retained)}` : ""}
               </span>
             </div>
             <span className="mono t-sm" style={{ ...num, width: 44 }}>{l.qty}</span>
@@ -223,6 +268,7 @@ export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search,
           <div className="row t-sm"><span className="grow muted">{es ? "Subtotal (sin impuestos)" : "Subtotal (before tax)"}</span><span className="mono">{money(s.subtotal)}</span></div>
           {s.discount > 0 && <div className="row t-sm"><span className="grow muted">{es ? "Descuento" : "Discount"}</span><span className="mono">−{money(s.discount)}</span></div>}
           <div className="row t-sm"><span className="grow muted">IVA</span><span className="mono">{money(s.tax)}</span></div>
+          {s.retained > 0 && <div className="row t-sm"><span className="grow muted">{es ? "Retenciones (ISR / IVA)" : "Withholding (ISR / VAT)"}</span><span className="mono">−{money(s.retained)}</span></div>}
           <div className="row" style={{ paddingTop: 4, borderTop: "1px solid var(--border)" }}>
             <span className="grow t-sm" style={{ fontWeight: 700 }}>{es ? "Total de la factura" : "Invoice total"}</span>
             <span className="mono" style={{ fontWeight: 800 }}>{money(preview.total)}</span>

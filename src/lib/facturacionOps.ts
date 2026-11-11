@@ -10,6 +10,7 @@ import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { mediaPath } from "@/lib/mediaSign";
 import { pushCustomerInvoiced } from "@/lib/push";
 import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
+import { isRetentionId } from "@/lib/retentions";
 import { planInvoice, productKey, toNetPrice, fromNetPrice, cleanSat, type InvoicePlan, type InvoiceLine, type SatOverrides } from "@/lib/invoiceLines";
 import {
   PLUGIN_ID, fxUrl, fetchCfdiPdf, listProducts, upsertProduct, upsertProducts, deleteRemoteProduct, closeLink, getLink,
@@ -30,6 +31,8 @@ type DB = SupabaseClient<any, any, any>;
 export type SyncMode = "off" | "push" | "pull" | "ambos";
 export interface FxConfig {
   apiKey: string; emisor: string; marca: string; linkDays: number; sync: SyncMode; autoWhatsapp: boolean; webhookSecret: string;
+  /** Retenciones por defecto al facturar (id del preset de `retentions.ts`; "" = ninguna). */
+  retention: string;
 }
 
 /** Configuración ACTIVA del plugin, con secretos descifrados. null si no está instalado o le falta
@@ -44,7 +47,19 @@ export async function loadFxConfig(businessId: string): Promise<FxConfig | null>
     apiKey, emisor: (c.emisor || "").trim().toUpperCase(), marca: (c.marca || "").trim(),
     linkDays: days >= 1 && days <= 365 ? days : 30, sync,
     autoWhatsapp: c.auto_whatsapp === "true", webhookSecret: c._webhook_secret || "",
+    retention: isRetentionId(c.retenciones) ? c.retenciones : "",
   };
+}
+
+/** Guarda en la configuración del plugin las retenciones por defecto. Solo quien puede editar la
+ *  configuración (RLS) lo cambia; si no puede, no pasa nada y se devuelve `false`. */
+export async function saveRetentionDefault(db: DB, businessId: string, id: string): Promise<boolean> {
+  if (!isRetentionId(id)) return false;
+  const { data } = await db.from("business_plugins").select("config").eq("business_id", businessId).eq("plugin_id", PLUGIN_ID).maybeSingle();
+  if (!data) return false;
+  const cfg = { ...((data.config as Record<string, unknown>) ?? {}), retenciones: id };
+  const { count, error } = await db.from("business_plugins").update({ config: cfg, updated_at: new Date().toISOString() }, { count: "exact" }).eq("business_id", businessId).eq("plugin_id", PLUGIN_ID);
+  return !error && !!count;
 }
 
 /* ---------- webhook ---------- */
@@ -230,6 +245,8 @@ export const toConcepts = (lines: InvoiceLine[]): FxConcept[] => lines.map((l) =
   descripcion: l.description, cantidad: l.qty, precio: l.price, iva: l.iva,
   ...(l.discount > 0 ? { descuento: l.discount } : {}),
   ...(l.ivaTotal !== undefined && l.qty === 1 ? { iva_importe: l.ivaTotal } : {}),
+  ...(l.retIsr ? { ret_isr: l.retIsr } : {}),
+  ...(l.retIva && l.iva > 0 ? { ret_iva: l.retIva } : {}),
   ...(l.satCode && SAT_CODE.test(l.satCode) ? { clave: l.satCode } : {}),
   ...(l.satUnit ? { unidad: l.satUnit } : {}),
   ...(l.sku ? { sku: l.sku } : {}),

@@ -32,6 +32,10 @@ export interface InvoiceLine {
    *  IVA incluido: un anticipo de $500 no puede salir de $499.99. Siempre a un centavo de
    *  base × tasa, que es lo que el SAT tolera. Viaja a Facturación como `iva_importe`. */
   ivaTotal?: number;
+  /** Retenciones como fracción de la base (0.10 de ISR, 0.106667 de IVA). El IVA retenido solo
+   *  aplica donde se cobra IVA. Viajan a Facturación como `ret_isr` y `ret_iva`. */
+  retIsr?: number;
+  retIva?: number;
   satCode?: string;
   satUnit?: string;
   sku?: string;
@@ -80,6 +84,8 @@ export interface InvoicePlan {
   /** Los renglones del pedido se facturaron como UN concepto (el del catálogo que eligió el
    *  negocio): cuántos renglones se juntaron. */
   grouped?: { count: number };
+  /** Retenciones aplicadas (id del preset de `retentions.ts`); sin él, ninguna. */
+  retention?: string;
 }
 
 export interface PlanInput {
@@ -106,7 +112,9 @@ export function lineAmounts(l: InvoiceLine) {
   const discount = r2(Math.min(l.discount || 0, sub));
   const base = r2(sub - discount);
   const tax = l.ivaTotal !== undefined && l.qty === 1 ? r2(l.ivaTotal) : r2(base * l.iva);
-  return { sub, discount, base, tax, total: r2(base + tax) };
+  const retIsr = l.retIsr ? r2(base * l.retIsr) : 0;
+  const retIva = l.retIva && l.iva > 0 ? r2(base * l.retIva) : 0;
+  return { sub, discount, base, tax, retIsr, retIva, total: r2(base + tax - retIsr - retIva) };
 }
 
 /**
@@ -241,23 +249,23 @@ export interface SummaryLine {
   key: string; description: string; qty: number;
   /** Precio unitario sin impuestos. */
   price: number;
-  /** Importe sin impuestos (cantidad × precio), descuento, impuesto y total del renglón. */
-  amount: number; discount: number; tax: number; total: number;
+  /** Importe sin impuestos (cantidad × precio), descuento, impuesto, retenciones y total del renglón. */
+  amount: number; discount: number; tax: number; retained: number; total: number;
   iva: number; satCode: string | null; satUnit: string | null;
   /** El renglón es un producto del catálogo: lo que se capture aquí se le puede guardar. */
   inCatalog: boolean;
 }
 export interface InvoiceSummary {
   lines: SummaryLine[];
-  subtotal: number; discount: number; tax: number; total: number;
+  subtotal: number; discount: number; tax: number; retained: number; total: number;
   /** Renglones (uno por nombre) a los que les falta clave o unidad del SAT. */
   missing: { key: string; description: string; code: boolean; unit: boolean; inCatalog: boolean }[];
 }
 
 /** El plan en números para enseñar antes de mandar el link o de timbrar: conceptos, subtotal,
- *  descuento, impuestos y total, y a qué renglones les faltan datos del SAT. */
+ *  descuento, impuestos, retenciones y total, y a qué renglones les faltan datos del SAT. */
 export function summarize(plan: InvoicePlan): InvoiceSummary {
-  if (!plan.ok) return { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
+  if (!plan.ok) return { lines: [], subtotal: 0, discount: 0, tax: 0, retained: 0, total: 0, missing: [] };
   const first = plan.lines[0];
   let lines: SummaryLine[];
   if (plan.single) {
@@ -265,7 +273,7 @@ export function summarize(plan: InvoicePlan): InvoiceSummary {
     const amount = r2(plan.single.total / (1 + first.iva));
     lines = [{
       key: first.key ?? productKey(first.description), description: plan.single.description, qty: 1, price: amount,
-      amount, discount: 0, tax: r2(plan.single.total - amount), total: plan.single.total,
+      amount, discount: 0, tax: r2(plan.single.total - amount), retained: 0, total: plan.single.total,
       iva: first.iva, satCode: null, satUnit: null, inCatalog: !!first.sku,
     }];
   } else {
@@ -273,7 +281,7 @@ export function summarize(plan: InvoicePlan): InvoiceSummary {
       const a = lineAmounts(l);
       return {
         key: l.key ?? productKey(l.description), description: l.description, qty: l.qty, price: l.price,
-        amount: a.sub, discount: a.discount, tax: a.tax, total: a.total,
+        amount: a.sub, discount: a.discount, tax: a.tax, retained: r2(a.retIsr + a.retIva), total: a.total,
         iva: l.iva, satCode: l.satCode ?? null, satUnit: l.satUnit ?? null, inCatalog: !!l.sku,
       };
     });
@@ -290,6 +298,7 @@ export function summarize(plan: InvoicePlan): InvoiceSummary {
     subtotal: r2(lines.reduce((s, l) => s + l.amount, 0)),
     discount: r2(lines.reduce((s, l) => s + l.discount, 0)),
     tax: r2(lines.reduce((s, l) => s + l.tax, 0)),
+    retained: r2(lines.reduce((s, l) => s + l.retained, 0)),
     total: plan.total,
     missing,
   };

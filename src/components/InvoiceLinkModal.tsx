@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { sendInvoiceLink, type LinkResult } from "@/app/(app)/invoicing/actions";
-import { InvoiceSummaryView, InvoiceKindPicker, useInvoicePreview, satIncomplete, groupIncomplete, suggestedAdvance } from "@/components/InvoiceSummary";
+import { InvoiceSummaryView, InvoiceKindPicker, RetentionPicker, useInvoicePreview, satIncomplete, groupIncomplete, suggestedAdvance } from "@/components/InvoiceSummary";
 import type { KindChoice } from "@/lib/invoiceKinds";
 
 // Antes de mandar el link para que el cliente se facture: qué va a decir esa factura (conceptos,
@@ -33,7 +33,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   const [choice, setChoice] = useState<KindChoice>({ kind: "total" });
   const touched = useRef(false);
   const pick = (c: KindChoice) => { touched.current = true; setChoice(c); };
-  const { preview, missing, sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault } = useInvoicePreview(orderId, choice);
+  const { preview, missing, sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault, retention, setRetention, saveRetention, setSaveRetention } = useInvoicePreview(orderId, choice);
   // Con anticipos ya facturados, el link solo puede ser de otro anticipo.
   useEffect(() => {
     if (touched.current || !preview) return;
@@ -42,7 +42,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Algo cambió aquí (datos del SAT, cómo se agrupa, qué factura es): el link se va a poner al día, no solo a reenviar.
-  const captured = Object.values(sat).some((v) => !!v.code || !!v.unit) || group !== null || touched.current;
+  const captured = Object.values(sat).some((v) => !!v.code || !!v.unit) || group !== null || touched.current || (!!preview && retention !== preview.retention.defaultId);
   // Hasta cuándo se puede facturar con el link. Empieza con los días del plugin; se puede cambiar
   // para este link. Con uno ya abierto se parte de su fecha actual.
   const [until, setUntil] = useState("");
@@ -57,7 +57,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de que la factura lleva IVA de más está a la vista en el resumen: mandar es aceptarlo.
-    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat, until: until || null, group: groupChoice, saveGroupAsDefault: saveDefault, choice });
+    const r = await sendInvoiceLink(orderId, { confirmTax: true, sat, until: until || null, group: groupChoice, saveGroupAsDefault: saveDefault, choice, retention, saveRetentionAsDefault: saveRetention });
     setBusy(false);
     if (!r.ok) { setErr(errText(r.code, r.error)); return; }
     onDone(r);
@@ -80,6 +80,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
               : (es ? "El cliente abre el link, captura su RFC y recibe su factura. Esto es lo que dirá:" : "The customer opens the link, enters their tax ID and gets the invoice. This is what it will say:")}
           </div>
           <InvoiceKindPicker choice={choice} onChange={pick} preview={preview} lang={lang} allow={["total", "ppd", "anticipo"]} />
+          <RetentionPicker value={retention} onChange={setRetention} preview={preview} lang={lang} save={saveRetention} onSave={setSaveRetention} />
           {!!preview && preview.anticipos.count > 0 && (
             <div className="t-xs muted">{es ? "El finiquito (el resto del pedido, relacionando los anticipos) se emite desde «Emitir factura», no por link." : "The final invoice (the rest of the order, relating the advances) is issued from \"Issue invoice\", not by link."}</div>
           )}

@@ -11,10 +11,11 @@ import { signMediaUrl } from "@/lib/mediaSign";
 import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLink, updateLinkExpiry, upsertClient, fxUrl, createPayment, fetchCfdiPdf } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
-  syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, saveGroupDefault, type FxConfig, type GroupChoice, type GroupInfo,
+  syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, saveGroupDefault, saveRetentionDefault, type FxConfig, type GroupChoice, type GroupInfo,
 } from "@/lib/facturacionOps";
 import { summarize, cleanSat, type InvoicePlan, type InvoiceMode, type InvoiceSummary, type SatOverrides } from "@/lib/invoiceLines";
 import { closesOrder, anticipoPlan, finiquitoPlan, anticipoNet, RELACION_ANTICIPO, type InvoiceKind, type KindChoice } from "@/lib/invoiceKinds";
+import { withRetention, isRetentionId } from "@/lib/retentions";
 
 type SB = Awaited<ReturnType<typeof createClient>>;
 
@@ -140,6 +141,8 @@ export interface InvoicePreview {
   paid: number;
   /** El pedido ya tiene una factura que lo cierra. */
   closed: boolean;
+  /** Retenciones de esta vista previa (id del preset) y las que el negocio tiene por defecto. */
+  retention: { id: string; defaultId: string };
 }
 
 /**
@@ -148,24 +151,29 @@ export interface InvoicePreview {
  * capturó en la ventana para esos renglones: el resumen se recalcula con ello. `choice` es el tipo
  * de factura (total, PPD, anticipo por un monto, finiquito); sin él, por el total.
  */
-export async function previewInvoice(orderId: string, sat?: SatOverrides | null, group?: GroupChoice, choice?: KindChoice | null): Promise<InvoicePreview> {
+export async function previewInvoice(orderId: string, sat?: SatOverrides | null, group?: GroupChoice, choice?: KindChoice | null, retention?: string | null): Promise<InvoicePreview> {
   const supabase = await createClient();
-  const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
+  const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, retained: 0, total: 0, missing: [] };
   const noGroup: GroupInfo = { on: false, productId: null, defaultOn: false, defaultProductId: null, options: [] };
   const empty: InvoicePreview = {
     ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null, group: noGroup, groupedCount: 0,
-    kind: choice?.kind ?? "total", anticipos: { count: 0, total: 0 }, paid: 0, closed: false,
+    kind: choice?.kind ?? "total", anticipos: { count: 0, total: 0 }, paid: 0, closed: false, retention: { id: "", defaultId: "" },
   };
   const ctx = await planOrderInvoice(supabase, orderId, sat, group);
   if (!ctx) return { ...empty, error: "order" };
   const [provider, rows, paid] = await Promise.all([activeProvider(supabase, ctx.order.business_id), orderInvoices(supabase, orderId), orderPaid(supabase, orderId)]);
   const anticipos = anticiposOf(rows);
-  const { kind, plan, error: kindErr } = planForKind(ctx.plan, ctx.order.code, choice, anticipos);
+  const { kind, plan: kindPlan, error: kindErr } = planForKind(ctx.plan, ctx.order.code, choice, anticipos);
   const cfg = provider === FX ? await loadFxConfig(ctx.order.business_id) : null;
+  // Retenciones: las pedidas, o las que el negocio tiene por defecto. Solo con Facturación.
+  const defaultRet = cfg?.retention ?? "";
+  const retId = cfg ? (isRetentionId(retention) ? retention : defaultRet) : "";
+  const plan = withRetention(kindPlan, retId);
   const base = {
     provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id,
     linkUntil: cfg ? daysFromNow(cfg.linkDays) : null, group: ctx.group, groupedCount: plan.grouped?.count ?? 0,
     kind, anticipos: { count: anticipos.length, total: r2(anticipos.reduce((s, r) => s + (Number(r.total) || 0), 0)) }, paid, closed: orderClosed(rows),
+    retention: { id: retId, defaultId: defaultRet },
   };
   if (kindErr) return { ...base, ok: false, error: kindErr };
   if (!plan.ok) return { ...base, ok: false, error: planError(plan) };
@@ -280,6 +288,7 @@ export interface IssueResult {
 export async function issueInvoice(
   orderId: string, fiscal: FiscalData, paymentForm: string, saveProfile: boolean, sendEmail: boolean, confirmTax = false, retried = false,
   sat: SatOverrides | null = null, group: GroupChoice = undefined, saveGroupAsDefault = false, choice: KindChoice | null = null,
+  retention: string | null = null, saveRetentionAsDefault = false,
 ): Promise<IssueResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
@@ -295,14 +304,19 @@ export async function issueInvoice(
   // botón, pero dos pestañas abiertas (o dos asesores) pueden llegar aquí a la vez.
   if (orderClosed(rows)) return { ok: false, error: "already-issued" };
   const anticipos = anticiposOf(rows);
-  const { kind, plan, error: kindErr } = planForKind(ctx.plan, order.code, choice, anticipos);
+  const { kind, plan: kindPlan, error: kindErr } = planForKind(ctx.plan, order.code, choice, anticipos);
   if (kindErr) return { ok: false, error: kindErr };
   if (kind !== "total" && provider !== FX) return { ok: false, error: "kind-unsupported" };
+  // Retenciones (solo con Facturación): las elegidas en la ventana, o las del negocio por defecto.
+  const fxCfg = provider === FX ? await loadFxConfig(businessId) : null;
+  const retId = fxCfg ? (isRetentionId(retention) ? retention : fxCfg.retention) : "";
+  const plan = withRetention(kindPlan, retId);
   if (!plan.ok) return { ok: false, error: planError(plan) };
   if (plan.addsTax && !confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
   // La clave y la unidad que se capturaron para esta factura se le quedan al producto del catálogo.
   if (!retried) { await saveSatToCatalog(supabase, ctx.catalog, sat); await saveSatToOrder(supabase, orderId, sat); }
   if (saveGroupAsDefault && group) await saveGroupDefault(supabase, businessId, group);
+  if (saveRetentionAsDefault && fxCfg && isRetentionId(retention)) await saveRetentionDefault(supabase, businessId, retention);
 
   if (saveProfile && order.contact_id) {
     const row = { business_id: businessId, contact_id: order.contact_id, legal_name: fiscal.legal_name, rfc: fiscal.rfc.toUpperCase(), tax_system: fiscal.tax_system, zip: fiscal.zip, email: fiscal.email || null, cfdi_use: fiscal.cfdi_use, updated_at: new Date().toISOString() };
@@ -404,7 +418,7 @@ export async function issueInvoice(
         // El link quedó cerrado, vencido o en la global: ya no estorba, así que se timbra sin él en
         // este mismo intento. Solo una vez: si el estado no se pudo leer o sigue apareciendo vivo,
         // se le dice al asesor en vez de dar vueltas.
-        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true, sat, group, false, choice);
+        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true, sat, group, false, choice, retention, false);
         return { ok: false, code: "link-changed", error: r.error };
       }
       // 4xx: Facturación rechazó la petición y no timbró nada. La fila `pending` sobra, y el link
@@ -508,7 +522,7 @@ export interface LinkResult {
  * enfrente aún no sabe cambiar links; en ese caso el anterior se cierra antes, porque un link
  * abierto de más permitiría facturar dos veces y metería la venta a la factura global.
  */
-export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null; group?: GroupChoice; saveGroupAsDefault?: boolean; choice?: KindChoice | null } = {}): Promise<LinkResult> {
+export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null; group?: GroupChoice; saveGroupAsDefault?: boolean; choice?: KindChoice | null; retention?: string | null; saveRetentionAsDefault?: boolean } = {}): Promise<LinkResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const ctx = await planOrderInvoice(supabase, orderId, opts.sat, opts.group);
@@ -523,14 +537,17 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   // Por el link se factura el total (pagado o a crédito, PPD) o un anticipo: el cliente se factura
   // solo. Un finiquito no, porque relaciona los folios de los anticipos y eso lo arma el pedido.
   const kind: InvoiceKind = opts.choice?.kind === "anticipo" ? "anticipo" : opts.choice?.kind === "ppd" ? "ppd" : "total";
-  const { plan, error: kindErr } = planForKind(ctx.plan, order.code, { kind, amount: opts.choice?.amount }, anticiposOf(rows));
+  const { plan: kindPlan, error: kindErr } = planForKind(ctx.plan, order.code, { kind, amount: opts.choice?.amount }, anticiposOf(rows));
   if (kindErr) return { ok: false, error: kindErr };
+  // Retenciones: las elegidas en la ventana, o las del negocio por defecto. Van en los conceptos del link.
+  const plan = withRetention(kindPlan, isRetentionId(opts.retention) ? opts.retention : cfg.retention);
   if (!plan.ok) return { ok: false, error: planError(plan) };
   if (plan.addsTax && !opts.confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
 
   await saveSatToCatalog(supabase, ctx.catalog, opts.sat);
   await saveSatToOrder(supabase, orderId, opts.sat);
   if (opts.saveGroupAsDefault && opts.group) await saveGroupDefault(supabase, businessId, opts.group);
+  if (opts.saveRetentionAsDefault && isRetentionId(opts.retention)) await saveRetentionDefault(supabase, businessId, opts.retention);
 
   const live = liveLinks(rows);
   // El link del pedido es el más reciente; si quedaron otros de antes de esta regla, se cierran.

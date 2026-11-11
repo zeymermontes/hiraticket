@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { getFiscalProfile, issueInvoice, notifyInvoice } from "@/app/(app)/invoicing/actions";
-import { InvoiceSummaryView, InvoiceKindPicker, useInvoicePreview, satIncomplete, groupIncomplete, suggestedAdvance } from "@/components/InvoiceSummary";
+import { InvoiceSummaryView, InvoiceKindPicker, RetentionPicker, useInvoicePreview, satIncomplete, groupIncomplete, suggestedAdvance } from "@/components/InvoiceSummary";
 import type { FiscalData } from "@/lib/invoicing";
 import type { InvoicingProvider } from "@/lib/plugins";
 import type { InvoiceKind, KindChoice } from "@/lib/invoiceKinds";
@@ -72,7 +72,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   // facturar y el pedido se cobró sin él, la factura sale por más.
   // El mismo resumen que se ve antes de mandar el link: conceptos, impuestos y total, y los datos
   // del SAT que falten se piden aquí.
-  const { preview, missing, sat, patch, setGroup, groupChoice, saveDefault, setSaveDefault } = useInvoicePreview(orderId, fx ? choice : null);
+  const { preview, missing, sat, patch, setGroup, groupChoice, saveDefault, setSaveDefault, retention, setRetention, saveRetention, setSaveRetention } = useInvoicePreview(orderId, fx ? choice : null);
   // Con anticipos ya facturados, lo que toca es el finiquito: la ventana abre ahí.
   useEffect(() => {
     if (!fx || touched.current || !preview) return;
@@ -95,7 +95,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
   const submit = async () => {
     setBusy(true); setErr(null);
     // El aviso de "la factura lleva IVA" está a la vista en este mismo formulario: emitir es aceptarlo.
-    const r = await issueInvoice(orderId, fiscal, kind === "ppd" ? "99" : paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax, false, sat, groupChoice, saveDefault, fx ? { kind, amount: choice.amount } : null);
+    const r = await issueInvoice(orderId, fiscal, kind === "ppd" ? "99" : paymentForm, saveProfile, sendEmail && !!fiscal.email?.trim(), !!preview?.addsTax, false, sat, groupChoice, saveDefault, fx ? { kind, amount: choice.amount } : null, fx ? retention : null, fx && saveRetention);
     setBusy(false);
     if (!r.ok) {
       setErr(r.code === "confirm-tax" ? (es ? `La factura saldrá por ${money(r.total ?? 0)} (se suma el IVA). Vuelve a pulsar Emitir para confirmar.` : `The invoice will be for ${money(r.total ?? 0)} (tax added). Press Issue again to confirm.`)
@@ -147,6 +147,7 @@ export function InvoiceModal({ orderId, contactId, total, lang, provider = null,
               {!loaded ? <span className="t-sm muted">…</span> : (
                 <>
                   {fx && <InvoiceKindPicker choice={choice} onChange={pick} preview={preview} lang={lang} allow={ALL_KINDS} />}
+                  {fx && <RetentionPicker value={retention} onChange={setRetention} preview={preview} lang={lang} save={saveRetention} onSave={setSaveRetention} />}
                   {hadProfile && <div className="t-xs" style={{ color: "var(--green)", fontWeight: 600 }}>✓ {lang === "es" ? "Datos fiscales guardados del cliente" : "Saved fiscal data loaded"}</div>}
                   <div className="col gap-1">
                     <label className="lbl" style={{ margin: 0 }}>Razón social (sin régimen societario)</label>
