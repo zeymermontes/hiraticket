@@ -153,10 +153,12 @@ export interface FxLink {
   /** `cerrado`: el negocio lo cerró sin factura; no se puede autofacturar ni entra a la global. */
   vence: string; estatus: "abierto" | "facturado" | "vencido" | "global" | "cerrado" | string; cfdi_id: string | null; creado: string;
   cfdi?: FxCfdi | null;
+  /** PUE o PPD. Ausente en una Facturación anterior a los links a crédito. */
+  metodo_pago?: string;
 }
 /** Crea un link de autofactura con `conceptos` (desglosado) o con `total` (un solo concepto por
- *  ese monto con IVA incluido, que timbra exacto). */
-export const createLink = (k: string, body: { emisor: string; referencia: string; conceptos?: FxConcept[]; total?: number; descripcion?: string; vence?: string; marca?: string }) =>
+ *  ese monto con IVA incluido, que timbra exacto). `metodo_pago` PPD: la factura sale a crédito. */
+export const createLink = (k: string, body: { emisor: string; referencia: string; conceptos?: FxConcept[]; total?: number; descripcion?: string; vence?: string; marca?: string; metodo_pago?: string }) =>
   call<FxLink>(k, "POST", "/links", body);
 export const getLink = (k: string, codigo: string) => call<FxLink>(k, "GET", `/links/${encodeURIComponent(codigo)}`);
 /** Cierra un link sin factura. Idempotente; 409 si ya se facturó o entró a la factura global. */
@@ -165,7 +167,7 @@ export const closeLink = (k: string, codigo: string) => call<FxLink>(k, "DELETE"
  *  YYYY-MM-DD, de hoy en adelante; una fecha futura vuelve a abrir uno vencido sin factura) y lo
  *  que dice (`conceptos`, o `total` con IVA incluido, y `descripcion`). 409 si ya se facturó, entró
  *  a la global o se cerró; 405 en una Facturación anterior a esta ruta. */
-export const updateLink = (k: string, codigo: string, body: { vence?: string; conceptos?: FxConcept[]; total?: number; descripcion?: string }) =>
+export const updateLink = (k: string, codigo: string, body: { vence?: string; conceptos?: FxConcept[]; total?: number; descripcion?: string; metodo_pago?: string }) =>
   call<FxLink>(k, "PATCH", `/links/${encodeURIComponent(codigo)}`, body);
 export const updateLinkExpiry = (k: string, codigo: string, vence: string) => updateLink(k, codigo, { vence });
 

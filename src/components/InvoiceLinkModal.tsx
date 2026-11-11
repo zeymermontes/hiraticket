@@ -9,9 +9,10 @@ import type { KindChoice } from "@/lib/invoiceKinds";
 // impuestos y total) y, si a algún concepto le faltan la clave o la unidad del SAT, se piden aquí.
 // El link se crea con lo que se ve en esta ventana.
 //
-// Por el link se factura el total del pedido o un anticipo por un monto. El finiquito y la PPD se
-// emiten desde «Emitir factura»: uno relaciona folios y la otra recibe complementos de pago, y
-// nada de eso lo puede hacer el cliente desde la liga.
+// Por el link se factura el total del pedido (pagado o a crédito, PPD) o un anticipo por un monto.
+// El finiquito se emite desde «Emitir factura»: relaciona los folios de los anticipos y eso lo
+// arma el pedido, no el cliente desde la liga. La PPD del link recibe sus complementos de pago
+// desde la tarjeta de la factura, igual que la emitida directo.
 
 export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = null, openUntil = null, onClose, onDone }: {
   orderId: string;
@@ -74,9 +75,11 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
           <div className="t-sm muted">
             {advance
               ? (es ? "El cliente abre el link, captura su RFC y recibe la factura de su anticipo. Esto es lo que dirá:" : "The customer opens the link, enters their tax ID and gets the invoice for their advance. This is what it will say:")
+              : choice.kind === "ppd"
+              ? (es ? "El cliente abre el link, captura su RFC y recibe su factura a crédito (PPD). Los complementos de pago los timbras después desde el pedido. Esto es lo que dirá:" : "The customer opens the link, enters their tax ID and gets their invoice on credit (PPD). You stamp the payment complements later from the order. This is what it will say:")
               : (es ? "El cliente abre el link, captura su RFC y recibe su factura. Esto es lo que dirá:" : "The customer opens the link, enters their tax ID and gets the invoice. This is what it will say:")}
           </div>
-          <InvoiceKindPicker choice={choice} onChange={pick} preview={preview} lang={lang} allow={["total", "anticipo"]} />
+          <InvoiceKindPicker choice={choice} onChange={pick} preview={preview} lang={lang} allow={["total", "ppd", "anticipo"]} />
           {!!preview && preview.anticipos.count > 0 && (
             <div className="t-xs muted">{es ? "El finiquito (el resto del pedido, relacionando los anticipos) se emite desde «Emitir factura», no por link." : "The final invoice (the rest of the order, relating the advances) is issued from \"Issue invoice\", not by link."}</div>
           )}
@@ -111,6 +114,7 @@ export function InvoiceLinkModal({ orderId, hasChat, lang, errText, openCode = n
               : openCode && !captured ? (hasChat ? (es ? "Reenviar link" : "Resend link") : (es ? "Copiar link" : "Copy link"))
               : openCode ? (hasChat ? (es ? "Actualizar y reenviar" : "Update and resend") : (es ? "Actualizar link" : "Update link"))
               : advance ? (hasChat ? (es ? "Enviar link del anticipo" : "Send advance link") : (es ? "Crear link del anticipo" : "Create advance link"))
+              : choice.kind === "ppd" ? (hasChat ? (es ? "Enviar link PPD al cliente" : "Send PPD link to customer") : (es ? "Crear link PPD" : "Create PPD link"))
               : hasChat ? (es ? "Enviar link al cliente" : "Send link to customer") : (es ? "Crear link" : "Create link")}
           </button>
         </div>

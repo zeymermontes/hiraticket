@@ -296,6 +296,7 @@ export function OrderDrawer({
     if (error === "non-positive") return es ? "No hay nada que facturar: el total del pedido es cero o negativo." : "Nothing to invoice: the order total is zero or negative.";
     if (error === "needs-finiquito") return es ? "Este pedido ya tiene anticipos facturados: lo que lo cierra es el finiquito, desde «Emitir factura»." : "This order already has invoiced advances: the final invoice closes it, from \"Issue invoice\".";
     if (error === "migration-0104") return es ? "Falta aplicar la migración 0104 para facturar anticipos, finiquitos y PPD." : "Migration 0104 is needed to invoice advances, final invoices and PPD.";
+    if (error === "ppd-link-unsupported") return es ? "Tu Facturación todavía no sabe hacer links a crédito (PPD). Emite la factura PPD desde «Emitir factura»." : "Your invoicing service doesn't support credit (PPD) links yet. Issue the PPD invoice from \"Issue invoice\".";
     if (error === "not-ppd") return es ? "Esa factura no es PPD vigente: no lleva complementos de pago." : "That invoice isn't a live PPD one: it takes no payment complements.";
     if (error === "exceeds") return es ? "El monto pasa de lo que le falta por pagar a la factura." : "The amount exceeds what's left to pay on the invoice.";
     if (error === "date") return es ? "La fecha del pago no puede ser futura." : "The payment date can't be in the future.";
@@ -951,6 +952,7 @@ export function OrderDrawer({
                     <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                       <span className="mono t-xs" style={{ fontWeight: 700 }}>{openLink.link_code}</span>
                       {openLink.kind === "anticipo" && <Pill color="violet">{es ? "Anticipo" : "Advance"}</Pill>}
+                      {openLink.kind === "ppd" && <Pill color="blue">PPD</Pill>}
                       <span className="t-xs muted">{lang === "es" ? "Abierto" : "Open"}{openLink.link_expires ? ` · ${lang === "es" ? "vence" : "expires"} ${day(openLink.link_expires)}` : ""}</span>
                       {invUntil === null && (
                         <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Cambiar hasta cuándo puede facturarse el cliente" : "Change until when the customer can invoice"}

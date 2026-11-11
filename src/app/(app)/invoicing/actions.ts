@@ -189,9 +189,13 @@ async function newLinkRow(
     ...(plan.single
       ? { total: plan.single.total, descripcion: plan.single.description }
       : { conceptos: toConcepts(plan.lines), descripcion: kind === "anticipo" ? `Anticipo del pedido ${order.code}` : `Pedido ${order.code}` }),
+    metodo_pago: kind === "ppd" ? "PPD" : "PUE",
   });
   // 401: la llave ya no vale (la revocaron en Facturación). No es un error del pedido.
   if (!r.ok || !r.data) return { error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
+  // Una Facturación anterior a los links a crédito ignora `metodo_pago`: el link saldría pagado
+  // (PUE) y aquí diría PPD. Mejor no dejarlo: se cierra y se avisa.
+  if (kind === "ppd" && r.data.metodo_pago !== "PPD") { await closeLink(cfg.apiKey, r.data.codigo); return { error: "ppd-link-unsupported" }; }
   const fields = {
     business_id: order.business_id, order_id: order.id, provider: FX, status: "link_enviado",
     link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, total: r.data.total, created_by: userId,
@@ -229,7 +233,11 @@ async function patchLinkRow(
     ...(plan.single
       ? { total: plan.single.total, descripcion: plan.single.description }
       : { conceptos: toConcepts(plan.lines), descripcion: kind === "anticipo" ? `Anticipo del pedido ${order.code}` : `Pedido ${order.code}` }),
+    metodo_pago: kind === "ppd" ? "PPD" : "PUE",
   });
+  // Una Facturación que no sabe de links a crédito deja el link pagado: se trata como si no
+  // supiera cambiarlo (se cierra y se intenta crear otro, que a su vez avisará).
+  if (r.ok && r.data && kind === "ppd" && r.data.metodo_pago !== "PPD") return { code: "unsupported" };
   if (!r.ok || !r.data) {
     if (r.status === 401) return { code: "disconnected" };
     if (r.status === 405) return { code: "unsupported" };
@@ -512,9 +520,9 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
 
   const rows = await orderInvoices(supabase, orderId);
   if (orderClosed(rows)) return { ok: false, code: "already-issued" };
-  // Por el link solo se factura el total (pagado) o un anticipo: el cliente se factura solo y no
-  // hay con qué relacionar un finiquito ni registrar después los pagos de una PPD.
-  const kind: InvoiceKind = opts.choice?.kind === "anticipo" ? "anticipo" : "total";
+  // Por el link se factura el total (pagado o a crédito, PPD) o un anticipo: el cliente se factura
+  // solo. Un finiquito no, porque relaciona los folios de los anticipos y eso lo arma el pedido.
+  const kind: InvoiceKind = opts.choice?.kind === "anticipo" ? "anticipo" : opts.choice?.kind === "ppd" ? "ppd" : "total";
   const { plan, error: kindErr } = planForKind(ctx.plan, order.code, { kind, amount: opts.choice?.amount }, anticiposOf(rows));
   if (kindErr) return { ok: false, error: kindErr };
   if (!plan.ok) return { ok: false, error: planError(plan) };
@@ -577,7 +585,9 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
     const first = ((contact?.name as string) ?? "").split(" ")[0];
     const money = "$" + Number(link.total ?? plan.total).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const until = link.link_expires ? ` (vence el ${new Date(`${link.link_expires}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "long" })})` : "";
-    const what = kind === "anticipo" ? `factura de tu anticipo de ${money} MXN del pedido ${order.code}` : `factura del pedido ${order.code} por ${money} MXN`;
+    const what = kind === "anticipo" ? `factura de tu anticipo de ${money} MXN del pedido ${order.code}`
+      : kind === "ppd" ? `factura a crédito (PPD) del pedido ${order.code} por ${money} MXN`
+      : `factura del pedido ${order.code} por ${money} MXN`;
     const body = `Hola${first ? ` ${first}` : ""} 👋 si necesitas ${what}, captura tus datos aquí: ${link.link_url} 🧾${until}.`;
     await supabase.from("messages").insert({
       business_id: businessId, conversation_id: order.conversation_id,
@@ -589,7 +599,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   }
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
-    kind: "file", text: `Link de facturación${kind === "anticipo" ? " del anticipo" : ""} ${updated ? "actualizado y " : ""}${sent ? (reused ? "reenviado" : "enviado") : updated ? "listo" : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
+    kind: "file", text: `Link de facturación${kind === "anticipo" ? " del anticipo" : kind === "ppd" ? " a crédito (PPD)" : ""} ${updated ? "actualizado y " : ""}${sent ? (reused ? "reenviado" : "enviado") : updated ? "listo" : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
   });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
   return { ok: true, url: link.link_url ?? undefined, sent, reused, updated, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal, kind };
