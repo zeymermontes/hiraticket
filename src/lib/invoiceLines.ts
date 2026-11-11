@@ -28,6 +28,10 @@ export interface InvoiceLine {
   discount: number;
   /** Tasa de IVA como fracción: 0, 0.08, 0.16. */
   iva: number;
+  /** IVA del renglón fijado (solo con cantidad 1) para que base + IVA den exactamente un total con
+   *  IVA incluido: un anticipo de $500 no puede salir de $499.99. Siempre a un centavo de
+   *  base × tasa, que es lo que el SAT tolera. Viaja a Facturación como `iva_importe`. */
+  ivaTotal?: number;
   satCode?: string;
   satUnit?: string;
   sku?: string;
@@ -101,8 +105,20 @@ export function lineAmounts(l: InvoiceLine) {
   const sub = r2(l.qty * l.price);
   const discount = r2(Math.min(l.discount || 0, sub));
   const base = r2(sub - discount);
-  const tax = r2(base * l.iva);
+  const tax = l.ivaTotal !== undefined && l.qty === 1 ? r2(l.ivaTotal) : r2(base * l.iva);
   return { sub, discount, base, tax, total: r2(base + tax) };
+}
+
+/**
+ * El IVA que hay que fijarle a un renglón (cantidad 1) para que sume exactamente `total` con IVA
+ * incluido, o `undefined` si el redondeo lo deja fuera del centavo que tolera el SAT (entonces se
+ * queda base × tasa y el total puede diferir un centavo).
+ */
+export function fixedTaxFor(l: InvoiceLine, total: number): number | undefined {
+  if (l.qty !== 1) return undefined;
+  const { base } = lineAmounts({ ...l, ivaTotal: undefined });
+  const tax = r2(total - base);
+  return tax >= 0 && Math.abs(tax - base * l.iva) <= 0.01 ? tax : undefined;
 }
 export const linesTotal = (lines: InvoiceLine[]) => r2(lines.reduce((s, l) => s + lineAmounts(l).total, 0));
 

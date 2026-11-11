@@ -229,6 +229,7 @@ const SAT_CODE = /^\d{8}$/;
 export const toConcepts = (lines: InvoiceLine[]): FxConcept[] => lines.map((l) => ({
   descripcion: l.description, cantidad: l.qty, precio: l.price, iva: l.iva,
   ...(l.discount > 0 ? { descuento: l.discount } : {}),
+  ...(l.ivaTotal !== undefined && l.qty === 1 ? { iva_importe: l.ivaTotal } : {}),
   ...(l.satCode && SAT_CODE.test(l.satCode) ? { clave: l.satCode } : {}),
   ...(l.satUnit ? { unidad: l.satUnit } : {}),
   ...(l.sku ? { sku: l.sku } : {}),
@@ -338,12 +339,13 @@ export async function closeOrderLinks(db: DB, orderId: string, actorId: string |
 export async function sendInvoiceToChat(db: DB, orderId: string, invoiceId: string, authorId: string | null): Promise<{ ok: boolean; error?: string }> {
   const [{ data: order }, invRes] = await Promise.all([
     db.from("orders").select("business_id, code, conversation_id, contact_id").eq("id", orderId).maybeSingle(),
-    db.from("invoices").select("uuid, pdf_url, public_url").eq("id", invoiceId).maybeSingle(),
+    db.from("invoices").select("uuid, pdf_url, public_url, kind").eq("id", invoiceId).maybeSingle(),
   ]);
-  // public_url es de 0096: sin ella se vuelve a leer lo de siempre.
+  // kind es de 0104 y public_url de 0096: sin ellas se vuelve a leer lo de siempre.
   const inv = (invRes.error
-    ? (await db.from("invoices").select("uuid, pdf_url").eq("id", invoiceId).maybeSingle()).data
-    : invRes.data) as { uuid: string | null; pdf_url: string | null; public_url?: string | null } | null;
+    ? ((await db.from("invoices").select("uuid, pdf_url, public_url").eq("id", invoiceId).maybeSingle()).data
+      ?? (await db.from("invoices").select("uuid, pdf_url").eq("id", invoiceId).maybeSingle()).data)
+    : invRes.data) as { uuid: string | null; pdf_url: string | null; public_url?: string | null; kind?: string | null } | null;
   if (!order?.conversation_id) return { ok: false, error: "no-conversation" };
   if (!inv) return { ok: false, error: "no-invoice" };
   const { data: contact } = await db.from("contacts").select("name").eq("id", order.contact_id).maybeSingle();
@@ -354,12 +356,17 @@ export async function sendInvoiceToChat(db: DB, orderId: string, invoiceId: stri
   // lo mandan como documento igual que cualquier archivo. Sin PDF propio va la liga pública de la
   // factura (no caduca y trae PDF y XML); sin ninguna, solo el texto.
   const pdfPath = mediaPath(inv.pdf_url);
-  const link = !pdfPath && inv.public_url ? ` Descárgala aquí: ${fxUrl(inv.public_url)}` : "";
-  const body = `¡Hola ${first}! 🧾 Aquí está tu factura del pedido ${order.code}.${inv.uuid ? ` Folio fiscal: ${inv.uuid}.` : ""}${link}`;
+  const link = !pdfPath && inv.public_url ? ` Descárgalo aquí: ${fxUrl(inv.public_url)}` : "";
+  // Qué es lo que se manda: la factura, la del anticipo, el finiquito o un complemento de pago.
+  const what = inv.kind === "pago" ? `el complemento de pago de tu factura del pedido ${order.code}`
+    : inv.kind === "anticipo" ? `tu factura del anticipo del pedido ${order.code}`
+    : inv.kind === "finiquito" ? `tu factura del pedido ${order.code} (finiquito)`
+    : `tu factura del pedido ${order.code}`;
+  const body = `¡Hola ${first}! 🧾 Aquí está ${what}.${inv.uuid ? ` Folio fiscal: ${inv.uuid}.` : ""}${link}`;
   await db.from("messages").insert({
     business_id: businessId, conversation_id: order.conversation_id,
     direction: "out", type: pdfPath ? "document" : "text", body: encryptBody(businessId, body), author_id: authorId, state: "queued",
-    ...(pdfPath ? { media_url: pdfPath, media_mime: "application/pdf", media_name: `Factura-${order.code}.pdf` } : {}),
+    ...(pdfPath ? { media_url: pdfPath, media_mime: "application/pdf", media_name: `${inv.kind === "pago" ? "Complemento" : inv.kind === "anticipo" ? "Anticipo" : "Factura"}-${order.code}.pdf` } : {}),
   });
   await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", order.conversation_id);
   await flushCloudOutbox(businessId);

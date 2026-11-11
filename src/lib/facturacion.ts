@@ -99,6 +99,8 @@ export const getFolios = (k: string) => call<FxFolios>(k, "GET", "/folios");
 export interface FxConcept {
   descripcion: string; cantidad: number; precio: number; iva: number;
   clave?: string; unidad?: string; descuento?: number; sku?: string;
+  /** IVA fijado del concepto (cantidad 1) para que sume un total exacto con IVA incluido. */
+  iva_importe?: number;
 }
 
 /* ---------- CFDI ---------- */
@@ -115,8 +117,23 @@ export interface FxReceiver { rfc: string; nombre?: string; regimen?: string; cp
  *  queda `facturado` con este CFDI: el cliente ya no puede facturarse otra vez con él ni la venta
  *  entra a la factura global del negocio. Con `link`, `emisor`, `conceptos` y `marca` son
  *  opcionales: lo que no se mande se toma del link. */
-export const createCfdi = (k: string, idempotencyKey: string, body: { emisor?: string; receptor: FxReceiver; conceptos?: FxConcept[]; forma_pago: string; metodo_pago?: string; marca?: string; link?: string }) =>
+export const createCfdi = (k: string, idempotencyKey: string, body: {
+  emisor?: string; receptor: FxReceiver; conceptos?: FxConcept[]; forma_pago: string;
+  /** PUE (pagada) o PPD (a crédito o en parcialidades; la forma de pago queda en 99). */
+  metodo_pago?: string; marca?: string; link?: string;
+  /** CFDI relacionados: `tipo` del catálogo c_TipoRelacion (07 = aplicación de anticipo) y sus folios. */
+  relacionados?: { tipo: string; uuids: string[] };
+}) =>
   call<FxCfdi>(k, "POST", "/cfdis", { metodo_pago: "PUE", ...body }, { "Idempotency-Key": idempotencyKey });
+
+/** Complemento de pago (CFDI tipo P) que devuelve Facturación: el CFDI más la parcialidad que
+ *  le tocó y lo que le queda por pagar a la factura PPD. */
+export interface FxPayment extends FxCfdi { parcialidad: number; saldo_factura: number }
+
+/** Registra un abono a una factura PPD y timbra su complemento de pago. `fecha` YYYY-MM-DD (no
+ *  futura) y `forma_pago` real (01 efectivo, 03 transferencia, 04 tarjeta…; nunca 99). */
+export const createPayment = (k: string, cfdiId: string, body: { monto: number; fecha: string; forma_pago: string }) =>
+  call<FxPayment>(k, "POST", `/cfdis/${encodeURIComponent(cfdiId)}/pagos`, body);
 
 export const sendCfdi = (k: string, id: string, correo?: string) =>
   call<unknown>(k, "POST", `/cfdis/${encodeURIComponent(id)}/enviar`, correo ? { correo } : {});

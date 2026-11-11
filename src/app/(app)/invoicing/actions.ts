@@ -8,17 +8,20 @@ import { facturapiCreateInvoice, facturapiFetchPdf, facturapiSendEmail, type Fis
 import { encryptBody } from "@/lib/msgcrypto";
 import { flushCloudOutbox } from "@/lib/cloud-outbox";
 import { signMediaUrl } from "@/lib/mediaSign";
-import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLink, updateLinkExpiry, upsertClient, fxUrl } from "@/lib/facturacion";
+import { PLUGIN_ID as FX, FACTURACION_SITE, createCfdi, createLink, closeLink, updateLink, updateLinkExpiry, upsertClient, fxUrl, createPayment, fetchCfdiPdf } from "@/lib/facturacion";
 import {
   loadFxConfig, planOrderInvoice, toConcepts, hostInvoicePdf, recordIssuedInvoice, sendInvoiceToChat,
   syncLinkRow, closeLinkRow, saveSatToCatalog, saveSatToOrder, saveGroupDefault, type FxConfig, type GroupChoice, type GroupInfo,
 } from "@/lib/facturacionOps";
 import { summarize, cleanSat, type InvoicePlan, type InvoiceMode, type InvoiceSummary, type SatOverrides } from "@/lib/invoiceLines";
+import { closesOrder, anticipoPlan, finiquitoPlan, anticipoNet, RELACION_ANTICIPO, type InvoiceKind, type KindChoice } from "@/lib/invoiceKinds";
 
 type SB = Awaited<ReturnType<typeof createClient>>;
 
 const RFC_GENERIC = "XAXX010101000";
 const today = () => new Date().toISOString().slice(0, 10);
+/** La fecha de hoy en el centro de México, que es con la que Facturación valida los pagos. */
+const todayMx = () => new Date(Date.now() - 6 * 3600e3).toISOString().slice(0, 10);
 const daysFromNow = (d: number) => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
 /** Fecha de vencimiento que pide el usuario: YYYY-MM-DD, de hoy a un año. */
 const validUntil = (v: string | null | undefined) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= today() && v <= daysFromNow(366);
@@ -35,15 +38,56 @@ async function activeProvider(supabase: SB, businessId: string): Promise<Invoici
  *  se lee lo que haya. `link_sig` queda `undefined` cuando la columna no existe (no se puede
  *  comparar) y `null` cuando el link se creó antes de guardarla. */
 async function orderInvoices(supabase: SB, orderId: string) {
-  type Row = { id: string; provider: string; status: string; total: number | null; link_code: string | null; link_url: string | null; link_expires: string | null; external_id: string | null; link_sig?: string | null };
-  const cols = "id, provider, status, total, link_code, link_url, link_expires, external_id";
-  let full = await supabase.from("invoices").select(`${cols}, link_sig`).eq("order_id", orderId).order("created_at", { ascending: false });
+  type Row = {
+    id: string; provider: string; status: string; total: number | null; uuid: string | null; link_code: string | null; link_url: string | null; link_expires: string | null; external_id: string | null; link_sig?: string | null;
+    /** Tipo de factura (0104). `undefined` cuando la columna no existe: todo cuenta como `total`. */
+    kind?: string | null; parent_id?: string | null;
+  };
+  const cols = "id, provider, status, total, uuid, link_code, link_url, link_expires, external_id";
+  let full = await supabase.from("invoices").select(`${cols}, link_sig, kind, parent_id`).eq("order_id", orderId).order("created_at", { ascending: false });
+  if (full.error) full = await supabase.from("invoices").select(`${cols}, link_sig`).eq("order_id", orderId).order("created_at", { ascending: false }) as never;
   if (full.error) full = await supabase.from("invoices").select(cols).eq("order_id", orderId).order("created_at", { ascending: false }) as never;
   // Un link guardado con una dirección interna de Facturación se reenvía con la pública.
   if (!full.error) return ((full.data ?? []) as unknown as Row[]).map((r) => ({ ...r, link_url: fxUrl(r.link_url) }));
-  const base = await supabase.from("invoices").select("id, provider, status, total, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
+  const base = await supabase.from("invoices").select("id, provider, status, total, uuid, external_id").eq("order_id", orderId).order("created_at", { ascending: false });
   return ((base.data ?? []) as Partial<Row>[]).map((r) => ({ link_code: null, link_url: null, link_expires: null, ...r })) as Row[];
 }
+
+type InvRow = Awaited<ReturnType<typeof orderInvoices>>[number];
+
+/** El pedido ya tiene una factura que lo cierra (total, PPD o finiquito). */
+const orderClosed = (rows: InvRow[]) => rows.some((r) => r.status === "issued" && closesOrder(r.kind));
+/** Anticipos ya facturados (emitidos y no cancelados): lo que el finiquito descuenta y relaciona. */
+const anticiposOf = (rows: InvRow[]) => rows.filter((r) => r.status === "issued" && r.kind === "anticipo");
+
+/**
+ * El plan de la factura según el tipo elegido. Para un anticipo, un solo concepto por su monto;
+ * para el finiquito, los conceptos del pedido menos lo ya facturado en anticipos; para el total
+ * (pagado o PPD), el plan del pedido tal cual, y solo si no hay anticipos (con anticipos, lo que
+ * cierra el pedido es el finiquito).
+ */
+function planForKind(base: InvoicePlan, orderCode: string, choice: KindChoice | null | undefined, anticipos: InvRow[]): { kind: InvoiceKind; plan: InvoicePlan; error?: string } {
+  const kind = choice?.kind ?? "total";
+  if (kind === "pago") return { kind, plan: base, error: "kind" };
+  if (kind === "anticipo") return { kind, plan: anticipoPlan(base, choice?.amount ?? 0, orderCode) };
+  if (kind === "finiquito") {
+    if (!anticipos.length) return { kind, plan: base, error: "no-anticipo" };
+    const net = anticipos.reduce((s, r) => s + anticipoNet(Number(r.total) || 0, base.rate / 100), 0);
+    const gross = r2(anticipos.reduce((s, r) => s + (Number(r.total) || 0), 0));
+    return { kind, plan: finiquitoPlan(base, net, gross) };
+  }
+  if (anticipos.length) return { kind, plan: base, error: "needs-finiquito" };
+  return { kind, plan: base };
+}
+
+/** Lo pagado del pedido hasta hoy, para proponer el monto de un anticipo. */
+async function orderPaid(supabase: SB, orderId: string): Promise<number> {
+  const { data } = await supabase.from("payments").select("amount").eq("order_id", orderId);
+  return r2((data ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
+}
+
+const eventTextFor = (kind: InvoiceKind) =>
+  kind === "anticipo" ? "Anticipo facturado" : kind === "finiquito" ? "Finiquito facturado" : kind === "ppd" ? "Factura PPD emitida" : "Factura emitida";
 
 /** Huella de lo que diría la factura: conceptos con su clave, unidad, cantidad, precio, descuento
  *  e IVA (o el total, cuando es un solo concepto exacto). Dos planes con la misma huella producen
@@ -88,32 +132,46 @@ export interface InvoicePreview {
   group: GroupInfo;
   /** Cuántos renglones del pedido se juntaron en el concepto (0 si no se agrupa). */
   groupedCount: number;
+  /** Qué factura es esta vista previa (0104). */
+  kind: InvoiceKind;
+  /** Anticipos ya facturados del pedido: cuántos y por cuánto (con IVA). El finiquito los descuenta. */
+  anticipos: { count: number; total: number };
+  /** Lo pagado del pedido hasta hoy: el monto que se propone para un anticipo. */
+  paid: number;
+  /** El pedido ya tiene una factura que lo cierra. */
+  closed: boolean;
 }
 
 /**
  * Qué va a decir la factura, antes de mandar el link o de timbrar: conceptos, subtotal, impuestos
  * y total, y a qué renglones les faltan la clave o la unidad del SAT. `sat` es lo que ya se
- * capturó en la ventana para esos renglones: el resumen se recalcula con ello.
+ * capturó en la ventana para esos renglones: el resumen se recalcula con ello. `choice` es el tipo
+ * de factura (total, PPD, anticipo por un monto, finiquito); sin él, por el total.
  */
-export async function previewInvoice(orderId: string, sat?: SatOverrides | null, group?: GroupChoice): Promise<InvoicePreview> {
+export async function previewInvoice(orderId: string, sat?: SatOverrides | null, group?: GroupChoice, choice?: KindChoice | null): Promise<InvoicePreview> {
   const supabase = await createClient();
   const none: InvoiceSummary = { lines: [], subtotal: 0, discount: 0, tax: 0, total: 0, missing: [] };
   const noGroup: GroupInfo = { on: false, productId: null, defaultOn: false, defaultProductId: null, options: [] };
-  const empty: InvoicePreview = { ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null, group: noGroup, groupedCount: 0 };
+  const empty: InvoicePreview = {
+    ok: false, provider: null, total: 0, orderTotal: 0, addsTax: false, rate: 0, mode: "tax-included", exact: false, summary: none, businessId: null, linkUntil: null, group: noGroup, groupedCount: 0,
+    kind: choice?.kind ?? "total", anticipos: { count: 0, total: 0 }, paid: 0, closed: false,
+  };
   const ctx = await planOrderInvoice(supabase, orderId, sat, group);
   if (!ctx) return { ...empty, error: "order" };
-  const provider = await activeProvider(supabase, ctx.order.business_id);
-  const { plan } = ctx;
+  const [provider, rows, paid] = await Promise.all([activeProvider(supabase, ctx.order.business_id), orderInvoices(supabase, orderId), orderPaid(supabase, orderId)]);
+  const anticipos = anticiposOf(rows);
+  const { kind, plan, error: kindErr } = planForKind(ctx.plan, ctx.order.code, choice, anticipos);
   const cfg = provider === FX ? await loadFxConfig(ctx.order.business_id) : null;
   const base = {
     provider, total: plan.total, orderTotal: plan.orderTotal, addsTax: plan.addsTax, rate: plan.rate, mode: plan.mode, exact: !!plan.single, summary: summarize(plan), businessId: ctx.order.business_id,
     linkUntil: cfg ? daysFromNow(cfg.linkDays) : null, group: ctx.group, groupedCount: plan.grouped?.count ?? 0,
+    kind, anticipos: { count: anticipos.length, total: r2(anticipos.reduce((s, r) => s + (Number(r.total) || 0), 0)) }, paid, closed: orderClosed(rows),
   };
+  if (kindErr) return { ...base, ok: false, error: kindErr };
   if (!plan.ok) return { ...base, ok: false, error: planError(plan) };
   return { ...base, ok: true };
 }
 
-type InvRow = Awaited<ReturnType<typeof orderInvoices>>[number];
 const linkRef = (r: InvRow, businessId: string, orderId: string) => ({ id: r.id, business_id: businessId, order_id: orderId, link_code: r.link_code as string });
 /** Links del pedido que Facturación todavía considera vivos. Incluye los que aquí ya se ven
  *  vencidos: allá un link vencido sin factura también entra a la factura global. */
@@ -122,7 +180,7 @@ const liveLinks = (rows: InvRow[]) => rows.filter((r) => r.provider === FX && r.
 /** Crea el link en Facturación y su fila. Desglosado por concepto, o un solo concepto por el
  *  total exacto cuando el plan lo pide (`plan.single`). */
 async function newLinkRow(
-  supabase: SB, cfg: FxConfig, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null,
+  supabase: SB, cfg: FxConfig, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null, kind: InvoiceKind = "total",
 ): Promise<{ row?: InvRow; error?: string; code?: string }> {
   // Hasta cuándo se puede facturar: lo que se eligió para este link, o los días del plugin.
   const vence = validUntil(until) ? until! : daysFromNow(cfg.linkDays);
@@ -130,7 +188,7 @@ async function newLinkRow(
     emisor: cfg.emisor, referencia: order.code, vence, ...(cfg.marca ? { marca: cfg.marca } : {}),
     ...(plan.single
       ? { total: plan.single.total, descripcion: plan.single.description }
-      : { conceptos: toConcepts(plan.lines), descripcion: `Pedido ${order.code}` }),
+      : { conceptos: toConcepts(plan.lines), descripcion: kind === "anticipo" ? `Anticipo del pedido ${order.code}` : `Pedido ${order.code}` }),
   });
   // 401: la llave ya no vale (la revocaron en Facturación). No es un error del pedido.
   if (!r.ok || !r.data) return { error: r.status === 0 ? undefined : r.error, ...(r.status === 401 ? { code: "disconnected" } : {}) };
@@ -139,15 +197,18 @@ async function newLinkRow(
     link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, total: r.data.total, created_by: userId,
   };
   const sig = planSig(plan);
-  let { data: ins, error } = await supabase.from("invoices").insert({ ...fields, link_sig: sig }).select("id").single();
-  // Sin 0097 la columna de la huella no existe: se guarda sin ella.
+  let { data: ins, error } = await supabase.from("invoices").insert({ ...fields, link_sig: sig, kind }).select("id").single();
+  // Sin 0104 no hay tipo de factura: un link por el total se guarda sin él (es lo que siempre fue);
+  // uno de anticipo no se puede guardar como lo que no es. Sin 0097 tampoco hay huella.
+  if (error && kind !== "total") { await closeLink(cfg.apiKey, r.data.codigo); return { error: "migration-0104" }; }
+  if (error) ({ data: ins, error } = await supabase.from("invoices").insert({ ...fields, link_sig: sig }).select("id").single());
   if (error) ({ data: ins, error } = await supabase.from("invoices").insert(fields).select("id").single());
   if (error || !ins) {
     // Sin fila no habría forma de verlo ni de cerrarlo desde aquí: no se deja un link huérfano.
     await closeLink(cfg.apiKey, r.data.codigo);
     return { error: error?.message ?? "insert" };
   }
-  return { row: { id: ins.id as string, provider: FX, status: "link_enviado", total: r.data.total, link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, external_id: null, link_sig: sig } };
+  return { row: { id: ins.id as string, provider: FX, status: "link_enviado", total: r.data.total, uuid: null, link_code: r.data.codigo, link_url: r.data.url, link_expires: r.data.vence, external_id: null, link_sig: sig, kind } };
 }
 
 /** Pone al día el link que ya tiene el pedido, sin cambiarle la liga: lo que dice (conceptos o
@@ -156,16 +217,18 @@ async function newLinkRow(
  *  `status`: allá el link ya no está abierto (se leyó su estado real y quedó reflejado aquí).
  *  `code: "unsupported"`: la Facturación de enfrente todavía no sabe cambiar links. */
 async function patchLinkRow(
-  supabase: SB, cfg: FxConfig, link: InvRow, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null,
+  supabase: SB, cfg: FxConfig, link: InvRow, order: { id: string; business_id: string; code: string }, plan: InvoicePlan, userId: string | null, until?: string | null, kind: InvoiceKind = "total",
 ): Promise<{ row?: InvRow; status?: string | null; error?: string; code?: string }> {
   const expired = !!link.link_expires && link.link_expires < today();
   // La fecha elegida; si no hay y el link ya venció, se le da el plazo del plugin para que sirva.
   const vence = validUntil(until) ? until! : expired ? daysFromNow(cfg.linkDays) : undefined;
+  // Un link de anticipo necesita guardar su tipo (0104); sin la columna no se convierte.
+  if (kind !== "total" && link.kind === undefined) return { error: "migration-0104" };
   const r = await updateLink(cfg.apiKey, link.link_code!, {
     ...(vence ? { vence } : {}),
     ...(plan.single
       ? { total: plan.single.total, descripcion: plan.single.description }
-      : { conceptos: toConcepts(plan.lines), descripcion: `Pedido ${order.code}` }),
+      : { conceptos: toConcepts(plan.lines), descripcion: kind === "anticipo" ? `Anticipo del pedido ${order.code}` : `Pedido ${order.code}` }),
   });
   if (!r.ok || !r.data) {
     if (r.status === 401) return { code: "disconnected" };
@@ -178,9 +241,9 @@ async function patchLinkRow(
   }
   const sig = planSig(plan);
   const fields = { total: r.data.total, link_expires: r.data.vence, link_url: r.data.url };
-  const { error } = await supabase.from("invoices").update({ ...fields, link_sig: sig }).eq("id", link.id);
+  const { error } = await supabase.from("invoices").update({ ...fields, link_sig: sig, ...(link.kind === undefined ? {} : { kind }) }).eq("id", link.id);
   if (error) await supabase.from("invoices").update(fields).eq("id", link.id); // sin 0097
-  return { row: { ...link, ...fields, link_sig: link.link_sig === undefined ? undefined : sig } };
+  return { row: { ...link, ...fields, link_sig: link.link_sig === undefined ? undefined : sig, ...(link.kind === undefined ? {} : { kind }) } };
 }
 
 export interface IssueResult {
@@ -192,31 +255,43 @@ export interface IssueResult {
   code?: string;
   invoiceId?: string; uuid?: string; pdfUrl?: string | null; publicUrl?: string | null;
   total?: number; orderTotal?: number; simulated?: boolean;
+  /** Qué factura se emitió (0104). */
+  kind?: InvoiceKind;
   /** Con `sin-folios`: dónde se compran. Cada negocio compra sus folios en su cuenta de Facturación. */
   foliosUrl?: string;
 }
 
 /** Issue a CFDI for the order via the business's active invoicing plugin. Optionally saves the
- *  fiscal profile on the contact and emails the invoice (PDF+XML) to the customer. */
+ *  fiscal profile on the contact and emails the invoice (PDF+XML) to the customer.
+ *
+ *  `choice` dice qué factura es (0104): por el total pagada (`total`, lo de siempre), por el total a
+ *  crédito o en parcialidades (`ppd`: método PPD, forma 99, y después un complemento por cada pago),
+ *  un anticipo o pago parcial por un monto (`anticipo`), o el finiquito (`finiquito`: el pedido menos
+ *  los anticipos facturados, relacionados con tipo 07). Solo con Hiraticket Facturación; con
+ *  Facturapi únicamente por el total. */
 export async function issueInvoice(
   orderId: string, fiscal: FiscalData, paymentForm: string, saveProfile: boolean, sendEmail: boolean, confirmTax = false, retried = false,
-  sat: SatOverrides | null = null, group: GroupChoice = undefined, saveGroupAsDefault = false,
+  sat: SatOverrides | null = null, group: GroupChoice = undefined, saveGroupAsDefault = false, choice: KindChoice | null = null,
 ): Promise<IssueResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const ctx = await planOrderInvoice(supabase, orderId, sat, group);
   if (!ctx) return { ok: false, error: "order" };
-  const { order, plan } = ctx;
+  const { order } = ctx;
   const businessId = order.business_id;
   const provider = await activeProvider(supabase, businessId);
   if (!provider) return { ok: false, error: "not-configured" };
-  if (!plan.ok) return { ok: false, error: planError(plan) };
-  if (plan.addsTax && !confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
 
   const rows = await orderInvoices(supabase, orderId);
-  // Un pedido ya facturado no se vuelve a facturar: la UI esconde el botón, pero dos pestañas
-  // abiertas (o dos asesores) pueden llegar aquí a la vez.
-  if (rows.some((r) => r.status === "issued")) return { ok: false, error: "already-issued" };
+  // Un pedido ya facturado (total, PPD o finiquito) no se vuelve a facturar: la UI esconde el
+  // botón, pero dos pestañas abiertas (o dos asesores) pueden llegar aquí a la vez.
+  if (orderClosed(rows)) return { ok: false, error: "already-issued" };
+  const anticipos = anticiposOf(rows);
+  const { kind, plan, error: kindErr } = planForKind(ctx.plan, order.code, choice, anticipos);
+  if (kindErr) return { ok: false, error: kindErr };
+  if (kind !== "total" && provider !== FX) return { ok: false, error: "kind-unsupported" };
+  if (!plan.ok) return { ok: false, error: planError(plan) };
+  if (plan.addsTax && !confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
   // La clave y la unidad que se capturaron para esta factura se le quedan al producto del catálogo.
   if (!retried) { await saveSatToCatalog(supabase, ctx.catalog, sat); await saveSatToOrder(supabase, orderId, sat); }
   if (saveGroupAsDefault && group) await saveGroupDefault(supabase, businessId, group);
@@ -243,9 +318,24 @@ export async function issueInvoice(
     // deja `facturado` con este CFDI, así el cliente ya no puede usarlo y la venta no entra a la
     // factura global. La fila del link pasa a ser la de la factura: una venta, una fila.
     // Con más de uno vivo (no debería pasar), se liga el más reciente y los demás se cierran.
+    //
+    // Un anticipo no cierra la venta, así que no se liga a ningún link: los que haya se cierran,
+    // porque un link abierto por el total dejaría al cliente facturarse todo el pedido encima del
+    // anticipo. Si al cerrar uno resulta que el cliente ya se facturó con él, esa es la factura.
     const live = liveLinks(rows);
-    let target: InvRow | null = live[0] ?? null;
-    for (const extra of live.slice(1)) await closeLinkRow(supabase, cfg, linkRef(extra, businessId, orderId), user?.id ?? null);
+    let target: InvRow | null = kind === "anticipo" ? null : live[0] ?? null;
+    for (const extra of kind === "anticipo" ? live : live.slice(1)) {
+      const closed = await closeLinkRow(supabase, cfg, linkRef(extra, businessId, orderId), user?.id ?? null);
+      if (kind === "anticipo" && closed.status === "issued") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); return { ok: false, error: "already-issued" }; }
+    }
+    // Con un anticipo, un link que allá siga vivo aunque aquí se vea vencido también se cierra:
+    // liveLinks ya los incluye. Un link que el cliente recibió para OTRO anticipo se cierra igual.
+    // Un finiquito con un link vivo (p. ej. mandado antes del anticipo) se timbra ligado a él,
+    // con los conceptos de hoy: así el link queda facturado y no entra a la global.
+    const relacionados = kind === "finiquito"
+      ? { tipo: RELACION_ANTICIPO, uuids: anticipos.map((a) => a.uuid).filter((u): u is string => !!u) }
+      : undefined;
+    const metodo = kind === "ppd" ? { metodo_pago: "PPD", forma_pago: "99" } : { metodo_pago: "PUE", forma_pago: paymentForm };
 
     // Un solo concepto por el total exacto: solo se puede timbrar a través de un link creado así.
     // Si el que hay es por otro monto (se hizo desglosado, o el pedido cambió), se pone al día ese
@@ -275,19 +365,26 @@ export async function issueInvoice(
     // La fila existe ANTES de timbrar y su id es la llave de idempotencia. Si la respuesta se
     // pierde (red, 5xx), el siguiente intento manda la misma llave: Facturación devuelve la misma
     // factura en vez de timbrar otra y cobrar otro folio. Sin link, esa fila es una `pending`.
-    let row: InvRow | null = target ?? rows.find((r) => r.provider === FX && r.status === "pending") ?? null;
+    // Una `pending` que quedó de un intento anterior solo sirve si era de este mismo tipo.
+    let row: InvRow | null = target ?? rows.find((r) => r.provider === FX && r.status === "pending" && (r.kind ?? "total") === kind) ?? null;
     if (!row) {
-      const { data: ins, error } = await supabase.from("invoices").insert({
-        business_id: businessId, order_id: orderId, provider: FX, status: "pending", total: plan.total, created_by: user?.id ?? null,
-      }).select("id").single();
+      const fields = { business_id: businessId, order_id: orderId, provider: FX, status: "pending", total: plan.total, created_by: user?.id ?? null };
+      let { data: ins, error } = await supabase.from("invoices").insert({ ...fields, kind }).select("id").single();
+      // Sin 0104 no hay tipo: por el total se guarda como siempre; lo demás no se puede registrar.
+      if (error && kind !== "total") return { ok: false, error: "migration-0104" };
+      if (error) ({ data: ins, error } = await supabase.from("invoices").insert(fields).select("id").single());
       if (error || !ins) return { ok: false, error: error?.message ?? "insert" };
-      row = { id: ins.id as string, provider: FX, status: "pending", total: plan.total, link_code: null, link_url: null, link_expires: null, external_id: null };
+      row = { id: ins.id as string, provider: FX, status: "pending", total: plan.total, uuid: null, link_code: null, link_url: null, link_expires: null, external_id: null, kind };
+    } else if (target && (target.kind ?? "total") !== kind && target.kind !== undefined) {
+      // El link que se liga era de otro tipo (p. ej. un link por el total y hoy se timbra el
+      // finiquito): la fila pasa a ser de la factura que de verdad se emite.
+      await supabase.from("invoices").update({ kind }).eq("id", target.id);
     }
     const r = await createCfdi(cfg.apiKey, `hiraticket:${row.id}`, target
       // Con link: emisor y marca salen del link. Los conceptos también cuando es de un solo
       // concepto exacto; si no, van los del pedido de hoy (el link pudo quedarse viejo).
-      ? { receptor, forma_pago: paymentForm, link: target.link_code as string, ...(plan.single ? {} : { conceptos: toConcepts(plan.lines) }) }
-      : { emisor: cfg.emisor, receptor, conceptos: toConcepts(plan.lines), forma_pago: paymentForm, ...(cfg.marca ? { marca: cfg.marca } : {}) });
+      ? { receptor, ...metodo, link: target.link_code as string, ...(plan.single ? {} : { conceptos: toConcepts(plan.lines) }), ...(relacionados?.uuids.length ? { relacionados } : {}) }
+      : { emisor: cfg.emisor, receptor, conceptos: toConcepts(plan.lines), ...metodo, ...(cfg.marca ? { marca: cfg.marca } : {}), ...(relacionados?.uuids.length ? { relacionados } : {}) });
     if (!r.ok || !r.data) {
       const unknown = r.status === 0 || r.status >= 500;
       // El link ya no está como creíamos (el cliente se facturó con él hace un momento, o se cerró
@@ -299,7 +396,7 @@ export async function issueInvoice(
         // El link quedó cerrado, vencido o en la global: ya no estorba, así que se timbra sin él en
         // este mismo intento. Solo una vez: si el estado no se pudo leer o sigue apareciendo vivo,
         // se le dice al asesor en vez de dar vueltas.
-        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true, sat);
+        if (!retried && now.status && now.status !== "link_enviado") return issueInvoice(orderId, fiscal, paymentForm, false, sendEmail, confirmTax, true, sat, group, false, choice);
         return { ok: false, code: "link-changed", error: r.error };
       }
       // 4xx: Facturación rechazó la petición y no timbró nada. La fila `pending` sobra, y el link
@@ -315,12 +412,12 @@ export async function issueInvoice(
       };
     }
     const cfdi = r.data;
-    await recordIssuedInvoice(supabase, cfg, { id: row.id, business_id: businessId, order_id: orderId }, cfdi, { actorId: user?.id ?? null, eventText: "Factura emitida" });
+    await recordIssuedInvoice(supabase, cfg, { id: row.id, business_id: businessId, order_id: orderId }, cfdi, { actorId: user?.id ?? null, eventText: eventTextFor(kind) });
     const { data: saved } = await supabase.from("invoices").select("pdf_url").eq("id", row.id).maybeSingle();
     revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
     return {
       ok: true, invoiceId: row.id, uuid: cfdi.uuid ?? undefined, pdfUrl: await signMediaUrl((saved?.pdf_url as string) ?? null, 3600),
-      publicUrl: cfdi.liga_publica, total: cfdi.total, simulated: cfdi.simulado,
+      publicUrl: cfdi.liga_publica, total: cfdi.total, simulated: cfdi.simulado, kind,
     };
   }
 
@@ -387,6 +484,8 @@ export interface LinkResult {
   /** Había un link y se cambió por uno nuevo (Facturación no pudo actualizarlo o allá ya no servía). */
   replaced?: boolean;
   total?: number; orderTotal?: number;
+  /** Qué factura producirá el link: por el total o un anticipo. */
+  kind?: InvoiceKind;
 }
 
 /**
@@ -401,19 +500,24 @@ export interface LinkResult {
  * enfrente aún no sabe cambiar links; en ese caso el anterior se cierra antes, porque un link
  * abierto de más permitiría facturar dos veces y metería la venta a la factura global.
  */
-export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null; group?: GroupChoice; saveGroupAsDefault?: boolean } = {}): Promise<LinkResult> {
+export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: boolean; send?: boolean; sat?: SatOverrides | null; until?: string | null; group?: GroupChoice; saveGroupAsDefault?: boolean; choice?: KindChoice | null } = {}): Promise<LinkResult> {
   const supabase = await createClient();
   const user = await getSessionUser();
   const ctx = await planOrderInvoice(supabase, orderId, opts.sat, opts.group);
   if (!ctx) return { ok: false, error: "order" };
-  const { order, plan } = ctx;
+  const { order } = ctx;
   const businessId = order.business_id;
   const cfg = await loadFxConfig(businessId);
   if (!cfg || !cfg.emisor) return { ok: false, error: "not-configured" };
-  if (!plan.ok) return { ok: false, error: planError(plan) };
 
   const rows = await orderInvoices(supabase, orderId);
-  if (rows.some((r) => r.status === "issued")) return { ok: false, code: "already-issued" };
+  if (orderClosed(rows)) return { ok: false, code: "already-issued" };
+  // Por el link solo se factura el total (pagado) o un anticipo: el cliente se factura solo y no
+  // hay con qué relacionar un finiquito ni registrar después los pagos de una PPD.
+  const kind: InvoiceKind = opts.choice?.kind === "anticipo" ? "anticipo" : "total";
+  const { plan, error: kindErr } = planForKind(ctx.plan, order.code, { kind, amount: opts.choice?.amount }, anticiposOf(rows));
+  if (kindErr) return { ok: false, error: kindErr };
+  if (!plan.ok) return { ok: false, error: planError(plan) };
   if (plan.addsTax && !opts.confirmTax) return { ok: false, code: "confirm-tax", total: plan.total, orderTotal: plan.orderTotal };
 
   await saveSatToCatalog(supabase, ctx.catalog, opts.sat);
@@ -437,7 +541,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   const same = (r: InvRow) => r.link_sig === undefined || r.link_sig === sig;
   let reused = false, updated = false, replaced = false;
   if (link) {
-    const current = !fresh && !!link.link_url && (!link.link_expires || link.link_expires >= today()) && Math.abs((Number(link.total) || 0) - plan.total) < 0.005 && same(link);
+    const current = !fresh && !!link.link_url && (!link.link_expires || link.link_expires >= today()) && Math.abs((Number(link.total) || 0) - plan.total) < 0.005 && same(link) && (link.kind ?? "total") === kind;
     if (current) {
       reused = true;
       if (validUntil(opts.until) && link.link_expires !== opts.until) {
@@ -448,7 +552,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
         link = { ...link, link_expires: r.data?.vence ?? opts.until! };
       }
     } else {
-      const p = await patchLinkRow(supabase, cfg, link, order, plan, user?.id ?? null, opts.until);
+      const p = await patchLinkRow(supabase, cfg, link, order, plan, user?.id ?? null, opts.until, kind);
       if (p.row) { link = p.row; updated = true; }
       else if (p.status === "issued") { revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat"); return { ok: false, code: "already-issued" }; }
       else if (p.code === "disconnected") return { ok: false, code: "disconnected" };
@@ -462,7 +566,7 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
     }
   }
   if (!link) {
-    const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null, opts.until);
+    const made = await newLinkRow(supabase, cfg, order, plan, user?.id ?? null, opts.until, kind);
     if (!made.row) return { ok: false, error: made.error, code: made.code };
     link = made.row;
   }
@@ -473,7 +577,8 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
     const first = ((contact?.name as string) ?? "").split(" ")[0];
     const money = "$" + Number(link.total ?? plan.total).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const until = link.link_expires ? ` (vence el ${new Date(`${link.link_expires}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "long" })})` : "";
-    const body = `Hola${first ? ` ${first}` : ""} 👋 si necesitas factura del pedido ${order.code} por ${money} MXN, captura tus datos aquí: ${link.link_url} 🧾${until}.`;
+    const what = kind === "anticipo" ? `factura de tu anticipo de ${money} MXN del pedido ${order.code}` : `factura del pedido ${order.code} por ${money} MXN`;
+    const body = `Hola${first ? ` ${first}` : ""} 👋 si necesitas ${what}, captura tus datos aquí: ${link.link_url} 🧾${until}.`;
     await supabase.from("messages").insert({
       business_id: businessId, conversation_id: order.conversation_id,
       direction: "out", type: "text", body: encryptBody(businessId, body), author_id: user?.id ?? null, state: "queued",
@@ -484,10 +589,72 @@ export async function sendInvoiceLink(orderId: string, opts: { confirmTax?: bool
   }
   await supabase.from("events").insert({
     business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
-    kind: "file", text: `Link de facturación ${updated ? "actualizado y " : ""}${sent ? (reused ? "reenviado" : "enviado") : updated ? "listo" : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
+    kind: "file", text: `Link de facturación${kind === "anticipo" ? " del anticipo" : ""} ${updated ? "actualizado y " : ""}${sent ? (reused ? "reenviado" : "enviado") : updated ? "listo" : "creado"} · ${link.link_code}${replaced ? " (sustituye al anterior)" : ""}`,
   });
   revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
-  return { ok: true, url: link.link_url ?? undefined, sent, reused, updated, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal };
+  return { ok: true, url: link.link_url ?? undefined, sent, reused, updated, replaced, expires: link.link_expires ?? undefined, total: Number(link.total ?? plan.total), orderTotal: plan.orderTotal, kind };
+}
+
+export interface PaymentResult {
+  ok: boolean; error?: string;
+  /** `sin-folios` · `disconnected` · `retry` (sin respuesta: antes de reintentar hay que ver en
+   *  Facturación si el complemento ya se timbró, porque este paso no es idempotente). */
+  code?: string;
+  invoiceId?: string; uuid?: string; pdfUrl?: string | null; publicUrl?: string | null; simulated?: boolean;
+  /** Número de parcialidad que le tocó y lo que le queda por pagar a la factura PPD. */
+  partiality?: number; remaining?: number;
+  foliosUrl?: string;
+}
+
+/**
+ * Registra un abono a una factura PPD del pedido y timbra su complemento de pago (CFDI tipo P) en
+ * Hiraticket Facturación. El complemento queda como fila `pago` colgada de la factura (`parent_id`),
+ * con su folio, su PDF y su liga, igual que una factura. La parcialidad y el saldo los lleva
+ * Facturación; aquí solo se evita abonar más de lo que falta.
+ */
+export async function stampPaymentComplement(invoiceId: string, input: { amount: number; date: string; form: string }): Promise<PaymentResult> {
+  const supabase = await createClient();
+  const user = await getSessionUser();
+  const { data: inv } = await supabase.from("invoices").select("id, business_id, order_id, provider, status, kind, external_id, total").eq("id", invoiceId).maybeSingle();
+  if (!inv) return { ok: false, error: "no-invoice" };
+  if (inv.provider !== FX || inv.status !== "issued" || inv.kind !== "ppd" || !inv.external_id) return { ok: false, error: "not-ppd" };
+  const amount = r2(Number(input.amount) || 0);
+  if (!(amount > 0)) return { ok: false, error: "amount" };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || input.date > todayMx()) return { ok: false, error: "date" };
+  if (!input.form || input.form === "99") return { ok: false, error: "form" };
+  const { data: kids } = await supabase.from("invoices").select("total").eq("parent_id", invoiceId).eq("status", "issued");
+  const remaining = r2((Number(inv.total) || 0) - (kids ?? []).reduce((s, k) => s + (Number(k.total) || 0), 0));
+  if (amount > remaining + 0.005) return { ok: false, error: "exceeds", remaining };
+  const businessId = inv.business_id as string, orderId = inv.order_id as string;
+  const cfg = await loadFxConfig(businessId);
+  if (!cfg) return { ok: false, error: "not-configured" };
+
+  const r = await createPayment(cfg.apiKey, inv.external_id as string, { monto: amount, fecha: input.date, forma_pago: input.form });
+  if (!r.ok || !r.data) {
+    const unknown = r.status === 0 || r.status >= 500;
+    return {
+      ok: false, error: r.status === 0 ? undefined : r.error,
+      code: r.status === 402 ? "sin-folios" : r.status === 401 ? "disconnected" : unknown ? "retry" : undefined,
+      ...(r.status === 402 ? { foliosUrl: `${FACTURACION_SITE}/dashboard/folios` } : {}),
+    };
+  }
+  const p = r.data;
+  const pdfPath = p.pdf ? await hostInvoicePdf(businessId, orderId, p.uuid || p.id, await fetchCfdiPdf(cfg.apiKey, p.id)) : null;
+  const { data: ins } = await supabase.from("invoices").insert({
+    business_id: businessId, order_id: orderId, provider: FX, status: "issued", kind: "pago", parent_id: invoiceId,
+    external_id: p.id, uuid: p.uuid || null, total: amount, public_url: p.liga_publica ?? null, xml_url: p.xml ?? null, pdf_url: pdfPath, created_by: user?.id ?? null,
+  }).select("id").single();
+  const money = "$" + amount.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await supabase.from("events").insert({
+    business_id: businessId, parent_type: "order", parent_id: orderId, actor_id: user?.id ?? null,
+    kind: "file", text: `Complemento de pago ${p.parcialidad} por ${money} · ${p.uuid || p.id}${p.simulado ? " (simulado)" : ""}`,
+  });
+  await supabase.from("plugin_usage").insert({ business_id: businessId, plugin_id: FX, unit: "factura", qty: 1, meta: { uuid: p.uuid, total: amount, simulado: p.simulado, complemento: true } });
+  revalidatePath("/orders"); revalidatePath("/kanban"); revalidatePath("/chat");
+  return {
+    ok: true, invoiceId: (ins?.id as string) ?? undefined, uuid: p.uuid ?? undefined, pdfUrl: await signMediaUrl(pdfPath, 3600), publicUrl: p.liga_publica,
+    simulated: p.simulado, partiality: p.parcialidad, remaining: p.saldo_factura,
+  };
 }
 
 /** Pregunta a Facturación cómo va un link: si el cliente ya se facturó deja la factura en el

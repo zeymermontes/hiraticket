@@ -26,9 +26,10 @@ import { removeContactTag, loadConvDetail } from "@/app/(app)/chat/actions";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { ShippingModal } from "@/components/ShippingModal";
 import { notifyTracking } from "@/app/(app)/shipping/actions";
-import { InvoiceModal } from "@/components/InvoiceModal";
+import { InvoiceModal, PAYMENT_FORMS } from "@/components/InvoiceModal";
 import { InvoiceLinkModal } from "@/components/InvoiceLinkModal";
-import { notifyInvoice, refreshInvoiceLink, closeInvoiceLink, setInvoiceLinkExpiry, previewInvoice, type LinkResult } from "@/app/(app)/invoicing/actions";
+import { notifyInvoice, refreshInvoiceLink, closeInvoiceLink, setInvoiceLinkExpiry, previewInvoice, stampPaymentComplement, type LinkResult } from "@/app/(app)/invoicing/actions";
+import { closesOrder, invoiceKindLabel } from "@/lib/invoiceKinds";
 
 const PRIO: Record<string, { es: string; en: string }> = {
   low: { es: "Baja", en: "Low" }, normal: { es: "Normal", en: "Normal" },
@@ -171,8 +172,14 @@ export function OrderDrawer({
   const [invMissing, setInvMissing] = useState(0);
   const [invTick, setInvTick] = useState(0); // sube al mandar o actualizar un link: el aviso se recalcula
   const invItemsKey = detailProp.items.map((i) => i.name).join("|");
-  const invIssued = detailProp.invoices.some((i) => i.status === "issued");
+  // Facturado = con una factura que cierra el pedido (total, PPD o finiquito); un anticipo no cierra.
+  const invIssued = detailProp.invoices.some((i) => i.status === "issued" && closesOrder(i.kind));
   const invRows = detailProp.invoices.length;
+  // Complemento de pago de una factura PPD (0104): a qué factura, por cuánto, de qué día y cómo.
+  const [repFor, setRepFor] = useState<string | null>(null);
+  const [repAmount, setRepAmount] = useState("");
+  const [repDate, setRepDate] = useState(() => toLocalInput(new Date().toISOString()).slice(0, 10));
+  const [repForm, setRepForm] = useState("03");
   useEffect(() => {
     let alive = true;
     setInvMissing(0);
@@ -282,10 +289,33 @@ export function OrderDrawer({
     const es = lang === "es";
     if (code === "already-issued") return es ? "Este pedido ya tiene factura." : "This order already has an invoice.";
     if (code === "disconnected") return es ? "Se perdió la conexión con Facturación. Un administrador debe volver a conectar el plugin en Plugins." : "The connection to the invoicing account was lost. An admin must reconnect the plugin in Plugins.";
+    if (code === "sin-folios") return es ? "Tu cuenta de Hiraticket Facturación no tiene folios. Se compran ahí; en cuanto tengas, vuelve a intentar." : "Your Hiraticket Facturación account has no folios left. They're bought there; once you have some, try again.";
+    if (code === "retry") return es ? "No hubo respuesta de Facturación. Antes de reintentar, revisa ahí si el complemento ya se timbró: este paso no se repite solo." : "No response from the invoicing service. Before retrying, check there whether the complement was already stamped: this step doesn't dedupe itself.";
     if (error === "not-configured") return es ? "Falta terminar de configurar el plugin de Facturación (llave y RFC)." : "Finish setting up the invoicing plugin (key and RFC).";
     if (error === "no-items") return es ? "El pedido no tiene artículos con precio." : "The order has no priced items.";
     if (error === "non-positive") return es ? "No hay nada que facturar: el total del pedido es cero o negativo." : "Nothing to invoice: the order total is zero or negative.";
+    if (error === "needs-finiquito") return es ? "Este pedido ya tiene anticipos facturados: lo que lo cierra es el finiquito, desde «Emitir factura»." : "This order already has invoiced advances: the final invoice closes it, from \"Issue invoice\".";
+    if (error === "migration-0104") return es ? "Falta aplicar la migración 0104 para facturar anticipos, finiquitos y PPD." : "Migration 0104 is needed to invoice advances, final invoices and PPD.";
+    if (error === "not-ppd") return es ? "Esa factura no es PPD vigente: no lleva complementos de pago." : "That invoice isn't a live PPD one: it takes no payment complements.";
+    if (error === "exceeds") return es ? "El monto pasa de lo que le falta por pagar a la factura." : "The amount exceeds what's left to pay on the invoice.";
+    if (error === "date") return es ? "La fecha del pago no puede ser futura." : "The payment date can't be in the future.";
+    if (error === "form") return es ? "Elige la forma en que pagó (no «Por definir»)." : "Pick how they paid (not \"To be defined\").";
     return error ? (es ? `No se pudo: ${error}` : `Couldn't do it: ${error}`) : (es ? "No se pudo conectar con Facturación. Intenta de nuevo." : "Couldn't reach the invoicing service. Try again.");
+  };
+  // Timbrar el complemento de pago de una factura PPD con lo capturado en la tarjeta.
+  const stampRep = async (invoiceId: string) => {
+    const amount = Math.round((Number(repAmount.replace(/[^0-9.]/g, "")) || 0) * 100) / 100;
+    if (!(amount > 0)) return;
+    setInvBusy(true); setInvMsg(null);
+    const r = await stampPaymentComplement(invoiceId, { amount, date: repDate, form: repForm });
+    setInvBusy(false);
+    if (!r.ok) { setInvMsg({ ok: false, text: invErr(r.code, r.error) }); return; }
+    setRepFor(null); setRepAmount("");
+    const left = r.remaining ?? 0;
+    setInvMsg({ ok: true, text: left > 0.005
+      ? (lang === "es" ? `Complemento ${r.partiality} timbrado. A la factura le faltan $${formatMoney(left)}.` : `Complement ${r.partiality} stamped. $${formatMoney(left)} left on the invoice.`)
+      : (lang === "es" ? `Complemento ${r.partiality} timbrado: la factura quedó pagada por completo.` : `Complement ${r.partiality} stamped: the invoice is now fully paid.`) });
+    run(() => Promise.resolve());
   };
   const copyInvLink = async (url: string) => { try { await navigator.clipboard.writeText(url); setInvCopied(true); setTimeout(() => setInvCopied(false), 1500); } catch {} };
   // El link ya existe: se avisa qué pasó con él. Lo comparten «Reenviar» y la ventana del resumen.
@@ -786,12 +816,23 @@ export function OrderDrawer({
             const fx = invoicing === "hiraticket_facturacion";
             const todayStr = new Date().toISOString().slice(0, 10);
             const isOpen = (i: OrderInvoice) => i.status === "link_enviado" && (!i.link_expires || i.link_expires >= todayStr);
-            const issued = detail.invoices.filter((i) => i.status === "issued");
-            const cancelled = detail.invoices.filter((i) => i.status === "cancelada");
+            const es = lang === "es";
+            // Los complementos de pago (`pago`) cuelgan de su factura PPD; lo demás son facturas del
+            // pedido. El pedido está facturado cuando una lo cierra (total, PPD o finiquito); con
+            // solo anticipos sigue abierto para el finiquito.
+            const complements = detail.invoices.filter((i) => i.kind === "pago");
+            const issued = detail.invoices.filter((i) => i.status === "issued" && i.kind !== "pago");
+            const closing = issued.filter((i) => closesOrder(i.kind));
+            const anticipos = issued.filter((i) => i.kind === "anticipo");
+            const cancelled = detail.invoices.filter((i) => i.status === "cancelada" && i.kind !== "pago");
             const openLink = detail.invoices.find(isOpen);
             // El link más reciente que ya no sirve, solo si no hay nada mejor que mostrar.
-            const deadLink = !openLink && !issued.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || i.status === "cerrado" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
-            const unconfirmed = !issued.length && detail.invoices.some((i) => i.status === "pending");
+            const deadLink = !openLink && !closing.length ? detail.invoices.find((i) => i.status === "vencido" || i.status === "global" || i.status === "cerrado" || (i.status === "link_enviado" && !isOpen(i))) : undefined;
+            const unconfirmed = !closing.length && detail.invoices.some((i) => i.status === "pending");
+            const kidsOf = (inv: OrderInvoice) => complements.filter((c) => c.parent_id === inv.id && c.status === "issued");
+            const paidOf = (inv: OrderInvoice) => Math.round(kidsOf(inv).reduce((s, c) => s + (Number(c.total) || 0), 0) * 100) / 100;
+            const leftOf = (inv: OrderInvoice) => Math.max(0, Math.round(((Number(inv.total) || 0) - paidOf(inv)) * 100) / 100);
+            const ppdOpen = closing.find((i) => i.kind === "ppd" && leftOf(i) > 0.005);
             const day = (d: string) => new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString(lang === "es" ? "es-MX" : "en-US", { day: "2-digit", month: "short" });
             // Un link vencido sin factura se puede volver a abrir dándole más tiempo.
             const extendable = deadLink && (deadLink.status === "vencido" || deadLink.status === "link_enviado") ? deadLink : undefined;
@@ -809,38 +850,107 @@ export function OrderDrawer({
             return (
             <div className="ws-block">
               <div className="ws-block-head"><Icon name="file" size={16} /><h4 className="grow">{lang === "es" ? "Factura (CFDI)" : "Invoice (CFDI)"}</h4>
-                {issued.length > 0 ? <Pill color="green" dot>{lang === "es" ? "Emitida" : "Issued"}</Pill>
+                {closing.length > 0
+                  ? (ppdOpen
+                    ? <Pill color="blue" dot>{es ? `PPD · faltan $${formatMoney(leftOf(ppdOpen))}` : `PPD · $${formatMoney(leftOf(ppdOpen))} left`}</Pill>
+                    : <Pill color="green" dot>{es ? "Emitida" : "Issued"}</Pill>)
+                  : anticipos.length > 0 ? <Pill color="amber" dot>{anticipos.length === 1 ? (es ? "Anticipo facturado" : "Advance invoiced") : (es ? `${anticipos.length} anticipos facturados` : `${anticipos.length} advances invoiced`)}</Pill>
                   : openLink ? <Pill color="blue" dot>{lang === "es" ? "Link enviado" : "Link sent"}</Pill>
                   : detail.requires_invoice ? <Pill color="amber" dot>{lang === "es" ? "Pendiente" : "Pending"}</Pill> : null}
               </div>
               <div style={{ padding: "12px 14px" }} className="col gap-2">
-                {[...issued, ...cancelled].map((inv) => (
-                  <div key={inv.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", opacity: inv.status === "cancelada" ? 0.7 : 1 }}>
+                {[...issued, ...cancelled].map((inv) => {
+                  const kids = kidsOf(inv);
+                  const isPpd = inv.kind === "ppd" && inv.status === "issued";
+                  const left = isPpd ? leftOf(inv) : 0;
+                  const sendBtn = (row: OrderInvoice, label: string, sentLabel: string) => detail.conversation_id && row.status === "issued" && (
+                    <button className="btn btn-sm btn-outline" disabled={pending || invSent === row.id}
+                      onClick={() => start(async () => { const r = await notifyInvoice(detail.id, row.id); if (r.ok) setInvSent(row.id); })}>
+                      <Icon name="whatsapp" size={13} />{invSent === row.id ? sentLabel : label}
+                    </button>
+                  );
+                  return (
+                  <div key={inv.id} className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", opacity: inv.status === "cancelada" ? 0.7 : 1 }} data-kind={inv.kind ?? "total"}>
                     <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                       <span className="mono t-xs truncate" style={{ fontWeight: 700, maxWidth: 220 }} title={inv.uuid ?? undefined}>{inv.uuid ?? "—"}</span>
+                      {inv.kind && inv.kind !== "total" && <Pill color={inv.kind === "anticipo" ? "violet" : inv.kind === "ppd" ? "blue" : "green"}>{invoiceKindLabel(inv.kind, lang)}</Pill>}
                       {inv.status === "cancelada" && <Pill color="red">{lang === "es" ? "Cancelada" : "Cancelled"}</Pill>}
                       <span className="grow" />
                       {inv.total != null && <span className="mono t-sm">${formatMoney(inv.total)}</span>}
                     </div>
+                    {isPpd && (
+                      <div className="t-xs muted">
+                        {es ? `Pagado $${formatMoney(paidOf(inv))} de $${formatMoney(inv.total ?? 0)} con ${kids.length === 1 ? "1 complemento" : `${kids.length} complementos`}` : `$${formatMoney(paidOf(inv))} of $${formatMoney(inv.total ?? 0)} paid with ${kids.length} complement${kids.length === 1 ? "" : "s"}`}
+                        {left > 0.005 ? (es ? ` · faltan $${formatMoney(left)}` : ` · $${formatMoney(left)} left`) : (es ? " · pagada por completo" : " · fully paid")}
+                      </div>
+                    )}
                     <div className="row gap-2" style={{ marginTop: 2, flexWrap: "wrap" }}>
                       {inv.pdf_url && <a className="btn btn-sm btn-outline" href={inv.pdf_url} target="_blank" rel="noreferrer"><Icon name="download" size={13} />PDF</a>}
                       {inv.public_url && <a className="btn btn-sm btn-outline" href={inv.public_url} target="_blank" rel="noreferrer" title={lang === "es" ? "Página pública de la factura (PDF y XML)" : "Public invoice page (PDF and XML)"}><Icon name="external" size={13} />{lang === "es" ? "Ver factura" : "View invoice"}</a>}
-                      {detail.conversation_id && inv.status === "issued" && (
-                        <button className="btn btn-sm btn-outline" disabled={pending || invSent === inv.id}
-                          onClick={() => start(async () => { const r = await notifyInvoice(detail.id, inv.id); if (r.ok) setInvSent(inv.id); })}>
-                          <Icon name="whatsapp" size={13} />{invSent === inv.id ? (lang === "es" ? "Enviada ✓" : "Sent ✓") : (lang === "es" ? "Enviar factura" : "Send invoice")}
+                      {sendBtn(inv, lang === "es" ? "Enviar factura" : "Send invoice", lang === "es" ? "Enviada ✓" : "Sent ✓")}
+                      {isPpd && left > 0.005 && repFor !== inv.id && (
+                        <button className="btn btn-sm btn-primary" disabled={invBusy} title={es ? "Registrar un pago del cliente y timbrar su complemento (CFDI de pago)" : "Record a customer payment and stamp its complement (payment CFDI)"}
+                          onClick={() => { setInvMsg(null); setRepFor(inv.id); const pend = Math.round((detail.paid - paidOf(inv)) * 100) / 100; setRepAmount(String(pend > 0 && pend < left ? pend : left)); }}>
+                          <Icon name="plus" size={13} />{es ? "Complemento de pago" : "Payment complement"}
                         </button>
                       )}
                       <span className="grow" />
                       <span className="t-xs muted">{day(inv.created_at)}</span>
                     </div>
+                    {isPpd && repFor === inv.id && (
+                      <div className="col gap-2" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface-2)" }} data-testid="rep-form">
+                        <div className="row gap-2" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                          <div className="col gap-1">
+                            <label className="lbl" style={{ margin: 0 }}>{es ? "Monto pagado" : "Amount paid"}</label>
+                            <input className="inp-inline mono" type="number" inputMode="decimal" step="0.01" min={0.01} max={left} style={{ width: 120 }} value={repAmount} onChange={(e) => setRepAmount(e.target.value)} />
+                          </div>
+                          <div className="col gap-1">
+                            <label className="lbl" style={{ margin: 0 }}>{es ? "Fecha del pago" : "Payment date"}</label>
+                            <input className="inp-inline" type="date" max={todayStr} value={repDate} onChange={(e) => setRepDate(e.target.value)} style={{ width: 150 }} />
+                          </div>
+                          <div className="col gap-1">
+                            <label className="lbl" style={{ margin: 0 }}>{es ? "Forma de pago" : "Payment form"}</label>
+                            <select className="select" value={repForm} onChange={(e) => setRepForm(e.target.value)}>
+                              {PAYMENT_FORMS.filter(([v]) => v !== "99").map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                          <span className="t-xs muted grow" style={{ minWidth: 160 }}>
+                            {es ? `Se timbra un CFDI de pago (parcialidad ${kids.length + 1}) por este monto; gasta un folio.` : `A payment CFDI (installment ${kids.length + 1}) is stamped for this amount; it uses a folio.`}
+                          </span>
+                          <button className="btn btn-sm btn-ghost" disabled={invBusy} onClick={() => setRepFor(null)}>{es ? "Cancelar" : "Cancel"}</button>
+                          <button className="btn btn-sm btn-primary" disabled={invBusy || !(Number(repAmount) > 0) || Number(repAmount) > left + 0.005 || !repDate || repDate > todayStr} onClick={() => stampRep(inv.id)}>
+                            <Icon name="file" size={13} />{invBusy ? (es ? "Timbrando…" : "Stamping…") : (es ? "Timbrar complemento" : "Stamp complement")}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {kids.length > 0 && (
+                      <div className="col gap-1" style={{ marginTop: 4, paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
+                        {kids.map((k, i) => (
+                          <div key={k.id} className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }} data-kind="pago">
+                            <span className="t-xs" style={{ fontWeight: 600 }}>{es ? `Complemento ${kids.length - i}` : `Complement ${kids.length - i}`}</span>
+                            <span className="mono t-xs truncate muted" style={{ maxWidth: 150 }} title={k.uuid ?? undefined}>{k.uuid ?? "—"}</span>
+                            <span className="mono t-xs">${formatMoney(k.total ?? 0)}</span>
+                            {k.pdf_url && <a className="btn btn-sm btn-ghost" href={k.pdf_url} target="_blank" rel="noreferrer"><Icon name="download" size={12} />PDF</a>}
+                            {k.public_url && <a className="btn btn-sm btn-ghost" href={k.public_url} target="_blank" rel="noreferrer"><Icon name="external" size={12} />{es ? "Ver" : "View"}</a>}
+                            {sendBtn(k, es ? "Enviar" : "Send", es ? "Enviado ✓" : "Sent ✓")}
+                            <span className="grow" />
+                            <span className="t-xs muted">{day(k.created_at)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
 
-                {openLink && issued.length === 0 && (
+                {openLink && closing.length === 0 && (
                   <div className="col gap-1" style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)" }}>
                     <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                       <span className="mono t-xs" style={{ fontWeight: 700 }}>{openLink.link_code}</span>
+                      {openLink.kind === "anticipo" && <Pill color="violet">{es ? "Anticipo" : "Advance"}</Pill>}
                       <span className="t-xs muted">{lang === "es" ? "Abierto" : "Open"}{openLink.link_expires ? ` · ${lang === "es" ? "vence" : "expires"} ${day(openLink.link_expires)}` : ""}</span>
                       {invUntil === null && (
                         <button className="iconbtn sm" disabled={invBusy} title={lang === "es" ? "Cambiar hasta cuándo puede facturarse el cliente" : "Change until when the customer can invoice"}
@@ -891,7 +1001,7 @@ export function OrderDrawer({
                   </div>
                 )}
 
-                {fx && issued.length === 0 && invMissing > 0 && (
+                {fx && closing.length === 0 && invMissing > 0 && (
                   <div className="row gap-2" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--amber-bg)", color: "var(--amber)", border: "1px solid var(--amber-bd)", alignItems: "center", flexWrap: "wrap" }}>
                     <span className="t-xs grow" style={{ minWidth: 180 }}>
                       {invMissing === 1
@@ -908,16 +1018,22 @@ export function OrderDrawer({
                   </div>
                 )}
 
-                {issued.length === 0 && (
+                {closing.length === 0 && (
                   <div className="row gap-2" style={{ flexWrap: "wrap" }}>
                     {fx && !openLink && (
                       <button className="btn btn-sm btn-primary" disabled={invBusy} onClick={() => { setInvMsg(null); setInvLinkOpen({ code: null }); }}
-                        title={lang === "es" ? "El cliente captura sus datos fiscales y recibe su factura. Antes de mandarlo ves qué dirá la factura." : "The customer enters their tax details and gets the invoice. You see what it will say before sending."}>
-                        <Icon name={detail.conversation_id ? "send" : "file"} size={14} />{detail.conversation_id ? (lang === "es" ? "Enviar link para facturar" : "Send invoicing link") : (lang === "es" ? "Crear link para facturar" : "Create invoicing link")}
+                        title={anticipos.length
+                          ? (es ? "El cliente captura sus datos fiscales y recibe la factura de otro anticipo. El finiquito se emite desde «Emitir factura»." : "The customer enters their tax details and gets the invoice for another advance. The final invoice is issued from \"Issue invoice\".")
+                          : (es ? "El cliente captura sus datos fiscales y recibe su factura (por el total o por un anticipo). Antes de mandarlo ves qué dirá la factura." : "The customer enters their tax details and gets the invoice (full amount or an advance). You see what it will say before sending.")}>
+                        <Icon name={detail.conversation_id ? "send" : "file"} size={14} />
+                        {anticipos.length
+                          ? (detail.conversation_id ? (es ? "Enviar link de otro anticipo" : "Send another advance link") : (es ? "Crear link de otro anticipo" : "Create another advance link"))
+                          : (detail.conversation_id ? (es ? "Enviar link para facturar" : "Send invoicing link") : (es ? "Crear link para facturar" : "Create invoicing link"))}
                       </button>
                     )}
-                    <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={openInvModal}>
-                      <Icon name="plus" size={14} />{lang === "es" ? "Emitir factura" : "Issue invoice"}
+                    <button className="btn btn-sm btn-outline" disabled={invBusy} onClick={openInvModal}
+                      title={fx ? (es ? "Por el total (pagada o PPD), un anticipo o el finiquito: se pregunta al abrir." : "Full amount (paid or PPD), an advance or the final invoice: you're asked when it opens.") : undefined}>
+                      <Icon name="plus" size={14} />{anticipos.length ? (es ? "Emitir finiquito" : "Issue final invoice") : (es ? "Emitir factura" : "Issue invoice")}
                     </button>
                   </div>
                 )}

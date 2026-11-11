@@ -301,10 +301,16 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   // bloque sale en ceros. "Llenado por el cliente" es el evento que deja el webhook en el pedido.
   const fetchInvoices = async (): Promise<ReportInvoices> => {
     const zero: ReportInvoices = { total: 0, issuedCount: 0, issuedTotal: 0, cancelledCount: 0, cancelledTotal: 0, pendingCount: 0, linksCreated: 0, linksFilled: 0, linksTeam: 0, linksOpen: 0, linksExpired: 0, linksClosed: 0, linksCancelled: 0 };
-    const { data, error } = await fetchAll(() => supabase.from("invoices")
-      .select("id, order_id, status, total, link_code, link_expires, created_at")
+    const query = (cols: string) => fetchAll(() => supabase.from("invoices")
+      .select(cols)
       .eq("business_id", businessId).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false }));
+    // Con 0104 se lee el tipo: los complementos de pago (`pago`) no son facturas de una venta, son
+    // abonos a una PPD que ya está contada; sumarlos duplicaría el dinero. Sin la columna, lo de antes.
+    let res = await query("id, order_id, status, total, link_code, link_expires, created_at, kind");
+    if (res.error) res = await query("id, order_id, status, total, link_code, link_expires, created_at");
+    const { error } = res;
+    const data = (res.data as Record<string, unknown>[]).filter((r) => r.kind !== "pago");
     if (error || !data.length) return zero;
     const links = data.filter((r) => r.link_code);
     const filled = new Set<string>();

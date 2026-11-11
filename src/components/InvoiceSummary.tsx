@@ -4,6 +4,7 @@ import { SatSearch } from "@/components/SatSearch";
 import { previewInvoice, type InvoicePreview } from "@/app/(app)/invoicing/actions";
 import type { InvoiceSummary, SatOverrides } from "@/lib/invoiceLines";
 import type { GroupChoice } from "@/lib/facturacionOps";
+import type { InvoiceKind, KindChoice } from "@/lib/invoiceKinds";
 
 /** Lo elegido sobre agrupar; `null` = lo que el negocio tenga por defecto. */
 export type GroupState = { on: boolean; productId: string | null } | null;
@@ -31,7 +32,7 @@ const pct = (f: number) => `${Math.round(f * 10000) / 100}%`;
  * les faltaban datos al abrir: si se recalculara con cada tecla, el campo desaparecería en cuanto
  * se escribe la clave y antes de capturar la unidad.
  */
-export function useInvoicePreview(orderId: string) {
+export function useInvoicePreview(orderId: string, choice?: KindChoice | null) {
   const [preview, setPreview] = useState<InvoicePreview | null>(null);
   const [missing, setMissing] = useState<Missing | null>(null);
   const [sat, setSat] = useState<SatOverrides>({});
@@ -39,20 +40,26 @@ export function useInvoicePreview(orderId: string) {
   const [group, setGroupState] = useState<GroupState>(null);
   const [saveDefault, setSaveDefault] = useState(false);
   const seq = useRef(0);
+  // El tipo de factura y el monto de un anticipo como dependencias planas: un objeto nuevo con lo
+  // mismo adentro no vuelve a pedir el resumen.
+  const kind = choice?.kind ?? "total";
+  const amount = choice?.amount ?? 0;
   useEffect(() => {
     const id = ++seq.current; // una respuesta vieja no pisa a la de lo último que se escribió
     const t = setTimeout(() => {
-      previewInvoice(orderId, sat, group as GroupChoice).then((p) => {
+      previewInvoice(orderId, sat, group as GroupChoice, { kind, amount }).then((p) => {
         if (seq.current !== id) return;
         setPreview(p);
         setMissing((m) => m ?? p.summary.missing);
       }).catch(() => {});
-    }, Object.keys(sat).length ? 350 : 0);
+    }, Object.keys(sat).length || kind === "anticipo" ? 350 : 0);
     return () => clearTimeout(t);
-  }, [orderId, sat, group]);
+  }, [orderId, sat, group, kind, amount]);
   const patch = (key: string, v: { code?: string; unit?: string }) => setSat((s) => ({ ...s, [key]: { ...s[key], ...v } }));
   // Al cambiar cómo se agrupa cambian los conceptos: lo que falte del SAT se vuelve a calcular.
   const setGroup = (g: GroupState) => { setGroupState(g); setMissing(null); setSat({}); };
+  // Al cambiar el tipo de factura también: un anticipo no tiene renglones del pedido.
+  useEffect(() => { setMissing(null); }, [kind]);
   /** Lo que se manda al servidor: la elección en pantalla (o la de por defecto, ya resuelta). */
   const groupChoice: { on: boolean; productId: string | null } | null = group ?? (preview ? { on: preview.group.on, productId: preview.group.productId } : null);
   return { preview, missing: missing ?? [], sat, patch, group, setGroup, groupChoice, saveDefault, setSaveDefault };
@@ -243,3 +250,88 @@ export function InvoiceSummaryView({ preview, missing, sat, onSat, lang, search,
 
 /** ¿Algo de lo capturado está a medias? (una clave que no llega a 8 dígitos). No se manda así. */
 export const satIncomplete = (sat: SatOverrides) => Object.values(sat).some((v) => !!v.code && !/^\d{8}$/.test(v.code));
+
+/** El monto que se propone para un anticipo: lo pagado que aún no se ha facturado como anticipo, o la mitad del pedido. */
+export function suggestedAdvance(preview: InvoicePreview | null): number {
+  if (!preview) return 0;
+  const pending = Math.round((preview.paid - preview.anticipos.total) * 100) / 100;
+  if (pending > 0 && pending < preview.orderTotal) return pending;
+  return Math.round((preview.orderTotal / 2) * 100) / 100;
+}
+
+/**
+ * Qué factura es: por el total (pagada o PPD), un anticipo o pago parcial por un monto, o el
+ * finiquito. Con anticipos ya facturados, lo único que cierra el pedido es el finiquito, así que
+ * el total queda apagado; sin anticipos no hay finiquito que emitir. `allow` acota las opciones
+ * (el link solo sabe de total y anticipo).
+ */
+export function InvoiceKindPicker({ choice, onChange, preview, lang, allow }: {
+  choice: KindChoice;
+  onChange: (c: KindChoice) => void;
+  preview: InvoicePreview | null;
+  lang: "es" | "en";
+  allow: InvoiceKind[];
+}) {
+  const es = lang === "es";
+  const anticipos = preview?.anticipos ?? { count: 0, total: 0 };
+  const hasAdv = anticipos.count > 0;
+  const rate = preview?.rate ?? 16;
+  const all: { kind: InvoiceKind; label: string; off: boolean }[] = [
+    { kind: "total", label: es ? "Por el total" : "Full amount", off: hasAdv },
+    { kind: "ppd", label: es ? "A crédito (PPD)" : "On credit (PPD)", off: hasAdv },
+    { kind: "anticipo", label: hasAdv ? (es ? "Otro anticipo o pago parcial" : "Another advance or partial payment") : (es ? "Anticipo o pago parcial" : "Advance or partial payment"), off: false },
+    { kind: "finiquito", label: es ? "Finiquito" : "Final invoice", off: !hasAdv },
+  ];
+  const opts = all.filter((o) => allow.includes(o.kind));
+  const advTxt = `${anticipos.count === 1 ? (es ? "1 anticipo facturado" : "1 advance invoiced") : es ? `${anticipos.count} anticipos facturados` : `${anticipos.count} advances invoiced`} (${money(anticipos.total)})`;
+  const hint = choice.kind === "ppd"
+    ? (es ? "Factura por todo el pedido con método PPD y forma de pago 99 «Por definir». Cada pago que recibas lo timbras después como complemento de pago desde este mismo pedido." : "Invoice for the whole order with method PPD and payment form 99 \"To be defined\". Each payment you receive is stamped later as a payment complement from this same order.")
+    : choice.kind === "anticipo"
+    ? (es ? `Un CFDI de ingreso por este monto (IVA ${rate}% incluido) con la clave 84111506 «Anticipo del bien o servicio». Cuando entregues, emites el finiquito por el resto y se relacionan los folios.` : `An income CFDI for this amount (${rate}% tax included) with SAT key 84111506 "Advance payment". On delivery you issue the final invoice for the rest and the folios are related.`)
+    : choice.kind === "finiquito"
+    ? (es ? `El pedido completo con un descuento por ${advTxt}, relacionados con tipo 07. La factura sale por la diferencia.` : `The whole order with a discount for ${advTxt}, related with type 07. The invoice is for the difference.`)
+    : hasAdv
+    ? (es ? `Ya hay ${advTxt}: lo que cierra el pedido es el finiquito.` : `There is already ${advTxt}: the final invoice is what closes the order.`)
+    : (es ? "Una sola factura por todo el pedido, pagada (PUE)." : "One invoice for the whole order, paid (PUE).");
+  const amount = choice.amount ?? 0;
+  const max = preview ? Math.max(0, Math.round((preview.orderTotal - anticipos.total) * 100) / 100) : 0;
+  const pct = (p: number) => onChange({ kind: "anticipo", amount: Math.round(((preview?.orderTotal ?? 0) * p) * 100) / 100 });
+  return (
+    <div className="col gap-2" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+      <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <span className="t-sm" style={{ fontWeight: 600 }}>{es ? "¿Qué factura es?" : "Which invoice is this?"}</span>
+        <div className="row gap-1" style={{ flexWrap: "wrap" }} role="radiogroup">
+          {opts.map((o) => (
+            <button key={o.kind} type="button" role="radio" aria-checked={choice.kind === o.kind} disabled={o.off} data-kind={o.kind}
+              className={"chip" + (choice.kind === o.kind ? " on" : "")} style={{ cursor: o.off ? "not-allowed" : "pointer", opacity: o.off ? 0.5 : 1 }}
+              onClick={() => onChange(o.kind === "anticipo" ? { kind: "anticipo", amount: amount > 0 ? amount : suggestedAdvance(preview) } : { kind: o.kind })}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {choice.kind === "anticipo" && (
+        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          <label className="lbl" style={{ margin: 0 }}>{es ? "Monto del anticipo (IVA incluido)" : "Advance amount (tax included)"}</label>
+          <input className="inp-inline mono" type="number" inputMode="decimal" min={0.01} step="0.01" max={max || undefined} style={{ width: 130 }} data-testid="advance-amount"
+            value={amount > 0 ? String(amount) : ""} onChange={(e) => onChange({ kind: "anticipo", amount: Math.round((Number(e.target.value) || 0) * 100) / 100 })} />
+          <div className="row gap-1" style={{ flexWrap: "wrap" }}>
+            {preview && preview.paid - anticipos.total > 0 && preview.paid - anticipos.total < preview.orderTotal && (
+              <button type="button" className="chip" style={{ cursor: "pointer" }} onClick={() => onChange({ kind: "anticipo", amount: Math.round((preview.paid - anticipos.total) * 100) / 100 })}>
+                {es ? "Lo pagado" : "Paid so far"} · {money(preview.paid - anticipos.total)}
+              </button>
+            )}
+            <button type="button" className="chip" style={{ cursor: "pointer" }} onClick={() => pct(0.5)}>50 %</button>
+            <button type="button" className="chip" style={{ cursor: "pointer" }} onClick={() => pct(0.3)}>30 %</button>
+          </div>
+          {preview && amount > max + 0.005 && (
+            <span className="t-xs" style={{ color: "var(--red)" }}>
+              {es ? `Con los anticipos de antes pasaría del total del pedido (${money(preview.orderTotal)}). Máximo ${money(max)}.` : `With earlier advances it would exceed the order total (${money(preview.orderTotal)}). At most ${money(max)}.`}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="t-xs muted">{hint}</div>
+    </div>
+  );
+}
