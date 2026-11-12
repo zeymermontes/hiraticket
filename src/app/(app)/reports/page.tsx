@@ -4,11 +4,12 @@ import { getMyBusiness } from "@/lib/queries";
 import { getReports } from "@/lib/extras";
 import { createClient } from "@/lib/supabase/server";
 import { ReportsScreen } from "@/components/ReportsScreen";
+import { DEFAULT_TZ } from "@/lib/timezones";
+import { ymdInTz } from "@/lib/dayInTz";
 
 export const dynamic = "force-dynamic";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export default async function ReportsPage({
   searchParams,
@@ -26,14 +27,15 @@ export default async function ReportsPage({
     : { data: null };
   if (mem?.role !== "admin") redirect("/chat");
 
-  // Default range: last 7 days (today inclusive).
+  // Sin fechas en la URL se abre con hoy: lo primero que se quiere ver es cómo va el día. "Hoy"
+  // es el del negocio (su zona horaria), no el del servidor, que corre en UTC.
   const sp = await searchParams;
-  const today = new Date();
-  const weekAgo = new Date(today.getTime() - 6 * 86400000);
-  let from = sp.from && YMD.test(sp.from) ? sp.from : ymd(weekAgo);
-  let to = sp.to && YMD.test(sp.to) ? sp.to : ymd(today);
+  const tz = business.timezone || DEFAULT_TZ;
+  const today = ymdInTz(new Date(), tz);
+  let from = sp.from && YMD.test(sp.from) ? sp.from : today;
+  let to = sp.to && YMD.test(sp.to) ? sp.to : today;
   if (from > to) [from, to] = [to, from];
 
-  const data = await getReports(business.id, { from, to }, business.manual_margin_pct ?? 50, business.done_from_stage_id ?? null);
+  const data = await getReports(business.id, { from, to, tz }, business.manual_margin_pct ?? 50, business.done_from_stage_id ?? null);
   return <ReportsScreen data={data} from={from} to={to} />;
 }

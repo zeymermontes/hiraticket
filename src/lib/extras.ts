@@ -6,6 +6,8 @@ import { getStages, getAreas } from "@/lib/business";
 import type { PriceTier } from "@/lib/types";
 import { orderBreakdown } from "@/lib/orderTotal";
 import { LINK_INVOICED_EVENT } from "@/lib/invoiceEvents";
+import { DEFAULT_TZ } from "@/lib/timezones";
+import { addDays, dayStart, dayEnd, ymdInTz } from "@/lib/dayInTz";
 
 export interface Automation {
   id: string;
@@ -148,6 +150,8 @@ export async function getCampaigns(businessId: string): Promise<Campaign[]> {
 export interface ReportRange {
   from: string; // YYYY-MM-DD (inclusive)
   to: string;   // YYYY-MM-DD (inclusive)
+  /** Zona del negocio: los días del rango empiezan y terminan ahí, no en la del servidor (UTC). */
+  tz?: string | null;
 }
 export interface ReportData {
   totalSales: number;
@@ -206,17 +210,28 @@ export interface ReportData {
   // Facturación (0096): qué pasó con los links de autofactura creados en el periodo y cuántas
   // facturas se emitieron. Cohorte por fecha de creación de la fila (link o factura).
   invoices: ReportInvoices;
-  // Per-order detail for the report export (names already resolved).
-  orders: {
-    code: string; contact: string; phone: string; stage: string; area: string; agent: string;
-    priority: string; pay_status: string;
-    items: { name: string; qty: number; unit_price: number; subtotal: number }[];
-    total: number; paid: number; discount: number; discount_note: string | null;
-    items_total: number; tax: number; tax_rate: number; diff: number;
-    created_at: string | null; updated_at: string | null; due_at: string | null;
-  }[];
+  // Detalle por ticket para el export (nombres ya resueltos). Van TODOS los del rango, también los
+  // cancelados (con su `cancelled_at`), para que el archivo sea la lista completa de tickets; los
+  // números del resumen siguen sin contarlos.
+  orders: ReportOrder[];
 }
-const ymdLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+export interface ReportOrder {
+  id: string;
+  code: string; contact: string; phone: string; stage: string; area: string; agent: string;
+  priority: string; pay_status: string;
+  cancelled_at: string | null;
+  requires_invoice: boolean;
+  items: { name: string; qty: number; unit_price: number; subtotal: number; note: string | null }[];
+  /** Cada cobro registrado en el ticket (reembolsos en negativo), en orden de fecha. */
+  payments: { amount: number; method: string | null; note: string | null; created_at: string }[];
+  /** Facturas y links del ticket (sin complementos de pago), en orden de fecha. */
+  invoices: { uuid: string | null; status: string; kind: string | null; total: number | null; created_at: string }[];
+  /** Notas internas del ticket, en orden de fecha. */
+  notes: { body: string; created_at: string }[];
+  total: number; paid: number; discount: number; discount_note: string | null;
+  items_total: number; tax: number; tax_rate: number; diff: number;
+  created_at: string | null; updated_at: string | null; due_at: string | null;
+}
 
 export interface ReportInvoices {
   total: number;          // filas de facturación creadas en el periodo (links + facturas directas)
@@ -236,8 +251,9 @@ export interface ReportInvoices {
 
 export async function getReports(businessId: string, range: ReportRange, manualMarginPct = 50, doneFromStageId: string | null = null): Promise<ReportData> {
   const supabase = await createClient();
-  const fromISO = new Date(`${range.from}T00:00:00`).toISOString();
-  const toISO = new Date(`${range.to}T23:59:59.999`).toISOString();
+  const tz = range.tz || DEFAULT_TZ;
+  const fromISO = dayStart(range.from, tz).toISOString();
+  const toISO = dayEnd(range.to, tz).toISOString();
   /**
    * Trae TODAS las filas de una consulta, por páginas de 1 000.
    *
@@ -261,19 +277,45 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   };
 
   const fetchOrders = async () => {
-    const cols = (opt: string) =>
-      `code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${opt}` +
-      `contact:contacts(name,phone), items:order_items(name,qty,unit_price,subtotal), payments(amount)`;
-    const get = (opt: string) => () => supabase.from("orders").select(cols(opt))
+    // Los pagos y las facturas de cada ticket viajan embebidos (payments.order_id e
+    // invoices.order_id son la única FK de cada tabla hacia orders, así que no hay ambigüedad).
+    // El tipo de factura (0104) y la nota del renglón (0030) pueden no existir: se baja en cascada.
+    const cols = (opt: string, extra: string) =>
+      `id, code, total, priority, pay_status, stage_id, area_id, assignee_id, created_at, updated_at, ${opt}` +
+      `contact:contacts(name,phone), payments(amount,method,note,created_at)${extra}`;
+    const get = (opt: string, extra: string) => () => supabase.from("orders").select(cols(opt, extra))
       .eq("business_id", businessId).is("deleted_at", null).gte("created_at", fromISO).lte("created_at", toISO)
       .order("created_at", { ascending: false });
+    const FULL = "due_at, cancelled_at, discount, discount_pct, discount_note, requires_invoice, tax_rate, ";
+    const ITEMS = ", items:order_items(name,qty,unit_price,subtotal,note)";
+    const ITEMS0 = ", items:order_items(name,qty,unit_price,subtotal)";
+    const INV = ", invoices(uuid,status,kind,total,created_at)";
+    const INV0 = ", invoices(uuid,status,total,created_at)";
+    let { data, error } = await fetchAll(get(FULL, ITEMS + INV));
+    if (error) ({ data, error } = await fetchAll(get(FULL, ITEMS + INV0)));
+    if (error) ({ data, error } = await fetchAll(get(FULL, ITEMS)));
     // discount (0058) / due_at (0029) / cancelled_at (0065) may not exist yet — cascade.
-    let { data, error } = await fetchAll(get("due_at, cancelled_at, discount, discount_pct, discount_note, requires_invoice, tax_rate, "));
-    if (error) ({ data, error } = await fetchAll(get("due_at, cancelled_at, discount, discount_pct, discount_note, ")));
-    if (error) ({ data, error } = await fetchAll(get("due_at, discount, discount_pct, discount_note, ")));
-    if (error) ({ data, error } = await fetchAll(get("due_at, ")));
-    if (error) ({ data } = await fetchAll(get("")));
+    if (error) ({ data, error } = await fetchAll(get("due_at, cancelled_at, discount, discount_pct, discount_note, ", ITEMS0)));
+    if (error) ({ data, error } = await fetchAll(get("due_at, discount, discount_pct, discount_note, ", ITEMS0)));
+    if (error) ({ data, error } = await fetchAll(get("due_at, ", ITEMS0)));
+    if (error) ({ data } = await fetchAll(get("", ITEMS0)));
     return data ?? [];
+  };
+  // Notas internas de los tickets del rango, para el export. Se piden por lotes de ids: la URL
+  // de PostgREST no aguanta miles de uuids en un solo `in`.
+  const fetchNotes = async (orderIds: string[]) => {
+    const out = new Map<string, { body: string; created_at: string }[]>();
+    for (let i = 0; i < orderIds.length; i += 150) {
+      const { data } = await fetchAll(() => supabase.from("notes").select("parent_id, body, created_at")
+        .eq("business_id", businessId).eq("parent_type", "order").in("parent_id", orderIds.slice(i, i + 150))
+        .order("created_at", { ascending: true }));
+      for (const n of data ?? []) {
+        const id = n.parent_id as string;
+        if (!out.has(id)) out.set(id, []);
+        out.get(id)!.push({ body: (n.body as string) ?? "", created_at: (n.created_at as string) ?? "" });
+      }
+    }
+    return out;
   };
   // Cobrado por su propia fecha de pago (no la del pedido) — un pedido puede pagarse días o
   // meses después de creado, o nunca cobrarse del todo. `orders!inner` solo para poder filtrar
@@ -320,7 +362,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
         .in("parent_id", [...new Set(links.map((r) => r.order_id as string))]);
       (ev ?? []).forEach((e) => filled.add(e.parent_id as string));
     }
-    const today = ymdLocal(new Date());
+    const today = ymdInTz(new Date(), tz);
     const sum = (rows: Record<string, unknown>[]) => Math.round(rows.reduce((a, r) => a + Number(r.total ?? 0), 0) * 100) / 100;
     const issued = data.filter((r) => r.status === "issued");
     const cancelled = data.filter((r) => r.status === "cancelada");
@@ -373,6 +415,7 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   const orderProfit = (o: any) => ((o.items ?? []) as any[]).reduce((s, it) => s + itemProfit(it), 0) - Number(o.discount ?? 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allRows = (orders ?? []) as any[]; // joined select() string defeats column inference
+  const notesByOrder = await fetchNotes(allRows.map((o) => o.id as string).filter(Boolean));
   // Un pedido cancelado no es una venta. Se aparta ANTES de cualquier cálculo: todo lo de abajo
   // (ventas, utilidad, ticket promedio, tendencias, tops de producto, conteos por etapa/área/agente)
   // trabaja sobre `rows`, así que sacarlos aquí los excluye de todo de una sola vez.
@@ -425,20 +468,19 @@ export async function getReports(businessId: string, range: ReportRange, manualM
   // Trend over the range — sales (sum of total) and created count per bucket. Daily buckets up
   // to ~a month; beyond that the bucket widens so the chart stays at ≤31 bars.
   const DAY = 86400000;
-  const start = new Date(`${range.from}T00:00:00`);
-  const end = new Date(`${range.to}T23:59:59.999`);
-  const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / DAY));
+  const start = new Date(fromISO);
+  const end = new Date(toISO);
+  const days = Math.max(1, Math.round((end.getTime() + 1 - start.getTime()) / DAY));
   const step = Math.max(1, Math.ceil(days / 31));
   const nBuckets = Math.ceil(days / step);
   const trend: { date: string; value: number }[] = [];
   const profit: { date: string; value: number }[] = [];
   const created: { date: string; value: number }[] = [];
-  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   for (let b = 0; b < nBuckets; b++) {
-    const bStart = new Date(start.getTime() + b * step * DAY);
-    trend.push({ date: ymd(bStart), value: 0 });
-    profit.push({ date: ymd(bStart), value: 0 });
-    created.push({ date: ymd(bStart), value: 0 });
+    const date = addDays(range.from, b * step);
+    trend.push({ date, value: 0 });
+    profit.push({ date, value: 0 });
+    created.push({ date, value: 0 });
   }
   for (const o of rows) {
     if (!o.created_at) continue;
@@ -531,7 +573,8 @@ export async function getReports(businessId: string, range: ReportRange, manualM
     wasteList,
     invoices,
     byAgentDiscounts,
-    orders: rows.map((o) => ({
+    orders: allRows.map((o) => ({
+      id: (o.id as string) ?? "",
       code: (o.code as string) ?? "",
       contact: (o.contact?.name as string) ?? "",
       phone: (o.contact?.phone as string) ?? "",
@@ -540,13 +583,26 @@ export async function getReports(businessId: string, range: ReportRange, manualM
       agent: agentName.get(o.assignee_id as string) ?? "",
       priority: (o.priority as string) ?? "normal",
       pay_status: (o.pay_status as string) ?? "pending",
+      cancelled_at: (o.cancelled_at as string) ?? null,
+      requires_invoice: !!o.requires_invoice,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       items: ((o.items ?? []) as any[]).map((it) => ({
         name: (it.name as string) ?? "",
         qty: Number(it.qty ?? 0),
         unit_price: Number(it.unit_price ?? 0),
         subtotal: Number(it.subtotal ?? 0),
+        note: (it.note as string) || null,
       })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      payments: ((o.payments ?? []) as any[])
+        .map((p) => ({ amount: Number(p.amount ?? 0), method: (p.method as string) || null, note: (p.note as string) || null, created_at: (p.created_at as string) ?? "" }))
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      invoices: ((o.invoices ?? []) as any[])
+        .filter((i) => i.kind !== "pago")
+        .map((i) => ({ uuid: (i.uuid as string) || null, status: (i.status as string) ?? "", kind: (i.kind as string) ?? null, total: i.total == null ? null : Number(i.total), created_at: (i.created_at as string) ?? "" }))
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      notes: notesByOrder.get(o.id as string) ?? [],
       total: Number(o.total ?? 0),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       paid: ((o.payments ?? []) as any[]).reduce((s, p) => s + Number(p.amount ?? 0), 0),

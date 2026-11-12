@@ -3,7 +3,8 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useApp } from "@/components/AppContext";
-import type { ReportData } from "@/lib/extras";
+import type { ReportData, ReportOrder } from "@/lib/extras";
+import { invoiceKindLabel } from "@/lib/invoiceKinds";
 import { PRIORITY_LABEL } from "@/lib/types";
 import { downloadXlsx, type CellValue } from "@/lib/xlsx";
 
@@ -76,6 +77,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
     return [ymd(new Date(today.getTime() - (days - 1) * 86400000)), ymd(today)];
   };
   const presets: { days: number; label: string }[] = [
+    { days: 1, label: lang === "es" ? "Hoy" : "Today" },
     { days: 7, label: lang === "es" ? "7 días" : "7 days" },
     { days: 30, label: lang === "es" ? "30 días" : "30 days" },
     { days: 90, label: lang === "es" ? "90 días" : "90 days" },
@@ -88,6 +90,92 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
   const labelEvery = Math.ceil(trend.length / 12);
   const barNum: React.CSSProperties = { position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 3, whiteSpace: "nowrap" };
   const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" });
+
+  const fmtTs = (iso: string | null) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return `${ymd(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+
+  /**
+   * Hojas con cada ticket del rango y lo que trae: una fila por ticket (con productos, pagos,
+   * facturas y notas resumidos en celdas) y luego una hoja por cada cosa, una fila por renglón,
+   * ligadas al ticket por su código. Incluye los cancelados, marcados en su columna. Van tanto en
+   * el reporte completo como en «Exportar tickets».
+   */
+  function ticketSheets(): { name: string; rows: CellValue[][] }[] {
+    const es = lang === "es";
+    const objs = personal ? (es ? "Tareas" : "Tasks") : (es ? "Pedidos" : "Orders");
+    const obj = personal ? (es ? "Tarea" : "Task") : (es ? "Pedido" : "Order");
+    const who = personal ? (es ? "Contacto" : "Contact") : (es ? "Cliente" : "Customer");
+    const itemLabel = personal ? (es ? "Subtareas" : "Subtasks") : (es ? "Productos" : "Products");
+    const dateHead = es ? "Fecha" : "Date";
+    const yes = es ? "Sí" : "Yes", no = "No";
+    const payLabel = (s: string) =>
+      s === "paid" ? (es ? "Pagado" : "Paid") : s === "partial" ? (es ? "Parcial" : "Partial") : (es ? "Pendiente" : "Pending");
+    const prioLabel = (p: string) => PRIORITY_LABEL[p]?.[lang] ?? p;
+    const invStatus = (st: string) => ({
+      issued: es ? "Emitida" : "Issued", cancelada: es ? "Cancelada" : "Cancelled", pending: es ? "Pendiente" : "Pending",
+      link_enviado: es ? "Link enviado" : "Link sent", vencido: es ? "Link vencido" : "Link expired", cerrado: es ? "Link cerrado" : "Link closed",
+      reemplazado: es ? "Link reemplazado" : "Link replaced", global: es ? "En factura global" : "In global invoice", error: "Error",
+    } as Record<string, string>)[st] ?? st;
+    const day = (iso: string) => iso ? ymd(new Date(iso)) : "";
+    const num = (n: number) => new Intl.NumberFormat("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+    const payCell = (o: ReportOrder) => o.payments.map((p) => `${p.amount < 0 ? "−" : ""}$${num(Math.abs(p.amount))}${p.method ? ` ${p.method}` : ""} (${day(p.created_at)})`).join(" · ");
+    const invCell = (o: ReportOrder) => o.invoices.map((i) => `${invoiceKindLabel(i.kind, lang)} · ${invStatus(i.status)}${i.uuid ? ` · ${i.uuid}` : ""}${i.total != null ? ` · $${num(i.total)}` : ""}`).join(" | ");
+    const tickets: CellValue[][] = [
+      [
+        es ? "Código" : "Code", who, es ? "Teléfono" : "Phone",
+        es ? "Etapa" : "Stage", es ? "Área" : "Area", es ? "Agente" : "Agent",
+        es ? "Prioridad" : "Priority",
+        es ? "Cancelado" : "Cancelled",
+        ...(personal ? [] : [es ? "Pago" : "Payment"]),
+        itemLabel,
+        ...(personal ? [] : [es ? "Suma productos" : "Items total", es ? "Descuento" : "Discount", es ? "Motivo desc." : "Disc. reason", "IVA %", "IVA", es ? "Ajuste" : "Adjustment", "Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance", es ? "Pagos" : "Payments", es ? "Requiere factura" : "Needs invoice", es ? "Facturas" : "Invoices"]),
+        es ? "Notas" : "Notes",
+        es ? "Creado" : "Created",
+        es ? "Fecha límite" : "Deadline",
+        es ? "Actualizado" : "Updated",
+      ],
+      ...data.orders.map((o) => [
+        o.code, o.contact, o.phone, o.stage, o.area, o.agent,
+        prioLabel(o.priority),
+        o.cancelled_at ? fmtTs(o.cancelled_at) : "",
+        ...(personal ? [] : [payLabel(o.pay_status)]),
+        o.items.map((it) => `${it.qty}× ${it.name}${it.note ? ` (${it.note})` : ""}`).join(" · "),
+        ...(personal ? [] : [o.items_total, o.discount || "", o.discount_note ?? "", o.tax_rate || "", o.tax || "", o.diff || "", o.total, o.paid, o.total - o.paid, payCell(o), o.requires_invoice ? yes : no, invCell(o)]),
+        o.notes.map((n) => n.body).join(" | "),
+        fmtTs(o.created_at),
+        o.due_at ? fmtTs(o.due_at) : "",
+        fmtTs(o.updated_at),
+      ] as CellValue[]),
+    ];
+    const items: CellValue[][] = [
+      [obj, who, personal ? (es ? "Subtarea" : "Subtask") : (es ? "Producto" : "Product"), es ? "Cantidad" : "Qty",
+        ...(personal ? [] : [es ? "Precio unitario" : "Unit price", "Subtotal"]), es ? "Nota" : "Note"],
+      ...data.orders.flatMap((o) => o.items.map((it) => [
+        o.code, o.contact, it.name, it.qty, ...(personal ? [] : [it.unit_price, it.subtotal]), it.note ?? "",
+      ] as CellValue[])),
+    ];
+    const payments: CellValue[][] = [
+      [obj, who, dateHead, es ? "Monto" : "Amount", es ? "Método" : "Method", es ? "Nota" : "Note"],
+      ...data.orders.flatMap((o) => o.payments.map((p) => [o.code, o.contact, fmtTs(p.created_at), p.amount, p.method ?? "", p.note ?? ""] as CellValue[])),
+    ];
+    const invoices: CellValue[][] = [
+      [obj, who, dateHead, es ? "Tipo" : "Kind", es ? "Estado" : "Status", "UUID", "Total"],
+      ...data.orders.flatMap((o) => o.invoices.map((i) => [o.code, o.contact, fmtTs(i.created_at), invoiceKindLabel(i.kind, lang), invStatus(i.status), i.uuid ?? "", i.total] as CellValue[])),
+    ];
+    const notes: CellValue[][] = [
+      [obj, who, dateHead, es ? "Nota" : "Note"],
+      ...data.orders.flatMap((o) => o.notes.map((n) => [o.code, o.contact, fmtTs(n.created_at), n.body] as CellValue[])),
+    ];
+    return [
+      { name: objs, rows: tickets },
+      { name: itemLabel, rows: items },
+      ...(personal ? [] : [{ name: es ? "Pagos" : "Payments", rows: payments }, { name: es ? "Facturas" : "Invoices", rows: invoices }]),
+      { name: es ? "Notas" : "Notes", rows: notes },
+    ];
+  }
 
   function exportXlsx() {
     const es = lang === "es";
@@ -144,54 +232,8 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
     ];
     const byRows = (rows: { name: string; count: number }[], head: string): CellValue[][] =>
       [[head, objs], ...rows.map((r) => [r.name, r.count] as CellValue[])];
-    const fmtTs = (iso: string | null) => {
-      if (!iso) return "";
-      const d = new Date(iso);
-      return `${ymd(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    };
     const payLabel = (s: string) =>
       s === "paid" ? (es ? "Pagado" : "Paid") : s === "partial" ? (es ? "Parcial" : "Partial") : (es ? "Pendiente" : "Pending");
-    const prioLabel = (p: string) => PRIORITY_LABEL[p]?.[lang] ?? p;
-    const itemLabel = personal ? (es ? "Subtareas" : "Subtasks") : (es ? "Productos" : "Products");
-    const detail: CellValue[][] = [
-      [
-        es ? "Código" : "Code",
-        personal ? (es ? "Contacto" : "Contact") : (es ? "Cliente" : "Customer"),
-        es ? "Teléfono" : "Phone",
-        es ? "Etapa" : "Stage", es ? "Área" : "Area", es ? "Agente" : "Agent",
-        es ? "Prioridad" : "Priority",
-        ...(personal ? [] : [es ? "Pago" : "Payment"]),
-        itemLabel,
-        ...(personal ? [] : [es ? "Productos" : "Items", es ? "Descuento" : "Discount", es ? "Motivo desc." : "Disc. reason", "IVA %", "IVA", es ? "Ajuste" : "Adjustment", "Total", es ? "Pagado" : "Paid", es ? "Saldo" : "Balance"]),
-        es ? "Creado" : "Created",
-        es ? "Fecha límite" : "Deadline",
-        es ? "Actualizado" : "Updated",
-      ],
-      ...data.orders.map((o) => [
-        o.code, o.contact, o.phone, o.stage, o.area, o.agent,
-        prioLabel(o.priority),
-        ...(personal ? [] : [payLabel(o.pay_status)]),
-        o.items.map((it) => `${it.qty}× ${it.name}`).join(" · "),
-        ...(personal ? [] : [o.items_total, o.discount || "", o.discount_note ?? "", o.tax_rate || "", o.tax || "", o.diff || "", o.total, o.paid, o.total - o.paid]),
-        fmtTs(o.created_at),
-        o.due_at ? fmtTs(o.due_at) : "",
-        fmtTs(o.updated_at),
-      ] as CellValue[]),
-    ];
-    // One row per line item, linked back to its order by code.
-    const itemsSheet: CellValue[][] = [
-      [
-        personal ? (es ? "Tarea" : "Task") : (es ? "Pedido" : "Order"),
-        personal ? (es ? "Contacto" : "Contact") : (es ? "Cliente" : "Customer"),
-        personal ? (es ? "Subtarea" : "Subtask") : (es ? "Producto" : "Product"),
-        es ? "Cantidad" : "Qty",
-        ...(personal ? [] : [es ? "Precio unitario" : "Unit price", "Subtotal"]),
-      ],
-      ...data.orders.flatMap((o) => o.items.map((it) => [
-        o.code, o.contact, it.name, it.qty,
-        ...(personal ? [] : [it.unit_price, it.subtotal]),
-      ] as CellValue[])),
-    ];
     downloadXlsx(`${es ? "reporte" : "report"}-${from}-a-${to}.xlsx`, [
       { name: es ? "Resumen" : "Summary", rows: summary },
       { name: personal ? (es ? "Tareas por día" : "Tasks per day") : (es ? "Ventas por día" : "Sales per day"), rows: trendRows },
@@ -230,9 +272,13 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
           [es ? "Facturas canceladas" : "Invoices cancelled", data.invoices.cancelledCount, data.invoices.cancelledTotal],
         ] as CellValue[][],
       }]),
-      { name: objs, rows: detail },
-      { name: itemLabel, rows: itemsSheet },
+      ...ticketSheets(),
     ]);
+  }
+
+  /** Solo los tickets del rango con todo su detalle, sin las hojas de resumen. */
+  function exportTickets() {
+    downloadXlsx(`${personal ? (lang === "es" ? "tareas" : "tasks") : "tickets"}-${from}-a-${to}.xlsx`, ticketSheets());
   }
 
   return (
@@ -257,8 +303,11 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
         </div>
         <span className="grow" />
         <span className="t-sm muted">{fmtDay(from)} – {fmtDay(to)}</span>
-        <button className="btn btn-sm btn-outline" type="button" onClick={exportXlsx}>
-          <Icon name="file" size={14} /> {lang === "es" ? "Exportar Excel" : "Export Excel"}
+        <button className="btn btn-sm btn-outline" type="button" onClick={exportTickets} title={personal ? (lang === "es" ? "Cada tarea del rango con sus subtareas y notas" : "Each task in the range with its subtasks and notes") : (lang === "es" ? "Cada ticket del rango con sus productos, pagos, facturas y notas" : "Each ticket in the range with its items, payments, invoices and notes")}>
+          <Icon name="orders" size={14} /> {personal ? (lang === "es" ? "Exportar tareas" : "Export tasks") : (lang === "es" ? "Exportar tickets" : "Export tickets")}
+        </button>
+        <button className="btn btn-sm btn-outline" type="button" onClick={exportXlsx} title={lang === "es" ? "Reporte completo: resumen, gráficas, tops y los tickets" : "Full report: summary, charts, tops and the tickets"}>
+          <Icon name="file" size={14} /> {lang === "es" ? "Exportar reporte" : "Export report"}
         </button>
       </div>
 
