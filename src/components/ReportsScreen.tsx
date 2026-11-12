@@ -86,6 +86,7 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
     new Date(`${date}T00:00:00`).toLocaleDateString(locale,
       trend.length <= 7 && data.trendStepDays === 1 ? { weekday: "short" } : { day: "2-digit", month: "short" });
   const labelEvery = Math.ceil(trend.length / 12);
+  const barNum: React.CSSProperties = { position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 3, whiteSpace: "nowrap" };
   const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" });
 
   function exportXlsx() {
@@ -303,23 +304,58 @@ export function ReportsScreen({ data, from, to }: { data: ReportData; from: stri
               const pfrac = t.value > 0 ? Math.min(1, Math.max(0, prof / t.value)) : 0;
               const tip = personal
                 ? `${fmtDay(t.date)}: ${t.value}`
-                : `${fmtDay(t.date)}: ${lang === "es" ? "Venta" : "Sale"} ${money(t.value)} · ${lang === "es" ? "Ganancia" : "Profit"} ${money(Math.round(prof))}`;
+                : `${fmtDay(t.date)}: ${lang === "es" ? "Venta" : "Sale"} ${money(t.value)} · ${lang === "es" ? "Ganancia" : "Profit"} ${money(Math.round(prof))} · ${data.createdTrend[i]?.value ?? 0} ${lang === "es" ? "pedidos" : "orders"}`;
               return (
               <div key={t.date} className="col" style={{ flex: 1, alignItems: "center", gap: 6, height: "100%", justifyContent: "flex-end", minWidth: 0 }} title={tip}>
-                {trend.length <= 14 && <div className="mono t-xs muted">{t.value ? (personal ? t.value : money(t.value)) : ""}</div>}
-                {personal ? (
-                  <div style={{ width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, background: "var(--brand)", borderRadius: "6px 6px 0 0" }} />
-                ) : (
-                  <div style={{ width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, borderRadius: "6px 6px 0 0", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                    <div style={{ flex: 1 - pfrac, background: "var(--brand)", opacity: 0.35 }} />
-                    <div style={{ flex: pfrac, background: "var(--green)" }} />
+                <div style={{ flex: 1, width: "100%", minHeight: 0, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                  <div style={{ position: "relative", width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2 }}>
+                    {trend.length <= 14 && !!t.value && <div className="mono t-xs muted" style={barNum}>{personal ? t.value : money(t.value)}</div>}
+                    {personal ? (
+                      <div style={{ height: "100%", background: "var(--brand)", borderRadius: "6px 6px 0 0" }} />
+                    ) : (
+                      <div style={{ height: "100%", borderRadius: "6px 6px 0 0", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                        <div style={{ flex: 1 - pfrac, background: "var(--brand)", opacity: 0.35 }} />
+                        <div style={{ flex: pfrac, background: "var(--green)" }} />
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
                 <div className="t-xs muted truncate" style={{ textTransform: "capitalize", maxWidth: "100%" }}>{i % labelEvery === 0 ? barLabel(t.date) : " "}</div>
               </div>
             ); }); })()}
           </div>
         </section>
+
+        {/* Pedidos por día: cuántos se crearon en cada día del periodo (sin cancelados). En modo
+            personal la gráfica de arriba ya es esto mismo, así que solo se muestra con dinero. */}
+        {!personal && (
+          <section className="ws-block" style={{ marginBottom: 20 }}>
+            <div className="ws-block-head">
+              <Icon name="kanban" size={16} />
+              <h4>{lang === "es" ? "Pedidos por día" : "Orders per day"}</h4>
+              {data.trendStepDays > 1 && (
+                <span className="t-xs muted" style={{ fontWeight: 400 }}>
+                  {lang === "es" ? `· cada barra = ${data.trendStepDays} días` : `· each bar = ${data.trendStepDays} days`}
+                </span>
+              )}
+              <span className="t-xs muted" style={{ fontWeight: 400, marginLeft: "auto" }}>
+                {lang === "es" ? `${data.orderCount} en el periodo` : `${data.orderCount} in period`}
+              </span>
+            </div>
+            <div className="ws-block-body" style={{ display: "flex", alignItems: "flex-end", gap: data.createdTrend.length > 14 ? 4 : 10, height: 110, paddingTop: 18 }}>
+              {(() => { const max = Math.max(1, ...data.createdTrend.map((t) => t.value)); return data.createdTrend.map((t, i) => (
+                <div key={t.date} className="col" style={{ flex: 1, alignItems: "center", gap: 6, height: "100%", justifyContent: "flex-end", minWidth: 0 }} title={`${fmtDay(t.date)}: ${t.value} ${lang === "es" ? "pedidos" : "orders"}`}>
+                  <div style={{ flex: 1, width: "100%", minHeight: 0, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                    <div style={{ position: "relative", width: "70%", maxWidth: 40, height: `${(t.value / max) * 100}%`, minHeight: 2, background: "var(--blue)", borderRadius: "6px 6px 0 0" }}>
+                      {data.createdTrend.length <= 14 && !!t.value && <div className="mono t-xs muted" style={barNum}>{t.value}</div>}
+                    </div>
+                  </div>
+                  <div className="t-xs muted truncate" style={{ textTransform: "capitalize", maxWidth: "100%" }}>{i % labelEvery === 0 ? barLabel(t.date) : " "}</div>
+                </div>
+              )); })()}
+            </div>
+          </section>
+        )}
 
         {/* Cobros (0074): "Ventas" arriba es devengado (por fecha del pedido); esto es caja
             (por fecha del PAGO) — separa lo cobrado de este periodo de lo que llegó tarde, y
